@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <link rel="canonical" href="https://packwright.dev/">
+  <title>Packwright — Move a working coding agent</title>
+  <meta name="description" content="Migrate a working coding-agent setup between Codex, Claude Code, and Cursor, with a receipt before writing.">
+  <style>
+    :root{color-scheme:light dark;--bg:#f8f4ec;--card:#fffdf8;--text:#221c15;--muted:#5c5245;--line:#dfd5c2;--accent:#9c4f16;--link:#2e5f86} @media(prefers-color-scheme:dark){:root{--bg:#221c15;--card:#2c251c;--text:#efe8db;--muted:#b3a78f;--line:#453c2f;--accent:#d9935a;--link:#8ab6d9}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}.wrap{max-width:68rem;margin:auto;padding:1.5rem}nav,footer{display:flex;justify-content:space-between;gap:1rem;align-items:center}.brand,code,pre{font-family:ui-monospace,monospace}.hero{padding:8rem 0 6rem;max-width:52rem}h1{font-size:clamp(2.5rem,7vw,5rem);line-height:1.03;margin:.25rem 0 1.5rem}h2{font-size:2rem;margin-top:0}.sub{font-size:1.25rem;color:var(--muted)}.trust{border-left:3px solid var(--accent);padding-left:1rem}.actions{display:flex;gap:.75rem;margin-top:2rem}.button{border:1px solid var(--accent);border-radius:5px;padding:.6rem 1rem}.primary{background:var(--accent);color:var(--card)}a{color:var(--link)}section{border-top:1px solid var(--line);padding:4rem 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem}.card{background:var(--card);border:1px solid var(--line);padding:1.25rem}pre{background:#1e1812;color:#e6ddcb;padding:1.25rem;overflow:auto;border-radius:7px}footer{border-top:1px solid var(--line);padding:2rem 0;color:var(--muted)}
+  </style>
+</head>
+<body><div class="wrap">
+  <nav><span class="brand">packwright</span><span><a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a> · <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/README.zh-CN.md">中文</a></span></nav>
+  <main>
+    <header class="hero"><p class="brand">Codex · Claude Code · Cursor</p><h1>Move a working agent. See the receipt first.</h1><p class="sub">Packwright shows exactly what will be generated, carried, rewritten, and excluded before it writes. The output is files you can read.</p><p class="trust">Packwright itself makes no network requests and sends no telemetry. Your files stay under your control; your coding runtime's own data policy still applies.</p><div class="actions"><a class="button primary" href="#quickstart">Get started</a><a class="button" href="https://github.com/pioneerjeff-labs/packwright">View source</a></div></header>
+    <section><h2>One source, three native layouts</h2><div class="grid"><div class="card"><b>Codex</b><p><code>AGENTS.md</code> and <code>.agents/skills/</code></p></div><div class="card"><b>Claude Code</b><p><code>CLAUDE.md</code> and <code>.claude/skills/</code></p></div><div class="card"><b>Cursor</b><p><code>.cursor/rules/*.mdc</code></p></div></div></section>
+    <section id="quickstart"><h2>Quickstart</h2><pre>python -m pip install packwright==0.1.0rc1
+packwright init --template creator -o work/mira
+packwright build work/mira --adapter codex -o pack/mira
+packwright install pack/mira --target project/mira</pre></section>
+    <section><h2>Dry run, then confirm</h2><pre>packwright migrate project/mira --to cursor \
+  --target project/mira-cursor --dry-run
+
+# review the receipt, then:
+packwright migrate project/mira --to cursor \
+  --target project/mira-cursor --yes
+packwright doctor project/mira-cursor
+packwright score project/mira-cursor</pre></section>
+  </main>
+  <footer><span>Packwright · MIT</span><a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">Use with your agent</a></footer>
+</div></body></html>

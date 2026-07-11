@@ -1,0 +1,17 @@
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include README.md
+include README.zh-CN.md
+include SECURITY.md
+recursive-include docs *.md
+recursive-include examples *.yaml *.md
+recursive-include assets *.css *.svg
+recursive-include site *.html *.css *.svg
+recursive-include templates *
+recursive-include specs *.yaml
+recursive-include tests *.py
+recursive-include scripts *.py *.sh
+recursive-include .github *.yml *.yaml *.md
+global-exclude *.py[cod]
+global-exclude .DS_Store

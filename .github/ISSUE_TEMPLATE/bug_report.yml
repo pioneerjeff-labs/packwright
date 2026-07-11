@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible Packwright defect using synthetic data.
+title: "[bug] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Packwright version
+      placeholder: Output of packwright --version
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter
+      options: [codex, claude-code, cursor, not adapter-specific]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Include commands and sanitized output. Never attach real memory or credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

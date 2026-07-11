@@ -4,16 +4,46 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "packwright"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Agent pack compiler for Codex, Claude Code, and Cursor."
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "pioneerjeff-labs"}]
 dependencies = [
   "PyYAML>=6.0",
 ]
+keywords = ["agents", "codex", "claude-code", "cursor", "migration"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/pioneerjeff-labs/packwright"
+Documentation = "https://github.com/pioneerjeff-labs/packwright#readme"
+Issues = "https://github.com/pioneerjeff-labs/packwright/issues"
+Changelog = "https://github.com/pioneerjeff-labs/packwright/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+test = ["build>=1.2", "twine>=5.1"]
+dev = ["build>=1.2", "twine>=5.1"]
 
 [project.scripts]
 packwright = "packwright.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools]
+include-package-data = false
