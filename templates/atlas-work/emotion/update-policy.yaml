@@ -1,0 +1,53 @@
+version: "0.6"
+kind: CharacterEmotionUpdatePolicy
+status: structured_reserved
+runtime: not_implemented
+mode_contract:
+  light:
+    policy: event_triggered
+    record_when:
+      - emotion/trust/PAD continuity is explicitly discussed
+      - concrete feedback changes future behavior
+      - a milestone creates useful relationship or preference evidence
+      - conflict, repair, boundary pressure, or vulnerability affects future tone
+      - the user states a stable collaboration preference
+    avoid_recording:
+      - ordinary task progress
+      - generic praise without new information
+      - repeated warmth already captured by recent turns
+    overhead_target: "<1% global token overhead"
+  always:
+    policy: per_meaningful_turn
+    record_when:
+      - each meaningful user turn can produce a compact turn record
+    constraints:
+      - still apply habituation and salience
+      - never load full emotion logs into prompts
+      - trust still changes only through settlement
+    overhead_target: "~3% target global token overhead, capped at <=5%"
+  paused:
+    policy: no_lifecycle_updates
+    behavior: Preserve local state but do not record or modulate turns until resumed.
+record_policy:
+  required_for_codex_sidecar: true
+  properties:
+    - deterministic and side-effect free
+    - returns record_turn/respond_only/settle_later decisions
+    - returns fixed appraisal, reason, salience, trust_eligible, and reply_bias fields
+    - does not call an LLM
+habituation:
+  generic_praise: Repeated generic praise loses weight across recent turns.
+  bypass_when:
+    - concrete feedback
+    - milestone warmth
+    - repair
+    - boundary pressure
+    - stable future preference
+rules:
+  - Default to light mode when an adapter supports an Emotion Engine sidecar.
+  - Do not auto-update state unless the sidecar is installed and the interaction calls for it.
+  - Emotion state is a modulation layer, not an identity layer; do not edit entry files because PAD changes.
+  - Prefer concrete collaboration facts over inferred emotions.
+  - Keep state summaries compact enough to preserve the global token budget.
+  - Do not store sensitive emotional details unless they directly improve future work.
+  - Preserve user correction as a design signal when it changes future behavior.

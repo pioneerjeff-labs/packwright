@@ -1,0 +1,25 @@
+{
+  "status": "structured_reserved",
+  "runtime": "not_implemented",
+  "affect": {
+    "warmth": 0.5,
+    "tension": 0.0,
+    "energy": 0.5,
+    "uncertainty": 0.0
+  },
+  "relationship": {
+    "trust": 0.5,
+    "familiarity": 0.5,
+    "repair_needed": false,
+    "continuity_strength": 0.0
+  },
+  "work_context": {
+    "pressure": 0.0,
+    "ambiguity": 0.0,
+    "interruption_risk": 0.0
+  },
+  "provenance": {
+    "last_updated": "",
+    "evidence": []
+  }
+}

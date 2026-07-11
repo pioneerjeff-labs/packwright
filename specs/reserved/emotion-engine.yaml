@@ -1,0 +1,21 @@
+version: "0.1"
+kind: ReservedRuntimeSpec
+metadata:
+  name: emotion-engine
+  title: Emotion Engine Reserved Spec
+status: structured_reserved
+runtime: not_implemented
+boundary:
+  mvp_behavior: The Packwright mechanism may define Emotion Engine schema, policies, activation costs, and adapter-side installation contracts. Mechanism specs remain platform-neutral and do not implement the runtime directly.
+  allowed_now:
+    - spec_reference
+    - checker_visibility
+    - state_schema
+    - update_policy
+    - voice_modulation_policy
+    - adapter_sidecar_contract
+    - token_overhead_estimate
+  not_allowed_now:
+    - mechanism_level_affect_runtime
+    - durable_memory_mixed_with_runtime_state
+    - platform_neutral_model_loop_integration

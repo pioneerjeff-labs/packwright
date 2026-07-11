@@ -1,0 +1,39 @@
+version: "0.5"
+kind: AtlasContextLoading
+policy: Keep stable identity and voice hot; load state, procedures, and emotion references only when needed.
+tiers:
+  - id: hot_cache
+    purpose: Always-present small context.
+    includes:
+      - platform entry file
+      - stable identity
+      - stable voice rules
+      - durable operating boundaries
+      - SessionStart facts
+  - id: on_demand
+    purpose: Larger procedures, state files, relationship context, and knowledge.
+    includes:
+      - skills
+      - memory index
+      - profile
+      - workstream router
+      - project memory
+      - session index
+      - source map
+      - todos
+      - collaboration calibration
+      - workspace artifact index
+      - emotion policy references
+      - weekly archives
+  - id: workspace
+    purpose: Drafts, durable artifacts, and archived outputs.
+    includes:
+      - workspace/<domain>/drafts
+      - workspace/<domain>/artifacts
+      - workspace/<domain>/archive
+      - workspace/shared
+  - id: scratch
+    purpose: Temporary work products that should not become durable memory automatically.
+    includes:
+      - scratch files
+      - one-off generated artifacts

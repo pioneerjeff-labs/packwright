@@ -1,0 +1,22 @@
+version: "0.5"
+kind: AtlasEmotionStateSchema
+status: structured_reserved
+runtime: not_implemented
+schema:
+  affect:
+    warmth: number_0_to_1
+    tension: number_0_to_1
+    energy: number_0_to_1
+    uncertainty: number_0_to_1
+  relationship:
+    trust: number_0_to_1
+    familiarity: number_0_to_1
+    repair_needed: boolean
+    continuity_strength: number_0_to_1
+  work_context:
+    pressure: number_0_to_1
+    ambiguity: number_0_to_1
+    interruption_risk: number_0_to_1
+  provenance:
+    last_updated: iso8601_or_blank
+    evidence: list_of_source_pointers

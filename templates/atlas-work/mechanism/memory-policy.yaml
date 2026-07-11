@@ -1,0 +1,84 @@
+version: "0.5"
+kind: AtlasMemoryPolicy
+policy:
+  long_term_memory: files
+  prompt_context: cache
+  cloud_state: reserved
+  emotion_runtime: optional_sidecar
+tracks:
+  index:
+    id: memory-index
+    file: memory/index.md
+    purpose: Default memory router; points to active projects and canonical memory owners.
+  profile:
+    id: profile
+    file: memory/profile.md
+    purpose: Stable user, subject, learner, creator, or relationship facts that matter across workstreams.
+  workstreams:
+    id: workstreams
+    file: memory/workstreams.md
+    purpose: Domain router for long-running work areas; route to workstream detail files when useful.
+  workstream_details:
+    id: workstream-details
+    dir: memory/workstreams
+    purpose: Optional detailed domain files for mature workstreams and future agent promotion.
+  projects:
+    id: projects
+    dir: memory/projects
+    purpose: Source of truth for project state, decisions, open loops, and project-specific sources.
+  session_index:
+    id: session-index
+    file: memory/session-index.md
+    purpose: Lookup index for prior sessions, thread recall, and earlier work references.
+  source_map:
+    id: source-map
+    file: memory/source-map.md
+    purpose: Source registry for lookup and verification paths; not a knowledge base.
+  todos:
+    id: todos
+    file: memory/todos.md
+    purpose: Action queues and commitments.
+  collaboration:
+    id: collaboration
+    file: memory/collaboration.md
+    purpose: Learned collaboration calibrations and repair notes.
+  pinned:
+    id: pinned-memory
+    file: memory/pinned.md
+    purpose: Compatibility-only in the MVP; avoid using it as a normal memory layer.
+  light:
+    id: recent-activity
+    file: memory/recent-activity.md
+    purpose: Compatibility alias for memory/session-index.md.
+  heavy:
+    id: save-context
+    skill: skills/save-context/SKILL.md
+    purpose: Persist context into the canonical owner files.
+  relationship:
+    id: relationship-state
+    file: memory/relationship-state.md
+    purpose: Compatibility alias for memory/collaboration.md.
+  emotion:
+    id: emotion-state
+    file: memory/emotion-state.json.example
+    purpose: Reserve machine-readable affect state shape without implementing runtime updates.
+  workspace:
+    id: workspace
+    root: workspace
+    purpose: Domain-first draft, artifact, and archive storage; important outputs are indexed in memory/source-map.md.
+rules:
+  - Current state should not be copied into the platform entry file.
+  - Each memory item should have exactly one canonical owner.
+  - Use memory/index.md as the default router, not a state source.
+  - Stable cross-workstream user or subject facts belong in memory/profile.md.
+  - Long-running domains belong in memory/workstreams.md; detailed domain state can move into memory/workstreams/<slug>.md.
+  - Project state belongs in memory/projects/<slug>.md.
+  - Session recall belongs in memory/session-index.md and should not duplicate project state.
+  - Lookup paths and source-of-truth pointers belong in memory/source-map.md.
+  - Generated work products belong in workspace/<domain>/drafts, workspace/<domain>/artifacts, or workspace/<domain>/archive, with durable pointers in source-map.
+  - Collaboration calibrations belong in memory/collaboration.md, not the platform entry file unless intentionally promoted during a versioned cleanup.
+  - Pinned memory remains a compatibility layer in the MVP.
+  - Emotion Engine runtime state must stay separate from durable memory files.
+  - Local cache files are read-only unless a sync or save skill explicitly owns the write.
+  - Scratch work should stay under _scratch and should not be loaded by default.
+  - Shared cloud memory is reserved for later; the MVP does not implement cloud sync.

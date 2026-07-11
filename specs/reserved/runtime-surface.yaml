@@ -1,0 +1,16 @@
+version: "0.1"
+kind: ReservedRuntimeSpec
+metadata:
+  name: pulse
+  title: Pulse Reserved Spec
+status: reserved
+runtime: not_implemented
+boundary:
+  mvp_behavior: The Packwright mechanism may reference Pulse as a future runtime surface, but must not execute it.
+  allowed_now:
+    - spec_reference
+    - checker_visibility
+  not_allowed_now:
+    - runtime_adapter
+    - cloud_execution
+    - memory_runtime

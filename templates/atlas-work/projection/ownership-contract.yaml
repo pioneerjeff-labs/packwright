@@ -1,0 +1,69 @@
+version: "0.5"
+kind: AtlasOwnershipContract
+core_owns:
+  - identity
+  - voice
+  - operating_boundaries
+  - memory_policy
+  - skill_semantics
+  - emotion_schema
+  - emotion_update_policy
+adapter_owns:
+  - file_layout
+  - platform_entry_rendering
+  - platform_skill_rendering
+  - platform_manifest
+runtime_owns:
+  codex:
+    model_loop: true
+    thread_state: true
+    tools: true
+    hooks: project_config_or_plugin_dependent
+    durable_memory_source_of_truth: false
+  claude-code:
+    model_loop: true
+    thread_state: true
+    tools: true
+    hooks: SessionStart
+    durable_memory_source_of_truth: false
+  cursor:
+    model_loop: true
+    thread_state: true
+    tools: true
+    hooks: project_rules
+    durable_memory_source_of_truth: false
+  hermes:
+    status: reserved
+    model_loop: runtime_defined
+    durable_memory_source_of_truth: runtime_defined
+  openclaw:
+    status: reserved
+    model_loop: runtime_contract
+    tools: runtime_contract
+    durable_memory_source_of_truth: runtime_contract
+memory_source_of_truth:
+  durable_state: Atlas local memory files unless a future adapter explicitly declares a different source.
+  memory_index: memory/index.md
+  profile: memory/profile.md
+  workstream_router: memory/workstreams.md
+  workstream_details: memory/workstreams/*.md
+  project_memory: memory/projects/*.md
+  session_index: memory/session-index.md
+  source_map: memory/source-map.md
+  todos: memory/todos.md
+  collaboration: memory/collaboration.md
+  workspace_outputs: workspace/
+  emotion_state: .emotion-engine/codex-state.json only when enabled
+emotion_engine:
+  owns_planning: false
+  owns_response_generation: false
+  owns_tool_execution: false
+  owns_runtime_state_updates: adapter_sidecar_only
+  owns_voice_modulation_policy: true
+  owns_memory_write_suggestions: true
+rules:
+  - Adapters may project Atlas semantics but must not change them.
+  - Platform entry files must not contain run state or implementation-scope details.
+  - Memory owner boundaries are part of the character contract, not optional style guidance.
+  - A platform capability may be omitted, but it must not be faked.
+  - Emotion Engine state updates are adapter sidecar behavior, not durable memory writes.

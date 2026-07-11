@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "packwright"
+version = "0.1.0"
+description = "Agent pack compiler for Codex, Claude Code, and Cursor."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+packwright = "packwright.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

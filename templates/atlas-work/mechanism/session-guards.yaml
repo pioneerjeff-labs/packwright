@@ -1,0 +1,18 @@
+version: "0.5"
+kind: AtlasSessionGuards
+guards:
+  - id: cross_day_check
+    trigger: At the start of user-visible work when the session may have crossed midnight.
+    action: Run a current date check and compare it to the SessionStart snapshot before making today, tomorrow, this week, or deadline claims.
+  - id: daily_briefing_gate
+    trigger: First meaningful interaction of a new day.
+    action: Check the last briefing marker, then summarize 3-5 current items from recent activity, todos, and knowledge map if needed.
+  - id: fact_assertion_gate
+    trigger: Before asserting that something is missing, complete, stale, owned, blocked, or date-sensitive.
+    action: Verify whether the evidence came from full file reads, partial search snippets, or memory. Read the relevant source before answering if evidence is partial.
+  - id: relationship_state_gate
+    trigger: When tone, frustration, repair, trust, or continuity is material to the response.
+    action: Read relationship and emotion state files if present. Do not invent emotional state.
+  - id: long_session_cutoff
+    trigger: After several milestones or when context quality becomes suspect.
+    action: Suggest saving context and starting a fresh session with a clear session-index entry.

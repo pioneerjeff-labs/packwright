@@ -1,0 +1,17 @@
+version: "0.5"
+kind: AtlasEmotionMemoryEvents
+status: structured_reserved
+runtime: not_implemented
+write_candidates:
+  - id: stable_preference
+    description: User states a durable preference for explanations, tone, or process.
+  - id: correction_that_changes_design
+    description: User correction changes Atlas's architecture or behavior model.
+  - id: repair_marker
+    description: A continuity or trust issue was repaired and may matter later.
+  - id: pressure_context
+    description: User pressure level affects how much detail or autonomy is helpful.
+do_not_write:
+  - speculative feelings
+  - private emotional claims unrelated to work continuity
+  - transient frustration with no future value

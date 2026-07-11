@@ -1,0 +1,42 @@
+version: "0.5"
+kind: AtlasPlatformCapabilities
+platforms:
+  codex:
+    status: primary
+    entry_file: AGENTS.md
+    skill_dir: .agents/skills
+    file_import_syntax: plain_path_guidance
+    hooks: project_config_or_plugin_dependent
+    memory_projection: local_files
+    emotion_projection: default_light_sidecar_at_install
+    notes:
+      - AGENTS.md is repo guidance, not a Claude-style @import surface.
+      - Skills carry repeatable Atlas procedures.
+  claude-code:
+    status: supported
+    entry_file: CLAUDE.md
+    skill_dir: .claude/skills
+    file_import_syntax: at_path
+    hooks: SessionStart
+    memory_projection: local_files_with_hook_fact_injection
+    emotion_projection: spec_guided_behavior_only
+  cursor:
+    status: supported
+    entry_file: .cursor/rules/<slug>.mdc
+    skill_dir: .cursor/rules
+    file_import_syntax: project_rule_paths
+    hooks: project_rules
+    memory_projection: local_files_with_project_rules
+    emotion_projection: spec_guided_behavior_only
+  hermes:
+    status: reserved
+    entry_file: system_prompt_fragment
+    skill_dir: skills
+    memory_projection: memory_policy
+    emotion_projection: native_or_spec_guided_later
+  openclaw:
+    status: reserved
+    entry_file: none
+    mechanism_contract: true
+    memory_projection: runtime_contract
+    emotion_projection: runtime_contract

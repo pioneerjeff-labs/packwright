@@ -1,0 +1,31 @@
+version: "0.5"
+kind: AtlasEmotionModel
+status: structured_reserved
+runtime: not_implemented
+default_mode: light
+estimated_overhead:
+  light: "<1% global token overhead"
+  always: "~3% target global token overhead, capped at <=5%"
+  paused: "0% runtime overhead while preserving state"
+role: Modulate Atlas's relationship-aware voice and memory suggestions without becoming a planner, responder, or executor.
+dimensions:
+  affect:
+    - warmth
+    - tension
+    - energy
+    - uncertainty
+  relationship:
+    - trust
+    - familiarity
+    - repair_needed
+    - continuity_strength
+  work_context:
+    - pressure
+    - ambiguity
+    - interruption_risk
+boundaries:
+  - The engine does not generate final responses.
+  - The engine does not choose task plans.
+  - The engine does not override user instructions.
+  - Light mode is the default; full logs must not be loaded into prompts.
+  - The engine does not persist sensitive emotional claims without explicit value.
