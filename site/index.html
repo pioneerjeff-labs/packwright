@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <link rel="canonical" href="https://packwright.dev/">
   <title>Packwright — Move a working coding agent</title>
   <meta name="description" content="Migrate a working coding-agent setup between Codex, Claude Code, and Cursor, with a receipt before writing.">
@@ -19,8 +19,8 @@
     <section><h2>One source, three native layouts</h2><div class="grid"><div class="card"><b>Codex</b><p><code>AGENTS.md</code> and <code>.agents/skills/</code></p></div><div class="card"><b>Claude Code</b><p><code>CLAUDE.md</code> and <code>.claude/skills/</code></p></div><div class="card"><b>Cursor</b><p><code>.cursor/rules/*.mdc</code></p></div></div></section>
     <section id="quickstart"><h2>Quickstart</h2><pre>python -m pip install packwright==0.1.0rc1
 packwright init --template creator -o work/mira
-packwright build work/mira --adapter codex -o pack/mira
-packwright install pack/mira --target project/mira</pre></section>
+packwright build work/mira --adapter codex -o pack/mira-codex
+packwright install pack/mira-codex --target project/mira-codex</pre></section>
     <section><h2>Dry run, then confirm</h2><pre>packwright migrate project/mira --to cursor \
   --target project/mira-cursor --dry-run
 

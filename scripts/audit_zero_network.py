@@ -76,7 +76,7 @@ def audit_python(path):
 def audit_landing(path):
     parser = LandingParser()
     parser.feed(path.read_text(encoding="utf-8"))
-    required = {"default-src 'none'", "style-src 'unsafe-inline'", "script-src 'unsafe-inline'", "img-src 'self' data:"}
+    required = {"default-src 'none'", "style-src 'unsafe-inline'", "script-src 'none'", "img-src 'self' data:"}
     csp = parser.csp[0] if parser.csp else ""
     if not parser.csp: parser.issues.append("missing CSP meta tag")
     for directive in required:

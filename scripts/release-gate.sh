@@ -2,33 +2,62 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-QUICK="${1:-}"
 PYTHON="${PYTHON:-python3}"
-cd "$ROOT"
-export PYTHONPYCACHEPREFIX="${TMPDIR:-/private/tmp}/packwright-pycache"
+TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+QUICK=false
+LOCAL_PREPUBLISH=false
+OUTPUT_DIR=""
 
-test "$(git remote | wc -l | tr -d ' ')" = 0
-test "$(git tag --list | wc -l | tr -d ' ')" = 0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quick) QUICK=true ;;
+    --local-prepublish) LOCAL_PREPUBLISH=true ;;
+    --output-dir)
+      shift
+      [[ $# -gt 0 ]] || { echo "--output-dir requires a path" >&2; exit 2; }
+      OUTPUT_DIR="$1"
+      ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+cd "$ROOT"
+mkdir -p "$TEMP_ROOT"
+export PYTHONPYCACHEPREFIX="$TEMP_ROOT/packwright-pycache"
+
+if [[ "$LOCAL_PREPUBLISH" == true ]]; then
+  test -z "$(git remote)"
+  test -z "$(git tag --list)"
+fi
+
 git diff --check
 "$PYTHON" -m compileall -q src tests scripts
 "$PYTHON" -m unittest discover -s tests
 "$PYTHON" scripts/audit_zero_network.py
 "$PYTHON" scripts/audit_public_tree.py
 
-if [[ "$QUICK" == "--quick" ]]; then
+if [[ "$QUICK" == true ]]; then
   exit 0
 fi
 
-WORK="$(mktemp -d "${TMPDIR:-/private/tmp}/packwright-release.XXXXXX")"
+WORK="$(mktemp -d "$TEMP_ROOT/packwright-release.XXXXXX")"
 cleanup() {
   rm -rf "$WORK" "$ROOT/build" "$ROOT/src/packwright.egg-info"
 }
 trap cleanup EXIT
-"$PYTHON" -m build --outdir "$WORK/dist"
-"$PYTHON" -m twine check "$WORK"/dist/*
 
-SDIST="$(find "$WORK/dist" -name 'packwright-*.tar.gz' -print -quit)"
-WHEEL="$(find "$WORK/dist" -name 'packwright-*.whl' -print -quit)"
+if [[ -n "$OUTPUT_DIR" ]]; then
+  DIST="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
+else
+  DIST="$WORK/dist"
+fi
+
+"$PYTHON" -m build --outdir "$DIST"
+"$PYTHON" -m twine check "$DIST"/*
+
+SDIST="$(find "$DIST" -name 'packwright-*.tar.gz' -print -quit)"
+WHEEL="$(find "$DIST" -name 'packwright-*.whl' -print -quit)"
 mkdir "$WORK/sdist"
 tar -xzf "$SDIST" -C "$WORK/sdist"
 SDIR="$(find "$WORK/sdist" -mindepth 1 -maxdepth 1 -type d -print -quit)"
@@ -52,11 +81,14 @@ done
 "$PW" doctor "$WORK/migrated-cursor"
 "$PW" score "$WORK/migrated-cursor"
 
-"$PYTHON" - "$WORK/dist" "$ROOT/release-artifacts.json" <<'PY'
+"$PYTHON" - "$DIST" "$DIST/release-artifacts.json" <<'PY'
 import hashlib, json, pathlib, sys
 dist = pathlib.Path(sys.argv[1])
 items = []
 for path in sorted(dist.iterdir()):
+    if path.name == "release-artifacts.json" or not path.is_file():
+        continue
     items.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size})
 pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": "0.1.0rc1", "artifacts": items}, indent=2) + "\n", encoding="utf-8")
 PY
+echo "release artifacts: $DIST"
