@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import subprocess
 import tempfile
 import unittest
@@ -76,6 +77,25 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn('TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"', script)
         self.assertIn("--output-dir", script)
         self.assertNotIn("/private/tmp", script)
+
+    def test_public_quickstart_and_migration_paths_share_one_contract(self):
+        documents = [ROOT / "README.md", ROOT / "README.zh-CN.md", ROOT / "site" / "index.html"]
+        required = (
+            "packwright init --template creator -o work/mira",
+            "packwright build work/mira --adapter codex -o pack/mira-codex",
+            "packwright install pack/mira-codex --target project/mira-codex",
+            "packwright migrate project/mira-codex",
+            "--target project/mira-cursor --dry-run",
+            "--target project/mira-cursor --yes",
+            "packwright doctor project/mira-cursor",
+            "packwright score project/mira-cursor",
+        )
+        for path in documents:
+            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8").replace("\\", " "))
+            with self.subTest(path=path.name):
+                for command in required:
+                    self.assertIn(command, text)
+                self.assertIsNone(re.search(r"packwright migrate project/mira(?!-codex)", text))
 
 
 if __name__ == "__main__": unittest.main()

@@ -21,11 +21,11 @@
 packwright init --template creator -o work/mira
 packwright build work/mira --adapter codex -o pack/mira-codex
 packwright install pack/mira-codex --target project/mira-codex</pre></section>
-    <section><h2>Dry run, then confirm</h2><pre>packwright migrate project/mira --to cursor \
+    <section><h2>Dry run, then confirm</h2><pre>packwright migrate project/mira-codex --to cursor \
   --target project/mira-cursor --dry-run
 
 # review the receipt, then:
-packwright migrate project/mira --to cursor \
+packwright migrate project/mira-codex --to cursor \
   --target project/mira-cursor --yes
 packwright doctor project/mira-cursor
 packwright score project/mira-cursor</pre></section>
