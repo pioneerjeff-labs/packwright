@@ -30,7 +30,7 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/pioneerjeff-labs/packwright"
+Homepage = "https://pioneerjeff-labs.github.io/packwright/"
 Documentation = "https://github.com/pioneerjeff-labs/packwright#readme"
 Issues = "https://github.com/pioneerjeff-labs/packwright/issues"
 Changelog = "https://github.com/pioneerjeff-labs/packwright/blob/main/CHANGELOG.md"

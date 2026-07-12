@@ -152,5 +152,25 @@ class PublicTreeAuditTest(unittest.TestCase):
                 if "setup-python" in text:
                     self.assertIn("actions/setup-python@v6", text)
 
+    def test_pages_workflow_stages_the_landing_and_runtime_assets(self):
+        workflow = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
+        for expected in (
+            "actions/configure-pages@v6",
+            "actions/upload-pages-artifact@v5",
+            "actions/deploy-pages@v5",
+            "cp -R site/. _site/",
+            "cp -R assets/fonts/. _site/assets/fonts/",
+            "cp assets/social-preview.png _site/assets/social-preview.png",
+        ):
+            self.assertIn(expected, workflow)
+        self.assertIn("pages: write", workflow)
+        self.assertIn("id-token: write", workflow)
+
+        landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+        pages_url = "https://pioneerjeff-labs.github.io/packwright/"
+        self.assertIn(f'<link rel="canonical" href="{pages_url}">', landing)
+        self.assertIn(f'<meta property="og:url" content="{pages_url}">', landing)
+        self.assertIn(f'{pages_url}assets/social-preview.png', landing)
+
 
 if __name__ == "__main__": unittest.main()
