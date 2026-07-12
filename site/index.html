@@ -1,34 +1,290 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <link rel="canonical" href="https://packwright.dev/">
-  <title>Packwright — Move a working coding agent</title>
-  <meta name="description" content="Migrate a working coding-agent setup between Codex, Claude Code, and Cursor, with a receipt before writing.">
-  <style>
-    :root{color-scheme:light dark;--bg:#f8f4ec;--card:#fffdf8;--text:#221c15;--muted:#5c5245;--line:#dfd5c2;--accent:#9c4f16;--link:#2e5f86} @media(prefers-color-scheme:dark){:root{--bg:#221c15;--card:#2c251c;--text:#efe8db;--muted:#b3a78f;--line:#453c2f;--accent:#d9935a;--link:#8ab6d9}}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}.wrap{max-width:68rem;margin:auto;padding:1.5rem}nav,footer{display:flex;justify-content:space-between;gap:1rem;align-items:center}.brand,code,pre{font-family:ui-monospace,monospace}.hero{padding:8rem 0 6rem;max-width:52rem}h1{font-size:clamp(2.5rem,7vw,5rem);line-height:1.03;margin:.25rem 0 1.5rem}h2{font-size:2rem;margin-top:0}.sub{font-size:1.25rem;color:var(--muted)}.trust{border-left:3px solid var(--accent);padding-left:1rem}.actions{display:flex;gap:.75rem;margin-top:2rem}.button{border:1px solid var(--accent);border-radius:5px;padding:.6rem 1rem}.primary{background:var(--accent);color:var(--card)}a{color:var(--link)}section{border-top:1px solid var(--line);padding:4rem 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem}.card{background:var(--card);border:1px solid var(--line);padding:1.25rem}pre{background:#1e1812;color:#e6ddcb;padding:1.25rem;overflow:auto;border-radius:7px}footer{border-top:1px solid var(--line);padding:2rem 0;color:var(--muted)}
-  </style>
-</head>
-<body><div class="wrap">
-  <nav><span class="brand">packwright</span><span><a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a> · <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/README.zh-CN.md">中文</a></span></nav>
-  <main>
-    <header class="hero"><p class="brand">Codex · Claude Code · Cursor</p><h1>Move a working agent. See the receipt first.</h1><p class="sub">Packwright shows exactly what will be generated, carried, rewritten, and excluded before it writes. The output is files you can read.</p><p class="trust">Packwright itself makes no network requests and sends no telemetry. Your files stay under your control; your coding runtime's own data policy still applies.</p><div class="actions"><a class="button primary" href="#quickstart">Get started</a><a class="button" href="https://github.com/pioneerjeff-labs/packwright">View source</a></div></header>
-    <section><h2>One source, three native layouts</h2><div class="grid"><div class="card"><b>Codex</b><p><code>AGENTS.md</code> and <code>.agents/skills/</code></p></div><div class="card"><b>Claude Code</b><p><code>CLAUDE.md</code> and <code>.claude/skills/</code></p></div><div class="card"><b>Cursor</b><p><code>.cursor/rules/*.mdc</code></p></div></div></section>
-    <section id="quickstart"><h2>Quickstart</h2><pre>python -m pip install packwright==0.1.0rc1
-packwright init --template creator -o work/mira
-packwright build work/mira --adapter codex -o pack/mira-codex
-packwright install pack/mira-codex --target project/mira-codex</pre></section>
-    <section><h2>Dry run, then confirm</h2><pre>packwright migrate project/mira-codex --to cursor \
-  --target project/mira-cursor --dry-run
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<link rel="canonical" href="https://packwright.dev/">
+<link rel="preload" href="../assets/fonts/fraunces-latin-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../assets/fonts/inter-latin-400-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
+<title>Packwright — Build your agent once. Carry it everywhere.</title>
+<meta name="description" content="Packwright compiles one agent definition into native packs for Codex, Claude Code, and Cursor. Build your agent once. Carry it everywhere.">
+<!-- repo 落地待办: (1) og:image 指向正式域名下的 social preview;
+     (2) migrate 段落插入真实 mp4 后 hero 动画可保留. -->
+<style>
+  @font-face{font-family:"Fraunces";font-style:normal;font-weight:600;font-display:swap;src:url("../assets/fonts/fraunces-latin-600.woff2") format("woff2");}
+  @font-face{font-family:"Inter";font-style:normal;font-weight:100 900;font-display:swap;src:url("../assets/fonts/inter-latin-400-600.woff2") format("woff2");}
+  @font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:400;font-display:swap;src:url("../assets/fonts/ibm-plex-mono-latin-400.woff2") format("woff2");}
+  @font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:500;font-display:swap;src:url("../assets/fonts/ibm-plex-mono-latin-500.woff2") format("woff2");}
+  :root {
+    --pw-bg:#F8F4EC; --pw-bg-raised:#FFFDF8; --pw-text:#221C15; --pw-text-muted:#5C5245;
+    --pw-border:#DFD5C2; --pw-accent:#9C4F16; --pw-accent-hover:#7F3F10; --pw-on-accent:#FFFDF8;
+    --pw-link:#2E5F86; --pw-code-bg:#F0EADC; --mark-ink:#221C15;
+    --f-display:"Fraunces",Georgia,"Times New Roman","Noto Serif SC",serif;
+    --f-body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,"PingFang SC",monospace;
+  }
+  @media (prefers-color-scheme: dark){:root{
+    --pw-bg:#221C15; --pw-bg-raised:#2C251C; --pw-text:#EFE8DB; --pw-text-muted:#B3A78F;
+    --pw-border:#453C2F; --pw-accent:#D9935A; --pw-accent-hover:#E5A873; --pw-on-accent:#221C15;
+    --pw-link:#8AB6D9; --pw-code-bg:#1A150F; --mark-ink:#EFE8DB;}}
+  :root[data-theme="dark"]{
+    --pw-bg:#221C15; --pw-bg-raised:#2C251C; --pw-text:#EFE8DB; --pw-text-muted:#B3A78F;
+    --pw-border:#453C2F; --pw-accent:#D9935A; --pw-accent-hover:#E5A873; --pw-on-accent:#221C15;
+    --pw-link:#8AB6D9; --pw-code-bg:#1A150F; --mark-ink:#EFE8DB;}
+  :root[data-theme="light"]{
+    --pw-bg:#F8F4EC; --pw-bg-raised:#FFFDF8; --pw-text:#221C15; --pw-text-muted:#5C5245;
+    --pw-border:#DFD5C2; --pw-accent:#9C4F16; --pw-accent-hover:#7F3F10; --pw-on-accent:#FFFDF8;
+    --pw-link:#2E5F86; --pw-code-bg:#F0EADC; --mark-ink:#221C15;}
 
-# review the receipt, then:
-packwright migrate project/mira-codex --to cursor \
-  --target project/mira-cursor --yes
-packwright doctor project/mira-cursor
-packwright score project/mira-cursor</pre></section>
-  </main>
-  <footer><span>Packwright · MIT</span><a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">Use with your agent</a></footer>
-</div></body></html>
+  body{margin:0;background:var(--pw-bg);color:var(--pw-text);font-family:var(--f-body);line-height:1.6;}
+  .wrap{max-width:72rem;margin:0 auto;padding:0 1.5rem;}
+  a{color:var(--pw-link);text-decoration:none;}
+  a:hover{text-decoration:underline;}
+  :focus-visible{outline:2px solid var(--pw-accent);outline-offset:2px;}
+  .btn-accent:focus-visible{outline-color:var(--pw-on-accent);outline-offset:-4px;}
+
+  nav{display:flex;align-items:center;justify-content:space-between;padding:1.25rem 0;}
+  .brand{display:flex;align-items:center;gap:.6rem;color:var(--pw-text);}
+  .brand svg{width:28px;height:28px;flex:none;}
+  .brand .wm{font-family:var(--f-mono);font-weight:500;font-size:1.15rem;}
+  nav .links{display:flex;gap:1.5rem;font-family:var(--f-mono);font-size:.9rem;}
+  nav .links a{color:var(--pw-text-muted);}
+
+  .hero{padding:4.5rem 0 3rem;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:3rem;align-items:center;}
+  @media (max-width:900px){.hero{grid-template-columns:1fr;padding-top:2.5rem;}}
+  h1{font-family:var(--f-display);font-weight:600;font-size:2rem;line-height:1.08;letter-spacing:-.015em;margin:0 0 1.1rem;text-wrap:balance;}
+  .sub{font-size:1.125rem;color:var(--pw-text-muted);margin:0 0 .8rem;max-width:34rem;}
+  .trust{font-family:var(--f-mono);font-size:.8rem;color:var(--pw-text-muted);margin:0 0 1.8rem;}
+  .cta{display:flex;gap:.9rem;flex-wrap:wrap;}
+  .btn{display:inline-block;padding:.65rem 1.35rem;border-radius:6px;font-weight:600;font-size:.95rem;cursor:pointer;border:1px solid transparent;}
+  .btn-accent{background:var(--pw-accent);color:var(--pw-on-accent);}
+  .btn-accent:hover{background:var(--pw-accent-hover);text-decoration:none;}
+  .btn-ghost{border-color:var(--pw-text-muted);color:var(--pw-text);}
+  .btn-ghost:hover{border-color:var(--pw-text);text-decoration:none;}
+
+  .term{background:#1E1812;border:2px solid #7A6C55;border-radius:10px;font-family:var(--f-mono);
+    font-size:.82rem;line-height:1.75;overflow:hidden;box-shadow:0 8px 28px rgba(34,28,21,.18);}
+  .term-bar{display:flex;gap:6px;padding:.75rem 1rem .25rem;}
+  .term-bar i{width:10px;height:10px;border-radius:50%;border:1.5px solid #8E816F;}
+  .term-body{padding:.5rem 1.15rem 1.15rem;height:29em;overflow:auto;}
+  .term-body div{white-space:pre;}
+  .t-fg{color:#E6DDCB;} .t-dim{color:#8E816F;} .t-ok{color:#8FA662;}
+  .t-note{color:#C9A554;} .t-cop{color:#D9935A;}
+  .cursor{display:inline-block;width:.55em;height:1.1em;background:#D9935A;vertical-align:text-bottom;animation:blink 1s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+  @media (prefers-reduced-motion:reduce){.cursor{animation:none;}}
+
+  section{padding:3.25rem 0;}
+  @media (min-width:900px){section{padding:4.5rem 0;}}
+  .sec-border{border-top:1px solid var(--pw-border);}
+  h2{font-family:var(--f-display);font-weight:600;font-size:1.5rem;line-height:1.2;margin:0 0 .6rem;text-wrap:balance;}
+  .lede{color:var(--pw-text-muted);max-width:42rem;margin:0 0 1.75rem;}
+  .diagram{width:100%;max-width:660px;height:auto;display:block;margin:0 auto 2rem;color:var(--pw-text);}
+  .diagram text{font-family:var(--f-mono);}
+  .figcap{font-family:var(--f-mono);font-size:.72rem;color:var(--pw-text-muted);text-align:center;margin:-1rem 0 2rem;}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;}
+  .card{background:var(--pw-bg-raised);border:1px solid var(--pw-border);border-radius:6px;padding:1.2rem 1.3rem;}
+  .card h3{font-weight:600;font-size:1.02rem;margin:0 0 .35rem;}
+  .card p{margin:0;font-size:.9rem;color:var(--pw-text-muted);}
+  code{font-family:var(--f-mono);background:var(--pw-code-bg);padding:.12em .35em;border-radius:3px;font-size:.9em;}
+
+  /* drive it your way */
+  .drive{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.25rem;align-items:stretch;}
+  .panel{background:var(--pw-bg-raised);border:1px solid var(--pw-border);border-radius:8px;padding:1.2rem 1.3rem;display:flex;flex-direction:column;gap:.8rem;}
+  .panel .tag{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-text-muted);}
+  .chat{display:flex;flex-direction:column;gap:.55rem;font-size:.86rem;}
+  .bub{max-width:88%;padding:.5rem .8rem;border-radius:8px;line-height:1.5;border:1px solid var(--pw-border);}
+  .bub-u{align-self:flex-end;background:var(--pw-code-bg);border-bottom-right-radius:2px;}
+  .bub-a{align-self:flex-start;background:var(--pw-bg);border-bottom-left-radius:2px;}
+  .bub-a em{font-style:normal;color:var(--pw-text-muted);}
+  .panel .foot{margin-top:auto;font-size:.85rem;}
+  .minicode{font-family:var(--f-mono);font-size:.8rem;line-height:1.9;background:var(--pw-code-bg);border-radius:6px;padding:.8rem 1rem;overflow-x:auto;white-space:pre;}
+
+  .qs{max-width:56rem;}
+  .codeblock{position:relative;background:#1E1812;border:1px solid #453C2F;border-radius:8px;padding:1.1rem 1.25rem;overflow-x:auto;}
+  .codeblock pre{margin:0;font-family:var(--f-mono);font-size:.85rem;line-height:1.8;color:#E6DDCB;}
+  .copybtn{position:absolute;top:.6rem;right:.6rem;font-family:var(--f-mono);font-size:.72rem;
+    background:transparent;color:#B3A78F;border:1px solid #453C2F;border-radius:4px;padding:.25rem .6rem;cursor:pointer;}
+  .copybtn:hover{color:#EFE8DB;border-color:#8E816F;}
+
+  .winline{font-family:var(--f-display);font-weight:600;font-size:1rem;line-height:1.35;max-width:44rem;margin:0 0 1.75rem;text-wrap:balance;}
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;}
+  .step{border-left:2px solid var(--pw-border);padding-left:1.1rem;}
+  .step .n{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-text-muted);display:block;margin-bottom:.3rem;}
+  .step p{margin:.2rem 0 0;font-size:.9rem;color:var(--pw-text-muted);}
+  .step code{font-size:.8rem;}
+
+  footer{border-top:1px solid var(--pw-border);padding:2rem 0 3rem;margin-top:2rem;
+    display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap;align-items:center;}
+  footer .fbrand{display:flex;align-items:center;gap:.5rem;}
+  footer .fbrand svg{width:20px;height:20px;}
+  footer .fbrand span{font-family:var(--f-mono);font-size:.85rem;color:var(--pw-text-muted);}
+  footer .flinks{display:flex;gap:1.25rem;font-family:var(--f-mono);font-size:.8rem;flex-wrap:wrap;}
+  footer .flinks a,footer .note{color:var(--pw-text-muted);}
+  footer .note{font-size:.75rem;max-width:26rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav aria-label="main">
+    <a class="brand" href="#" aria-label="Packwright home">
+      <svg viewBox="0 0 100 100" role="img" aria-label="Packwright dovetail mark">
+        <path fill="var(--mark-ink)" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
+        <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
+      </svg>
+      <span class="wm">packwright</span>
+    </a>
+    <div class="links">
+      <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
+      <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/CLI.md">Docs</a>
+      <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/README.zh-CN.md">中文</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <h1>Build your agent once. Carry it everywhere.</h1>
+      <p class="sub">Packwright compiles one agent definition — rules, memory, skills, workspace — into native packs for Codex, Claude Code, and Cursor. The output is files you can read.</p>
+      <p class="trust">Local-first. Zero telemetry. Packwright itself makes no network requests. Your coding runtime's data policy still applies.</p>
+      <div class="cta">
+        <a class="btn btn-accent" href="#quickstart">Get started</a>
+        <a class="btn btn-ghost" href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
+      </div>
+    </div>
+    <div class="term" aria-label="terminal demo: plain files in · plain files out">
+      <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="term-body" id="term"></div>
+    </div>
+  </header>
+
+  <section class="sec-border" id="why">
+    <h2>Why not just prompts?</h2>
+    <p class="lede">Every AI coding tool wants its own instruction format. Packwright compiles one agent definition into native packs instead:</p>
+    <svg class="diagram" viewBox="0 0 660 240" role="img" aria-label="One agent definition compiles through Packwright into native packs for Codex, Claude Code, and Cursor">
+      <rect x="16" y="60" width="160" height="120" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="28" y="84" font-size="12.5" fill="currentColor">agent definition</text>
+      <text x="28" y="106" font-size="11" fill="var(--pw-text-muted)">persona</text>
+      <text x="28" y="124" font-size="11" fill="var(--pw-text-muted)">memory contract</text>
+      <text x="28" y="142" font-size="11" fill="var(--pw-text-muted)">skills</text>
+      <text x="28" y="160" font-size="11" fill="var(--pw-text-muted)">workspace</text>
+      <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">packwright</text>
+      <line x1="354" y1="120" x2="468" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="468" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="468" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M460 42 L468 44 L462 50" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M461 115 L468 120 L461 125" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M462 190 L468 196 L460 198" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <rect x="470" y="16" width="172" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="484" y="38" font-size="12.5" fill="currentColor">Codex</text>
+      <text x="484" y="58" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
+      <rect x="470" y="92" width="172" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="484" y="114" font-size="12.5" fill="currentColor">Claude Code</text>
+      <text x="484" y="134" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
+      <rect x="470" y="168" width="172" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="484" y="190" font-size="12.5" fill="currentColor">Cursor</text>
+      <text x="484" y="210" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
+    </svg>
+    <div class="cols">
+      <div class="card"><h3>Portable</h3><p>One agent definition projects into a native pack for each runtime.</p></div>
+      <div class="card"><h3>Checkable</h3><p><code>score</code> grades every pack — the rules are in the repo.</p></div>
+      <div class="card"><h3>Repairable</h3><p><code>doctor --fix</code> repairs drift without touching memory.</p></div>
+    </div>
+  </section>
+
+  <section class="sec-border" id="drive">
+    <h2>Drive it your way</h2>
+    <p class="lede">Terminal person? Drive it by hand. Not? Hand one prompt to your coding agent and just talk.</p>
+    <div class="drive">
+      <div class="panel">
+        <span class="tag">with your agent</span>
+        <div class="chat" aria-label="example conversation with a coding agent">
+          <div class="bub bub-u">Move my agent from Claude Code to Codex.</div>
+          <div class="bub bub-a">Preview first — carrying <code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code>. Excluded: <code>CLAUDE.md</code> and Claude Code-only files. <em>Proceed?</em></div>
+          <div class="bub bub-u">Go.</div>
+          <div class="bub bub-a">Done — <code>project/mira-codex</code> · installed score 100.0.</div>
+        </div>
+        <p class="foot">Paste one prompt into Claude Code, Codex, or Cursor: <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
+      </div>
+      <div class="panel">
+        <span class="tag">by hand</span>
+        <div class="minicode">packwright build      # compile a pack
+packwright migrate    # move it, state intact
+packwright doctor     # repair drift</div>
+        <p class="foot">Six public commands, plain files, no daemon. <a href="#quickstart">Quickstart ↓</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec-border qs" id="quickstart">
+    <h2>Quickstart</h2>
+    <p class="lede">Install the RC, then three commands to an installed Claude Code target.</p>
+    <div class="codeblock">
+      <button class="copybtn" id="copyqs" aria-label="Copy quickstart commands">copy</button>
+      <pre id="qs-code">python -m pip install packwright==0.1.0rc1
+packwright init --template creator -o work/mira
+packwright build work/mira --adapter claude-code -o pack/mira-claude
+packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
+    </div>
+  </section>
+
+  <section class="sec-border" id="migrate">
+    <h2>Move a working agent. Carry its working state.</h2>
+    <p class="winline"><code>migrate --dry-run</code> reports what the destination runtime can't carry — without writing anything.</p>
+    <svg class="diagram" viewBox="0 0 660 262" role="img" aria-label="Migrating from a Claude Code target to a Codex target: portable state carries over; runtime-specific files stay behind and are reported first">
+      <rect x="16" y="28" width="208" height="200" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="30" y="52" font-size="12.5" fill="currentColor">claude code target</text>
+      <rect x="30" y="66" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="6 3" opacity=".55"/>
+      <text x="42" y="83" font-size="11" fill="var(--pw-text-muted)">CLAUDE.md</text>
+      <rect x="30" y="100" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="6 3" opacity=".55"/>
+      <text x="42" y="117" font-size="11" fill="var(--pw-text-muted)">.claude/**</text>
+      <rect x="30" y="134" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="42" y="151" font-size="11" fill="currentColor">memory/ · knowledge/</text>
+      <rect x="30" y="168" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="42" y="185" font-size="11" fill="currentColor">workspace/ · sources/</text>
+      <text x="30" y="216" font-size="9.5" fill="var(--pw-text-muted)">dashed = runtime-only · reported first</text>
+      <line x1="224" y1="160" x2="428" y2="160" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M420 154 L428 160 L420 166" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <rect x="262" y="144" width="132" height="20" fill="var(--pw-bg)"/>
+      <text x="328" y="158" font-size="10.5" fill="var(--pw-text-muted)" text-anchor="middle">portable state</text>
+      <rect x="436" y="28" width="208" height="200" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="450" y="52" font-size="12.5" fill="currentColor">codex target</text>
+      <rect x="450" y="66" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="462" y="83" font-size="11" fill="currentColor">AGENTS.md</text>
+      <text x="462" y="60" font-size="9.5" fill="var(--pw-text-muted)"></text>
+      <rect x="450" y="100" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="462" y="117" font-size="11" fill="currentColor">memory/ · knowledge/</text>
+      <rect x="450" y="134" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="462" y="151" font-size="11" fill="currentColor">workspace/ · sources/</text>
+      <text x="450" y="216" font-size="9.5" fill="var(--pw-text-muted)">native files · hashes verified</text>
+    </svg>
+    <div class="steps">
+      <div class="step"><span class="n">preview</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --dry-run</code><p>See the full carry/exclude report. Nothing is written.</p></div>
+      <div class="step"><span class="n">migrate</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --yes</code><p><code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code> carry with hash verification.</p></div>
+      <div class="step"><span class="n">verify</span><code>packwright doctor project/mira-codex<br>packwright score project/mira-codex</code><p>The installed destination is checked and graded. Receipts included.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="fbrand">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <path fill="var(--mark-ink)" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
+        <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
+      </svg>
+      <span>packwright · MIT</span>
+    </div>
+    <div class="flinks">
+      <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
+      <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/CLI.md">Docs</a>
+      <a href="https://pypi.org/project/packwright/0.1.0rc1/">PyPI</a>
+    </div>
+  </footer>
+</div>
+
+<script src="demo.js" defer></script>
+</body>
+</html>

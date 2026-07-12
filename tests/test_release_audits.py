@@ -47,6 +47,19 @@ class ZeroNetworkAuditTest(unittest.TestCase):
             path.write_text('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; img-src \'self\' data:">', encoding="utf-8")
             self.assertTrue(audit.audit_landing(path))
 
+    def test_landing_allows_self_hosted_script_and_audits_its_source(self):
+        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            html = root / "index.html"
+            script = root / "demo.js"
+            html.write_text(f'<meta http-equiv="Content-Security-Policy" content="{csp}"><script src="demo.js" defer></script>', encoding="utf-8")
+            script.write_text("document.body.dataset.ready = 'true';", encoding="utf-8")
+            self.assertEqual(audit.audit_landing(html), [])
+            self.assertEqual(audit.audit_javascript(script), [])
+            script.write_text("fetch('/beacon');", encoding="utf-8")
+            self.assertTrue(audit.audit_javascript(script))
+
 
 class PublicTreeAuditTest(unittest.TestCase):
     def test_old_name_variants_are_detected(self):
@@ -98,20 +111,46 @@ class PublicTreeAuditTest(unittest.TestCase):
         documents = [ROOT / "README.md", ROOT / "README.zh-CN.md", ROOT / "site" / "index.html"]
         required = (
             "packwright init --template creator -o work/mira",
-            "packwright build work/mira --adapter codex -o pack/mira-codex",
-            "packwright install pack/mira-codex --target project/mira-codex",
-            "packwright migrate project/mira-codex",
-            "--target project/mira-cursor --dry-run",
-            "--target project/mira-cursor --yes",
-            "packwright doctor project/mira-cursor",
-            "packwright score project/mira-cursor",
+            "packwright build work/mira --adapter claude-code -o pack/mira-claude",
+            "packwright install pack/mira-claude --adapter claude-code --target project/mira-claude",
+            "packwright migrate project/mira-claude",
+            "--target project/mira-codex --dry-run",
+            "--target project/mira-codex --yes",
+            "packwright doctor project/mira-codex",
+            "packwright score project/mira-codex",
         )
         for path in documents:
             text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8").replace("\\", " "))
             with self.subTest(path=path.name):
                 for command in required:
                     self.assertIn(command, text)
-                self.assertIsNone(re.search(r"packwright migrate project/mira(?!-codex)", text))
+                self.assertIsNone(re.search(r"packwright migrate project/mira(?!-claude)", text))
+
+    def test_public_entrypoints_share_brand_and_receipt_contract(self):
+        readmes = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
+        for path in readmes:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertIn("assets/mark-dark.svg", text)
+                self.assertIn("assets/mark-light.svg", text)
+                self.assertIn("Build your agent once. Carry it everywhere.", text)
+                for receipt_kind in ("generated", "carried", "rewritten", "excluded"):
+                    self.assertIn(f"`{receipt_kind}`", text)
+
+        landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("Packwright dovetail mark", landing)
+        self.assertIn("Build your agent once. Carry it everywhere.", landing)
+        self.assertIn("plain files in · plain files out", landing)
+        self.assertIn('<script src="demo.js" defer></script>', landing)
+        self.assertTrue((ROOT / "site" / "demo.js").is_file())
+
+    def test_workflows_use_node24_setup_python_action(self):
+        for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                self.assertNotIn("actions/setup-python@v5", text)
+                if "setup-python" in text:
+                    self.assertIn("actions/setup-python@v6", text)
 
 
 if __name__ == "__main__": unittest.main()

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "packwright"
 version = "0.1.0rc1"
-description = "Agent pack compiler for Codex, Claude Code, and Cursor."
+description = "Build, install, and migrate portable agent packs across Codex, Claude Code, and Cursor."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and usage help
+    url: https://github.com/pioneerjeff-labs/packwright/discussions/categories/q-a
+    about: Ask how to build, install, migrate, diagnose, or score a Packwright target.

@@ -1,0 +1,45 @@
+name: Adapter request
+description: Propose a runtime after checking its official file and extension contracts.
+title: "[adapter] "
+labels: [adapter]
+body:
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime
+      placeholder: Runtime and current version
+    validations:
+      required: true
+  - type: textarea
+    id: documentation
+    attributes:
+      label: Official documentation
+      description: Link the runtime's official instructions, rules, skills, or extension documentation.
+      placeholder: One URL per line
+    validations:
+      required: true
+  - type: textarea
+    id: layout
+    attributes:
+      label: Native file layout
+      description: Where does this runtime expect instructions, reusable skills, memory routing, and project rules?
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Known projection boundaries
+      description: What Packwright state or behavior cannot be represented in this runtime?
+    validations:
+      required: true
+  - type: dropdown
+    id: testing
+    attributes:
+      label: Real-runtime testing
+      description: Can you test generated packs in an actual installation?
+      options:
+        - Yes, I can test locally
+        - I can help review but not run it
+        - No
+    validations:
+      required: true

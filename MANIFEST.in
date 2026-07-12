@@ -6,8 +6,8 @@ include README.zh-CN.md
 include SECURITY.md
 recursive-include docs *.md
 recursive-include examples *.yaml *.md
-recursive-include assets *.css *.svg
-recursive-include site *.html *.css *.svg
+recursive-include assets *.css *.svg *.png *.woff2 *.txt
+recursive-include site *.html *.css *.svg *.js
 recursive-include templates *
 recursive-include specs *.yaml
 recursive-include tests *.py

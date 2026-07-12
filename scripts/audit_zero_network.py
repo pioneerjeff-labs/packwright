@@ -76,12 +76,21 @@ def audit_python(path):
 def audit_landing(path):
     parser = LandingParser()
     parser.feed(path.read_text(encoding="utf-8"))
-    required = {"default-src 'none'", "style-src 'unsafe-inline'", "script-src 'none'", "img-src 'self' data:"}
+    required = {"default-src 'none'", "style-src 'unsafe-inline'", "img-src 'self' data:"}
     csp = parser.csp[0] if parser.csp else ""
     if not parser.csp: parser.issues.append("missing CSP meta tag")
     for directive in required:
         if directive not in csp: parser.issues.append(f"CSP missing {directive}")
+    if "script-src 'none'" not in csp and "script-src 'self'" not in csp:
+        parser.issues.append("CSP must allow no scripts or self-hosted scripts only")
+    if re.search(r"script-src[^;]*'unsafe-inline'", csp, re.I):
+        parser.issues.append("CSP permits inline JavaScript")
     return [f"{path}: {item}" for item in parser.issues]
+
+
+def audit_javascript(path):
+    text = path.read_text(encoding="utf-8")
+    return [f"{path}: network JavaScript call"] if JS_AUTO.search(text) else []
 
 
 def run(root):
@@ -93,6 +102,8 @@ def run(root):
     for path in sorted((root / "site").rglob("*.css")):
         if CSS_AUTO.search(path.read_text(encoding="utf-8")):
             issues.append(f"{path}: external CSS auto-load")
+    for path in sorted((root / "site").rglob("*.js")):
+        issues.extend(audit_javascript(path))
     return issues
 
 

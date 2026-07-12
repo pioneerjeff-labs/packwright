@@ -22,12 +22,12 @@ Check the installed version with `packwright --version`.
 ```bash
 packwright init --template creator --user-name Morgan -o work/mira
 packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target ~/dev/project
-packwright migrate ~/dev/project --to cursor --target ~/dev/project-cursor --json --dry-run
-packwright migrate ~/dev/project --to cursor --target ~/dev/project-cursor --json --yes
-packwright doctor ~/dev/project-cursor
+packwright install pack/mira-claude --adapter claude-code --target project/mira-claude
+packwright migrate project/mira-claude --to codex --target project/mira-codex --json --dry-run
+packwright migrate project/mira-claude --to codex --target project/mira-codex --json --yes
+packwright doctor project/mira-codex
 packwright score work/mira --adapter claude-code --pack-dir pack/mira-claude
-packwright score ~/dev/project-cursor
+packwright score project/mira-codex
 ```
 
 `init` and `build` accept `-o` as the short form of `--out-dir`. `install`,
