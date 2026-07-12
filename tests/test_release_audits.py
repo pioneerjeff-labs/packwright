@@ -78,6 +78,22 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn("--output-dir", script)
         self.assertNotIn("/private/tmp", script)
 
+    def test_release_workflow_uses_isolated_trusted_publishing_job(self):
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("release:\n    types: [published]", workflow)
+        self.assertNotIn("workflow_dispatch", workflow)
+        self.assertIn("Verify release tag matches package version", workflow)
+        self.assertIn('test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION"', workflow)
+        self.assertIn('scripts/release-gate.sh --output-dir "$RUNNER_TEMP/packwright-dist"', workflow)
+        self.assertIn("needs: build", workflow)
+        self.assertIn("name: pypi", workflow)
+        self.assertIn("id-token: write", workflow)
+        self.assertIn("pypa/gh-action-pypi-publish@release/v1", workflow)
+
+        build_job, publish_job = workflow.split("\n  publish:\n", 1)
+        self.assertNotIn("id-token: write", build_job)
+        self.assertNotIn("actions/checkout", publish_job)
+
     def test_public_quickstart_and_migration_paths_share_one_contract(self):
         documents = [ROOT / "README.md", ROOT / "README.zh-CN.md", ROOT / "site" / "index.html"]
         required = (
