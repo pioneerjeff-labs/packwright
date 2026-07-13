@@ -121,18 +121,20 @@
   .panel .foot{margin-top:auto;font-size:.85rem;}
   .minicode{font-family:var(--f-mono);font-size:.8rem;line-height:1.9;background:var(--pw-code-bg);border-radius:6px;padding:.8rem 1rem;overflow-x:auto;white-space:pre;}
 
-  .qs{max-width:56rem;}
+  .qs{max-width:56rem;margin-inline:auto;text-align:center;}
+  .qs .lede{margin-left:auto;margin-right:auto;}
   .runtime-tabs{display:inline-flex;gap:.35rem;padding:.3rem;background:var(--pw-code-bg);border:1px solid var(--pw-border);border-radius:7px;margin:0 0 .85rem;}
   .runtime-tab{font-family:var(--f-mono);font-size:.78rem;color:var(--pw-text-muted);background:transparent;border:0;border-radius:4px;padding:.45rem .8rem;cursor:pointer;}
   .runtime-tab[aria-selected="true"]{background:var(--pw-bg-raised);color:var(--pw-text);box-shadow:0 1px 3px rgba(34,28,21,.12);}
   .runtime-tab:hover{color:var(--pw-text);}
-  .codeblock{position:relative;background:#1E1812;border:1px solid #453C2F;border-radius:8px;padding:1.1rem 1.25rem;overflow-x:auto;}
+  .codeblock{position:relative;background:#1E1812;border:1px solid #453C2F;border-radius:8px;padding:1.1rem 1.25rem;overflow-x:auto;text-align:left;}
   .codeblock pre{margin:0;font-family:var(--f-mono);font-size:.85rem;line-height:1.8;color:#E6DDCB;}
   .copybtn{position:absolute;top:.6rem;right:.6rem;font-family:var(--f-mono);font-size:.72rem;
     background:transparent;color:#B3A78F;border:1px solid #453C2F;border-radius:4px;padding:.25rem .6rem;cursor:pointer;}
   .copybtn:hover{color:#EFE8DB;border-color:#8E816F;}
+  @media (max-width:520px){.codeblock{padding-top:2.8rem;}}
 
-  .winline{font-family:var(--f-display);font-weight:600;font-size:1rem;line-height:1.35;max-width:44rem;margin:0 0 1.75rem;text-wrap:balance;}
+  .winline{color:var(--pw-text-muted);max-width:42rem;margin:0 0 1.75rem;}
   .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;}
   .step{border-left:2px solid var(--pw-border);padding-left:1.1rem;}
   .step .n{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-text-muted);display:block;margin-bottom:.3rem;}
@@ -195,21 +197,21 @@
       <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">packwright</text>
-      <line x1="354" y1="120" x2="468" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <line x1="354" y1="120" x2="468" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <line x1="354" y1="120" x2="468" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M460 42 L468 44 L462 50" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M461 115 L468 120 L461 125" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M462 190 L468 196 L460 198" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <rect x="470" y="16" width="172" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="484" y="38" font-size="12.5" fill="currentColor">Codex</text>
-      <text x="484" y="58" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
-      <rect x="470" y="92" width="172" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="484" y="114" font-size="12.5" fill="currentColor">Claude Code</text>
-      <text x="484" y="134" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
-      <rect x="470" y="168" width="172" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="484" y="190" font-size="12.5" fill="currentColor">Cursor</text>
-      <text x="484" y="210" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
+      <line x1="354" y1="120" x2="450" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M442 42 L450 44 L444 50" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M443 115 L450 120 L443 125" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M444 190 L450 196 L442 198" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <rect x="452" y="16" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="38" font-size="12.5" fill="currentColor">Codex</text>
+      <text x="466" y="58" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
+      <rect x="452" y="92" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="114" font-size="12.5" fill="currentColor">Claude Code</text>
+      <text x="466" y="134" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
+      <rect x="452" y="168" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="190" font-size="12.5" fill="currentColor">Cursor</text>
+      <text x="466" y="210" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
     </svg>
     <div class="cols">
       <div class="card"><h3>Portable</h3><p>One agent definition projects into a native pack for each runtime.</p></div>
@@ -257,7 +259,7 @@ packwright doctor     # repair drift</div>
       <text x="42" y="151" font-size="11" fill="currentColor">memory/ · knowledge/</text>
       <rect x="30" y="168" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
       <text x="42" y="185" font-size="11" fill="currentColor">workspace/ · sources/</text>
-      <text x="30" y="216" font-size="9.5" fill="var(--pw-text-muted)">dashed = runtime-only · reported first</text>
+      <text x="30" y="216" font-size="9.5" fill="var(--pw-text-muted)">runtime-only · reported first</text>
       <line x1="224" y1="160" x2="428" y2="160" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <path d="M420 154 L428 160 L420 166" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="262" y="144" width="132" height="20" fill="var(--pw-bg)"/>
@@ -282,7 +284,7 @@ packwright doctor     # repair drift</div>
 
   <section class="sec-border qs" id="quickstart">
     <h2>Choose your runtime. Get started.</h2>
-    <p class="lede">Install the RC, then run three commands to build and install a native target. Claude is selected by default.</p>
+    <p class="lede">Install the RC, then run three commands to build and install a native target.</p>
     <div class="runtime-tabs" role="tablist" aria-label="Choose a runtime">
       <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>

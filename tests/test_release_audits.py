@@ -158,6 +158,8 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn('<script src="demo.js" defer></script>', chinese_landing)
         self.assertIn('href="index.html"', chinese_landing)
         self.assertIn('href="zh-CN.html"', landing)
+        self.assertNotIn("Claude is selected by default", landing)
+        self.assertNotIn("默认选择 Claude", chinese_landing)
 
         for document in (landing, chinese_landing):
             self.assertLess(document.index('id="migrate"'), document.index('id="quickstart"'))
