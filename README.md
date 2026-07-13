@@ -16,6 +16,18 @@
 </p>
 
 <p align="center">
+  <a href="https://pioneerjeff-labs.github.io/packwright/">
+    <img alt="Open the Packwright live product website" src="assets/social-preview.png" width="800">
+  </a>
+</p>
+
+<p align="center">
+  <strong><a href="https://pioneerjeff-labs.github.io/packwright/">Explore the live product website →</a></strong><br>
+  Watch the animated CLI, follow a Claude Code → Codex migration, and switch the Quickstart between Claude, Codex, and Cursor.<br>
+  <a href="https://pioneerjeff-labs.github.io/packwright/">English</a> · <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a>
+</p>
+
+<p align="center">
   <a href="https://pioneerjeff-labs.github.io/packwright/"><img alt="Packwright website" src="https://img.shields.io/badge/website-live-9C4F16?style=flat-square"></a>
   <a href="https://github.com/pioneerjeff-labs/packwright/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/pioneerjeff-labs/packwright/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5C5245?style=flat-square"></a>
@@ -120,6 +132,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Documentation
 
+- [Live product website](https://pioneerjeff-labs.github.io/packwright/) · [简体中文](https://pioneerjeff-labs.github.io/packwright/zh-CN.html)
 - [CLI contract](docs/CLI.md)
 - [Use Packwright with your coding agent](docs/USE_WITH_YOUR_AGENT.md)
 - [Character drafting](docs/CHARACTER_DRAFTING.md)

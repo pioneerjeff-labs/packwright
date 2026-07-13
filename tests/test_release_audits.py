@@ -138,9 +138,20 @@ class PublicTreeAuditTest(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertIn("assets/mark-dark.svg", text)
                 self.assertIn("assets/mark-light.svg", text)
-                self.assertIn("Build your agent once. Carry it everywhere.", text)
+                self.assertIn("assets/social-preview.png", text)
+                self.assertIn("https://pioneerjeff-labs.github.io/packwright/", text)
+                self.assertIn("https://pioneerjeff-labs.github.io/packwright/zh-CN.html", text)
                 for receipt_kind in ("generated", "carried", "rewritten", "excluded"):
                     self.assertIn(f"`{receipt_kind}`", text)
+
+        readme = readmes[0].read_text(encoding="utf-8")
+        chinese_readme = readmes[1].read_text(encoding="utf-8")
+        self.assertIn("Build your agent once. Carry it everywhere.", readme)
+        self.assertIn("Explore the live product website", readme)
+        self.assertIn("一次构建 Agent。随心迁移，无缝运行。", chinese_readme)
+        self.assertIn("查看在线产品网站", chinese_readme)
+        self.assertLess(readme.index("assets/social-preview.png"), readme.index("## Start with your coding agent"))
+        self.assertLess(chinese_readme.index("assets/social-preview.png"), chinese_readme.index("## 先交给 coding agent 代驾"))
 
         landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
         self.assertIn("Packwright dovetail mark", landing)

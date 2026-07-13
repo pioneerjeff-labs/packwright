@@ -8,11 +8,23 @@
 
 <h1 align="center">Packwright</h1>
 
-<p align="center"><strong>Build your agent once. Carry it everywhere.</strong></p>
+<p align="center"><strong>一次构建 Agent。随心迁移，无缝运行。</strong></p>
 
 <p align="center">
   一次定义 agent 的规则、记忆、skills 与工作区，编译成 Codex、Claude Code 和 Cursor 的原生 pack；<br>
   构建、安装、迁移与验证，全部落在可阅读的普通文件里。
+</p>
+
+<p align="center">
+  <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">
+    <img alt="打开 Packwright 中文产品网站" src="assets/social-preview.png" width="800">
+  </a>
+</p>
+
+<p align="center">
+  <strong><a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">查看在线产品网站 →</a></strong><br>
+  看动画终端完整跑一遍 Claude Code → Codex 迁移，并在 Claude、Codex 与 Cursor 之间切换快速开始命令。<br>
+  <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a> · <a href="https://pioneerjeff-labs.github.io/packwright/">English</a>
 </p>
 
 <p align="center">
@@ -120,6 +132,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 ## 文档
 
+- [在线产品网站](https://pioneerjeff-labs.github.io/packwright/zh-CN.html) · [English](https://pioneerjeff-labs.github.io/packwright/)
 - [CLI 契约](docs/CLI.md)
 - [交给 coding agent 使用](docs/USE_WITH_YOUR_AGENT.md)
 - [角色起草](docs/CHARACTER_DRAFTING.md)
