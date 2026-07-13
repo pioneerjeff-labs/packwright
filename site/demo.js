@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const lines = [
+  const englishLines = [
     { className: "cmd", text: "python -m pip install packwright==0.1.0rc1" },
     { className: "t-ok", text: "  ✓ installed packwright 0.1.0rc1" },
     { className: "cmd", text: "packwright init --template creator -o work/mira" },
@@ -17,6 +17,44 @@
     { className: "t-ok", text: "  ✓ carried hashes verified · installed score 100.0" },
     { className: "t-dim", text: "# the output is files you can read" },
   ];
+  const chineseLines = [
+    { className: "cmd", text: "python -m pip install packwright==0.1.0rc1" },
+    { className: "t-ok", text: "  ✓ 已安装 packwright 0.1.0rc1" },
+    { className: "cmd", text: "packwright init --template creator -o work/mira" },
+    { className: "cmd", text: "packwright build work/mira --adapter claude-code -o pack/mira-claude" },
+    { className: "t-ok", text: "  ✓ Pack 编译完成 · checker 评分 100.0" },
+    { className: "cmd", text: "packwright install pack/mira-claude --adapter claude-code --target project/mira-claude" },
+    { className: "t-ok", text: "  ✓ 已安装原生 Claude Code Target" },
+    { className: "t-dim", text: "# 该 Agent 已在 Claude Code 中稳定运行数月——现在将其迁移至 Codex" },
+    { className: "cmd", text: "packwright migrate project/mira-claude --to codex --target project/mira-codex --dry-run" },
+    { className: "t-fg", text: "  计划携带：memory/** · workspace/** · knowledge/** · sources/**" },
+    { className: "t-note", text: "  计划排除：CLAUDE.md · .claude/** · 未写入任何文件" },
+    { className: "cmd", text: "packwright migrate project/mira-claude --to codex --target project/mira-codex --yes" },
+    { className: "t-ok", text: "  ✓ 携带文件哈希验证通过 · 安装后评分 100.0" },
+    { className: "t-dim", text: "# 输出结果皆为清晰可读的普通文件" },
+  ];
+  const isChinese = document.documentElement.lang.toLowerCase().startsWith("zh");
+  const lines = isChinese ? chineseLines : englishLines;
+  const quickstartCommands = {
+    "claude-code": [
+      "python -m pip install packwright==0.1.0rc1",
+      "packwright init --template creator -o work/mira",
+      "packwright build work/mira --adapter claude-code -o pack/mira-claude",
+      "packwright install pack/mira-claude --adapter claude-code --target project/mira-claude",
+    ].join("\n"),
+    codex: [
+      "python -m pip install packwright==0.1.0rc1",
+      "packwright init --template creator -o work/mira",
+      "packwright build work/mira --adapter codex -o pack/mira-codex",
+      "packwright install pack/mira-codex --adapter codex --target project/mira-codex",
+    ].join("\n"),
+    cursor: [
+      "python -m pip install packwright==0.1.0rc1",
+      "packwright init --template creator -o work/mira",
+      "packwright build work/mira --adapter cursor -o pack/mira-cursor",
+      "packwright install pack/mira-cursor --adapter cursor --target project/mira-cursor",
+    ].join("\n"),
+  };
   const terminal = document.getElementById("term");
   const reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -95,18 +133,67 @@
     }
   }
 
+  const quickstartTabs = Array.from(document.querySelectorAll(".runtime-tab"));
+  const quickstartCode = document.getElementById("qs-code");
+  const quickstartPanel = document.getElementById("quickstart-panel");
+
+  function activateQuickstartTab(activeTab, moveFocus = false) {
+    quickstartTabs.forEach((tab) => {
+      const selected = tab === activeTab;
+      tab.setAttribute("aria-selected", selected ? "true" : "false");
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    quickstartCode.textContent = quickstartCommands[activeTab.dataset.adapter];
+    quickstartPanel.setAttribute("aria-labelledby", activeTab.id);
+    if (moveFocus) activeTab.focus();
+  }
+
+  quickstartTabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => activateQuickstartTab(tab));
+    tab.addEventListener("keydown", (event) => {
+      let nextIndex = null;
+      if (event.key === "ArrowRight") nextIndex = (index + 1) % quickstartTabs.length;
+      if (event.key === "ArrowLeft") nextIndex = (index - 1 + quickstartTabs.length) % quickstartTabs.length;
+      if (event.key === "Home") nextIndex = 0;
+      if (event.key === "End") nextIndex = quickstartTabs.length - 1;
+      if (nextIndex !== null) {
+        event.preventDefault();
+        activateQuickstartTab(quickstartTabs[nextIndex], true);
+      }
+    });
+  });
+
+  function legacyCopy(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    if (!copied) throw new Error("Clipboard copy failed");
+  }
+
+  function copyText(text) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      legacyCopy(text);
+      return Promise.resolve();
+    }
+    return navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
+  }
+
   const copyButton = document.getElementById("copyqs");
-  if (copyButton) {
+  if (copyButton && quickstartCode) {
     const idleLabel = copyButton.dataset.idleLabel || "copy";
     const copiedLabel = copyButton.dataset.copiedLabel || "copied";
     copyButton.addEventListener("click", () => {
-      const text = document.getElementById("qs-code").textContent;
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(text).then(() => {
-          copyButton.textContent = copiedLabel;
-          window.setTimeout(() => { copyButton.textContent = idleLabel; }, 1600);
-        });
-      }
+      const text = quickstartCode.textContent;
+      copyText(text).then(() => {
+        copyButton.textContent = copiedLabel;
+        window.setTimeout(() => { copyButton.textContent = idleLabel; }, 1600);
+      });
     });
   }
 })();

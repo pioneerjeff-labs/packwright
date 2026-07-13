@@ -151,11 +151,38 @@ class PublicTreeAuditTest(unittest.TestCase):
 
         chinese_landing = (ROOT / "site" / "zh-CN.html").read_text(encoding="utf-8")
         self.assertIn('<html lang="zh-CN"', chinese_landing)
-        self.assertIn("一次构建你的 agent。", chinese_landing)
-        self.assertIn("带它去任何地方。", chinese_landing)
+        self.assertIn("一次构建 Agent。", chinese_landing)
+        self.assertIn("随心迁移，无缝运行。", chinese_landing)
+        self.assertIn("自己掌舵，或让 Agent 代驾", chinese_landing)
+        self.assertIn("packwright-han-serif-600.otf", chinese_landing)
         self.assertIn('<script src="demo.js" defer></script>', chinese_landing)
         self.assertIn('href="index.html"', chinese_landing)
         self.assertIn('href="zh-CN.html"', landing)
+
+        for document in (landing, chinese_landing):
+            self.assertLess(document.index('id="migrate"'), document.index('id="quickstart"'))
+            self.assertIn('data-adapter="claude-code"', document)
+            self.assertIn('data-adapter="codex"', document)
+            self.assertIn('data-adapter="cursor"', document)
+            self.assertIn('id="runtime-claude"', document)
+            self.assertIn('id="runtime-claude" type="button" role="tab" aria-selected="true"', document)
+
+        demo = (ROOT / "site" / "demo.js").read_text(encoding="utf-8")
+        self.assertIn("const englishLines = [", demo)
+        self.assertIn("const chineseLines = [", demo)
+        self.assertIn('startsWith("zh")', demo)
+        self.assertIn("pack compiled · checker score 100.0", demo)
+        self.assertIn("Pack 编译完成 · checker 评分 100.0", demo)
+        self.assertIn('"packwright build work/mira --adapter codex -o pack/mira-codex"', demo)
+        self.assertIn('"packwright build work/mira --adapter cursor -o pack/mira-cursor"', demo)
+        self.assertIn("function legacyCopy(text)", demo)
+        self.assertIn('document.execCommand("copy")', demo)
+
+        han_font = ROOT / "assets" / "fonts" / "packwright-han-serif-600.otf"
+        self.assertTrue(han_font.is_file())
+        self.assertLess(han_font.stat().st_size, 500_000)
+        self.assertTrue((ROOT / "assets" / "fonts" / "OFL-Packwright-Han-Serif.txt").is_file())
+        self.assertIn("*.otf", (ROOT / "MANIFEST.in").read_text(encoding="utf-8"))
 
     def test_workflows_use_node24_setup_python_action(self):
         for path in (ROOT / ".github" / "workflows").glob("*.yml"):

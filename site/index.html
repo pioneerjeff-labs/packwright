@@ -65,10 +65,14 @@
   .brand .wm{font-family:var(--f-mono);font-weight:500;font-size:1.15rem;}
   nav .links{display:flex;gap:1.5rem;font-family:var(--f-mono);font-size:.9rem;}
   nav .links a{color:var(--pw-text-muted);}
+  @media (max-width:520px){
+    .brand{gap:.4rem;}.brand svg{width:24px;height:24px;}.brand .wm{font-size:.95rem;}
+    nav .links{gap:.8rem;font-size:.72rem;}
+  }
 
   .hero{padding:4.5rem 0 3rem;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:3rem;align-items:center;}
   @media (max-width:900px){.hero{grid-template-columns:1fr;padding-top:2.5rem;}}
-  h1{font-family:var(--f-display);font-weight:600;font-size:2rem;line-height:1.08;letter-spacing:-.015em;margin:0 0 1.1rem;text-wrap:balance;}
+  h1{font-family:var(--f-display);font-weight:600;font-size:clamp(2rem,3.4vw,2.75rem);line-height:1.05;letter-spacing:-.015em;margin:0 0 1.1rem;text-wrap:balance;}
   .sub{font-size:1.125rem;color:var(--pw-text-muted);margin:0 0 .8rem;max-width:34rem;}
   .trust{font-family:var(--f-mono);font-size:.8rem;color:var(--pw-text-muted);margin:0 0 1.8rem;}
   .cta{display:flex;gap:.9rem;flex-wrap:wrap;}
@@ -93,8 +97,9 @@
   section{padding:3.25rem 0;}
   @media (min-width:900px){section{padding:4.5rem 0;}}
   .sec-border{border-top:1px solid var(--pw-border);}
-  h2{font-family:var(--f-display);font-weight:600;font-size:1.5rem;line-height:1.2;margin:0 0 .6rem;text-wrap:balance;}
+  h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.5rem,2vw,1.75rem);line-height:1.2;margin:0 0 .6rem;text-wrap:balance;}
   .lede{color:var(--pw-text-muted);max-width:42rem;margin:0 0 1.75rem;}
+  .section-kicker{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-accent);margin:0 0 .55rem;}
   .diagram{width:100%;max-width:660px;height:auto;display:block;margin:0 auto 2rem;color:var(--pw-text);}
   .diagram text{font-family:var(--f-mono);}
   .figcap{font-family:var(--f-mono);font-size:.72rem;color:var(--pw-text-muted);text-align:center;margin:-1rem 0 2rem;}
@@ -117,6 +122,10 @@
   .minicode{font-family:var(--f-mono);font-size:.8rem;line-height:1.9;background:var(--pw-code-bg);border-radius:6px;padding:.8rem 1rem;overflow-x:auto;white-space:pre;}
 
   .qs{max-width:56rem;}
+  .runtime-tabs{display:inline-flex;gap:.35rem;padding:.3rem;background:var(--pw-code-bg);border:1px solid var(--pw-border);border-radius:7px;margin:0 0 .85rem;}
+  .runtime-tab{font-family:var(--f-mono);font-size:.78rem;color:var(--pw-text-muted);background:transparent;border:0;border-radius:4px;padding:.45rem .8rem;cursor:pointer;}
+  .runtime-tab[aria-selected="true"]{background:var(--pw-bg-raised);color:var(--pw-text);box-shadow:0 1px 3px rgba(34,28,21,.12);}
+  .runtime-tab:hover{color:var(--pw-text);}
   .codeblock{position:relative;background:#1E1812;border:1px solid #453C2F;border-radius:8px;padding:1.1rem 1.25rem;overflow-x:auto;}
   .codeblock pre{margin:0;font-family:var(--f-mono);font-size:.85rem;line-height:1.8;color:#E6DDCB;}
   .copybtn{position:absolute;top:.6rem;right:.6rem;font-family:var(--f-mono);font-size:.72rem;
@@ -233,19 +242,8 @@ packwright doctor     # repair drift</div>
     </div>
   </section>
 
-  <section class="sec-border qs" id="quickstart">
-    <h2>Quickstart</h2>
-    <p class="lede">Install the RC, then three commands to an installed Claude Code target.</p>
-    <div class="codeblock">
-      <button class="copybtn" id="copyqs" aria-label="Copy quickstart commands">copy</button>
-      <pre id="qs-code">python -m pip install packwright==0.1.0rc1
-packwright init --template creator -o work/mira
-packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
-    </div>
-  </section>
-
   <section class="sec-border" id="migrate">
+    <p class="section-kicker">Demo path · Claude → Codex</p>
     <h2>Move a working agent. Carry its working state.</h2>
     <p class="winline"><code>migrate --dry-run</code> reports what the destination runtime can't carry — without writing anything.</p>
     <svg class="diagram" viewBox="0 0 660 262" role="img" aria-label="Migrating from a Claude Code target to a Codex target: portable state carries over; runtime-specific files stay behind and are reported first">
@@ -279,6 +277,23 @@ packwright install pack/mira-claude --adapter claude-code --target project/mira-
       <div class="step"><span class="n">preview</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --dry-run</code><p>See the full carry/exclude report. Nothing is written.</p></div>
       <div class="step"><span class="n">migrate</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --yes</code><p><code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code> carry with hash verification.</p></div>
       <div class="step"><span class="n">verify</span><code>packwright doctor project/mira-codex<br>packwright score project/mira-codex</code><p>The installed destination is checked and graded. Receipts included.</p></div>
+    </div>
+  </section>
+
+  <section class="sec-border qs" id="quickstart">
+    <h2>Choose your runtime. Get started.</h2>
+    <p class="lede">Install the RC, then run three commands to build and install a native target. Claude is selected by default.</p>
+    <div class="runtime-tabs" role="tablist" aria-label="Choose a runtime">
+      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude</button>
+      <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
+      <button class="runtime-tab" id="runtime-cursor" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="cursor" tabindex="-1">Cursor</button>
+    </div>
+    <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
+      <button class="copybtn" id="copyqs" aria-label="Copy quickstart commands">copy</button>
+      <pre id="qs-code">python -m pip install packwright==0.1.0rc1
+packwright init --template creator -o work/mira
+packwright build work/mira --adapter claude-code -o pack/mira-claude
+packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
     </div>
   </section>
 
