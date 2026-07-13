@@ -33,7 +33,7 @@ jobs:
           cp -R site/. _site/
           cp -R assets/fonts/. _site/assets/fonts/
           cp assets/social-preview.png _site/assets/social-preview.png
-          sed -i 's#../assets/fonts/#assets/fonts/#g' _site/index.html
+          sed -i 's#../assets/fonts/#assets/fonts/#g' _site/*.html
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:

@@ -97,12 +97,14 @@
 
   const copyButton = document.getElementById("copyqs");
   if (copyButton) {
+    const idleLabel = copyButton.dataset.idleLabel || "copy";
+    const copiedLabel = copyButton.dataset.copiedLabel || "copied";
     copyButton.addEventListener("click", () => {
       const text = document.getElementById("qs-code").textContent;
       if (navigator.clipboard) {
         navigator.clipboard.writeText(text).then(() => {
-          copyButton.textContent = "copied";
-          window.setTimeout(() => { copyButton.textContent = "copy"; }, 1600);
+          copyButton.textContent = copiedLabel;
+          window.setTimeout(() => { copyButton.textContent = idleLabel; }, 1600);
         });
       }
     });

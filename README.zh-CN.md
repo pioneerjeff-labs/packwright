@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pioneerjeff-labs.github.io/packwright/"><img alt="Packwright 官网" src="https://img.shields.io/badge/官网-访问-9C4F16?style=flat-square"></a>
+  <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html"><img alt="Packwright 中文官网" src="https://img.shields.io/badge/中文官网-访问-9C4F16?style=flat-square"></a>
   <a href="https://github.com/pioneerjeff-labs/packwright/actions/workflows/ci.yml"><img alt="CI 状态" src="https://github.com/pioneerjeff-labs/packwright/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT 许可证" src="https://img.shields.io/badge/license-MIT-5C5245?style=flat-square"></a>
   <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/README-English-B87333?style=flat-square"></a>

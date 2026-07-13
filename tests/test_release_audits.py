@@ -108,7 +108,12 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertNotIn("actions/checkout", publish_job)
 
     def test_public_quickstart_and_migration_paths_share_one_contract(self):
-        documents = [ROOT / "README.md", ROOT / "README.zh-CN.md", ROOT / "site" / "index.html"]
+        documents = [
+            ROOT / "README.md",
+            ROOT / "README.zh-CN.md",
+            ROOT / "site" / "index.html",
+            ROOT / "site" / "zh-CN.html",
+        ]
         required = (
             "packwright init --template creator -o work/mira",
             "packwright build work/mira --adapter claude-code -o pack/mira-claude",
@@ -144,6 +149,14 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn('<script src="demo.js" defer></script>', landing)
         self.assertTrue((ROOT / "site" / "demo.js").is_file())
 
+        chinese_landing = (ROOT / "site" / "zh-CN.html").read_text(encoding="utf-8")
+        self.assertIn('<html lang="zh-CN"', chinese_landing)
+        self.assertIn("一次构建你的 agent。", chinese_landing)
+        self.assertIn("带它去任何地方。", chinese_landing)
+        self.assertIn('<script src="demo.js" defer></script>', chinese_landing)
+        self.assertIn('href="index.html"', chinese_landing)
+        self.assertIn('href="zh-CN.html"', landing)
+
     def test_workflows_use_node24_setup_python_action(self):
         for path in (ROOT / ".github" / "workflows").glob("*.yml"):
             text = path.read_text(encoding="utf-8")
@@ -161,6 +174,7 @@ class PublicTreeAuditTest(unittest.TestCase):
             "cp -R site/. _site/",
             "cp -R assets/fonts/. _site/assets/fonts/",
             "cp assets/social-preview.png _site/assets/social-preview.png",
+            "_site/*.html",
         ):
             self.assertIn(expected, workflow)
         self.assertIn("pages: write", workflow)
@@ -171,6 +185,14 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn(f'<link rel="canonical" href="{pages_url}">', landing)
         self.assertIn(f'<meta property="og:url" content="{pages_url}">', landing)
         self.assertIn(f'{pages_url}assets/social-preview.png', landing)
+
+        chinese_landing = (ROOT / "site" / "zh-CN.html").read_text(encoding="utf-8")
+        chinese_url = f"{pages_url}zh-CN.html"
+        self.assertIn(f'<link rel="canonical" href="{chinese_url}">', chinese_landing)
+        self.assertIn(f'<meta property="og:url" content="{chinese_url}">', chinese_landing)
+        for document in (landing, chinese_landing):
+            self.assertIn(f'hreflang="en" href="{pages_url}"', document)
+            self.assertIn(f'hreflang="zh-CN" href="{chinese_url}"', document)
 
 
 if __name__ == "__main__": unittest.main()
