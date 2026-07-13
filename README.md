@@ -16,15 +16,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pioneerjeff-labs.github.io/packwright/">
-    <img alt="Open the Packwright live product website" src="assets/social-preview.png" width="800">
-  </a>
-</p>
-
-<p align="center">
   <strong><a href="https://pioneerjeff-labs.github.io/packwright/">Explore the live product website →</a></strong><br>
   Watch the animated CLI, follow a Claude Code → Codex migration, and switch the Quickstart between Claude, Codex, and Cursor.<br>
   <a href="https://pioneerjeff-labs.github.io/packwright/">English</a> · <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://pioneerjeff-labs.github.io/packwright/">
+    <img alt="Open the Packwright live product website" src="assets/social-preview.png" width="800">
+  </a>
 </p>
 
 <p align="center">

@@ -16,15 +16,15 @@
 </p>
 
 <p align="center">
-  <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">
-    <img alt="打开 Packwright 中文产品网站" src="assets/social-preview.png" width="800">
-  </a>
-</p>
-
-<p align="center">
   <strong><a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">查看在线产品网站 →</a></strong><br>
   看动画终端完整跑一遍 Claude Code → Codex 迁移，并在 Claude、Codex 与 Cursor 之间切换快速开始命令。<br>
   <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a> · <a href="https://pioneerjeff-labs.github.io/packwright/">English</a>
+</p>
+
+<p align="center">
+  <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">
+    <img alt="打开 Packwright 中文产品网站" src="assets/social-preview.png" width="800">
+  </a>
 </p>
 
 <p align="center">
