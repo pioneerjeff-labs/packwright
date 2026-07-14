@@ -7,6 +7,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha }}
+
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -1,9 +1,11 @@
 import importlib.util
+import os
 import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("audit_zero_network", ROOT / "scripts" / "audit_zero_network.py")
@@ -84,6 +86,48 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertEqual(commits, 2)
             self.assertTrue(any("commit metadata private email" in item for item in issues))
             self.assertTrue(any("old product name" in item for item in issues))
+
+    def test_pr_head_revision_excludes_unpublished_synthetic_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@users.noreply.github.com"],
+                cwd=root,
+                check=True,
+            )
+            safe = root / "safe.txt"
+            safe.write_text("safe\n", encoding="utf-8")
+            subprocess.run(["git", "add", "safe.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "safe"], cwd=root, check=True)
+            head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+            subprocess.run(
+                ["git", "config", "user.email", "person" + "@" + "gmail.com"],
+                cwd=root,
+                check=True,
+            )
+            later = root / "later.txt"
+            later.write_text("later\n", encoding="utf-8")
+            subprocess.run(["git", "add", "later.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "synthetic"], cwd=root, check=True)
+
+            all_issues, _, all_commits = public_audit.run(root)
+            self.assertEqual(all_commits, 2)
+            self.assertTrue(any("commit metadata private email" in item for item in all_issues))
+
+            with mock.patch.dict(os.environ, {public_audit.REVISION_ENV: head}):
+                head_issues, _, head_commits = public_audit.run(root)
+            self.assertEqual(head_commits, 1)
+            self.assertFalse(any("commit metadata private email" in item for item in head_issues))
+
+    def test_ci_scans_pr_head_instead_of_github_synthetic_merge(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha }}",
+            workflow,
+        )
 
     def test_release_gate_declares_portable_temp_and_output_dir(self):
         script = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")

@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 SELF = "scripts/audit_public_tree.py"
+REVISION_ENV = "PACKWRIGHT_PUBLIC_AUDIT_REVISION"
+FULL_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
 PATTERNS = {
     "private email": re.compile(r"[A-Z0-9._%+-]+@gmail\.com", re.I),
     "private path": re.compile(r"/(?:Users|home)/[^/\s]+/"),
@@ -54,9 +56,18 @@ def candidate_issues(root):
     return issues, count
 
 
+def history_revisions(root):
+    revision = os.environ.get(REVISION_ENV, "").strip()
+    if not revision:
+        return git(root, "rev-list", "--all").decode().splitlines()
+    if not FULL_OBJECT_ID.fullmatch(revision):
+        raise ValueError(f"{REVISION_ENV} must be a full Git object ID")
+    return git(root, "rev-list", revision).decode().splitlines()
+
+
 def history_issues(root):
     issues = []
-    revisions = git(root, "rev-list", "--all").decode().splitlines()
+    revisions = history_revisions(root)
     for rev in revisions:
         metadata = git(root, "show", "-s", "--format=%ae%n%ce", rev).decode(errors="replace")
         for line in metadata.splitlines():
@@ -86,7 +97,11 @@ def run(root):
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    issues, files, commits = run(root)
+    try:
+        issues, files, commits = run(root)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if issues:
         print("\n".join(issues), file=sys.stderr)
         return 1
