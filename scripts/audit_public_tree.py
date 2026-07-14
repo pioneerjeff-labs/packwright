@@ -56,8 +56,8 @@ def candidate_issues(root):
     return issues, count
 
 
-def history_revisions(root):
-    revision = os.environ.get(REVISION_ENV, "").strip()
+def history_revisions(root, revision=None):
+    revision = (revision or "").strip()
     if not revision:
         return git(root, "rev-list", "--all").decode().splitlines()
     if not FULL_OBJECT_ID.fullmatch(revision):
@@ -65,9 +65,9 @@ def history_revisions(root):
     return git(root, "rev-list", revision).decode().splitlines()
 
 
-def history_issues(root):
+def history_issues(root, revision=None):
     issues = []
-    revisions = history_revisions(root)
+    revisions = history_revisions(root, revision)
     for rev in revisions:
         metadata = git(root, "show", "-s", "--format=%ae%n%ce", rev).decode(errors="replace")
         for line in metadata.splitlines():
@@ -89,16 +89,16 @@ def history_issues(root):
     return issues, len(revisions)
 
 
-def run(root):
+def run(root, revision=None):
     candidate, files = candidate_issues(root)
-    history, commits = history_issues(root)
+    history, commits = history_issues(root, revision)
     return candidate + history, files, commits
 
 
 def main():
     root = Path(__file__).resolve().parents[1]
     try:
-        issues, files, commits = run(root)
+        issues, files, commits = run(root, revision=os.environ.get(REVISION_ENV))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

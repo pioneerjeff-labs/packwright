@@ -3,13 +3,13 @@
   "artifacts": [
     {
       "file": "packwright-0.1.0-py3-none-any.whl",
-      "sha256": "cc8db393973e035582ae10223210213e1655854d59a97bdebf8e518988f08bac",
+      "sha256": "3508d65a7baec035213f231a3db95b487d81da5f92166ee5d20c044c5f2b0848",
       "size": 99242
     },
     {
       "file": "packwright-0.1.0.tar.gz",
-      "sha256": "68a81176ce7f2ca24f5259f2ec76a29c074b185553ab15948172a03bc9423ea9",
-      "size": 429698
+      "sha256": "4fdcc84568bb5fa0d16ef7d66a39fe41cbbed96d1a0a9fe9381e941377b008c2",
+      "size": 429803
     }
   ]
 }

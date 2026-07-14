@@ -1,11 +1,9 @@
 import importlib.util
-import os
 import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("audit_zero_network", ROOT / "scripts" / "audit_zero_network.py")
@@ -117,8 +115,7 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertEqual(all_commits, 2)
             self.assertTrue(any("commit metadata private email" in item for item in all_issues))
 
-            with mock.patch.dict(os.environ, {public_audit.REVISION_ENV: head}):
-                head_issues, _, head_commits = public_audit.run(root)
+            head_issues, _, head_commits = public_audit.run(root, revision=head)
             self.assertEqual(head_commits, 1)
             self.assertFalse(any("commit metadata private email" in item for item in head_issues))
 
@@ -127,6 +124,10 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn(
             "PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha }}",
             workflow,
+        )
+        self.assertEqual(
+            workflow.count('git fetch --no-tags origin "pull/${{ github.event.number }}/head"'),
+            2,
         )
 
     def test_release_gate_declares_portable_temp_and_output_dir(self):
