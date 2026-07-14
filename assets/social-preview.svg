@@ -19,13 +19,13 @@
       <path fill="#EFE8DB" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
       <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
     </g>
-    <text x="70" y="37" fill="#EFE8DB" font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace" font-size="30" font-weight="600">packwright</text>
+    <text x="70" y="37" fill="#EFE8DB" font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace" font-size="30" font-weight="600">Packwright</text>
   </g>
 
   <text x="80" y="258" fill="#EFE8DB" font-family="Georgia, Times New Roman, serif" font-size="72" font-weight="600" letter-spacing="-2">Build your agent once.</text>
   <text x="80" y="340" fill="#EFE8DB" font-family="Georgia, Times New Roman, serif" font-size="72" font-weight="600" letter-spacing="-2">Carry it everywhere.</text>
   <text x="84" y="414" fill="#B3A78F" font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace" font-size="22">Codex  ·  Claude Code  ·  Cursor</text>
-  <text x="84" y="496" fill="#D9935A" font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace" font-size="17" font-weight="600">THE OUTPUT IS FILES YOU CAN READ.</text>
+  <text x="84" y="496" fill="#D9935A" font-family="SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace" font-size="17" font-weight="600">NATIVE PACKS · PORTABLE STATE · MIGRATION RECEIPTS</text>
 
   <g transform="translate(1040 424) scale(1.36)">
     <path fill="#EFE8DB" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>

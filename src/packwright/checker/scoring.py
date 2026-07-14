@@ -140,7 +140,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         "entry_uses_runtime_appropriate_links",
         _entry_uses_runtime_appropriate_links(entry, adapter, skill_path),
         10,
-        "entry file uses Codex plain paths or Claude @path syntax as appropriate",
+        "entry file uses Codex plain paths or Claude Code @path syntax as appropriate",
     )
     _add(
         checks,
@@ -171,7 +171,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         "save_context_skill_projection_neutral",
         _save_context_skill_projection_neutral(skill),
         10,
-        "save-context skill avoids Codex, Claude, and adapter-specific projection wording",
+        "save-context skill avoids Codex, Claude Code, and adapter-specific projection wording",
     )
     if adapter == "claude-code":
         _add(
@@ -187,7 +187,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
             "no_fake_claude_hook",
             ".claude/settings.local.json.example" not in adapter_pack and "SessionStart" not in entry,
             10,
-            "non-Claude projection does not fake Claude SessionStart hook semantics",
+            "non-Claude Code projection does not fake Claude Code SessionStart hook semantics",
         )
     _add(
         checks,

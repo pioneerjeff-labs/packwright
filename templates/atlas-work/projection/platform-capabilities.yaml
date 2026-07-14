@@ -8,9 +8,9 @@ platforms:
     file_import_syntax: plain_path_guidance
     hooks: project_config_or_plugin_dependent
     memory_projection: local_files
-    emotion_projection: default_light_sidecar_at_install
+    emotion_projection: optional_sidecar_when_explicitly_enabled
     notes:
-      - AGENTS.md is repo guidance, not a Claude-style @import surface.
+      - AGENTS.md is repo guidance, not a Claude Code-style @import surface.
       - Skills carry repeatable Atlas procedures.
   claude-code:
     status: supported

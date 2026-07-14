@@ -37,7 +37,8 @@ from .knowledge_contract import (
 )
 from .loader import load_mechanism
 from .memory_projection import project_memory_file
-from .pack_metadata import SPEC_PATH, embed_pack_metadata, load_embedded_spec
+from .pack_metadata import LOCK_PATH, SPEC_PATH, embed_pack_metadata, load_embedded_spec
+from .path_safety import resolve_destination_path, resolve_source_path, validate_relative_path
 from .naming import (
     character_slug,
     is_valid_slug,
@@ -122,12 +123,16 @@ def install_pack(
         include_emotion_engine_codex = False
 
     artifacts = _manifest_artifacts(manifest)
-    source_paths = [(artifact, pack_dir / artifact) for artifact in artifacts]
-    missing = [artifact for artifact, path in source_paths if not path.is_file()]
-    if missing:
-        raise PackwrightValidationError([f"adapter pack is missing artifact: {artifact}" for artifact in missing])
+    source_paths = [
+        (artifact, resolve_source_path(pack_dir, artifact, "adapter pack artifact"))
+        for artifact in artifacts
+    ]
+    destinations = {
+        artifact: resolve_destination_path(target_dir, artifact, "installed artifact destination")
+        for artifact in artifacts
+    }
 
-    existing = [artifact for artifact in artifacts if (target_dir / artifact).exists()]
+    existing = [artifact for artifact, path in destinations.items() if path.exists()]
     if existing and not force:
         raise PackwrightValidationError(
             [
@@ -153,12 +158,16 @@ def install_pack(
         next_artifacts = set(artifacts)
         if sidecar_plan:
             next_artifacts.update(EMOTION_ENGINE_CODEX_ARTIFACTS)
-        stale_removed = _remove_stale_manifest_artifacts(target_dir, next_artifacts)
+        stale_removed = _remove_stale_manifest_artifacts(target_dir, next_artifacts, preserve_portable=True)
 
     target_dir.mkdir(parents=True, exist_ok=True)
     installed = []
+    preserved_portable = []
     for artifact, source_path in source_paths:
-        destination = target_dir / artifact
+        destination = destinations[artifact]
+        if force and _is_portable_path(artifact) and destination.exists():
+            preserved_portable.append(artifact)
+            continue
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, destination)
         if artifact in HANDOFF_EXECUTABLE_ARTIFACTS:
@@ -170,6 +179,8 @@ def install_pack(
         sidecars[EMOTION_ENGINE_CODEX_SIDECAR] = _install_emotion_engine_codex(target_dir, sidecar_plan)
         _mark_emotion_engine_codex_installed(target_dir, sidecars[EMOTION_ENGINE_CODEX_SIDECAR], resolved_emotion_engine_mode)
 
+    _refresh_artifact_lock(target_dir)
+
     result = {
         "adapter": adapter,
         "pack_dir": str(pack_dir),
@@ -178,6 +189,8 @@ def install_pack(
     }
     if stale_removed:
         result["stale_removed"] = stale_removed
+    if preserved_portable:
+        result["preserved_portable_state"] = sorted(preserved_portable)
     if sidecars:
         result["sidecars"] = sidecars
     return result
@@ -216,6 +229,10 @@ def refresh_emotion_engine_codex(
     )
     sidecar = _install_emotion_engine_codex(target_dir, plan)
     _mark_emotion_engine_codex_installed(target_dir, sidecar, resolved_emotion_engine_mode)
+    updated_lock_paths = ["manifest.json", *_existing_sidecar_artifacts(target_dir)]
+    if sidecar.get("agents_section_added"):
+        updated_lock_paths.append("AGENTS.md")
+    _update_artifact_lock_paths(target_dir, updated_lock_paths)
     return {
         "adapter": "codex",
         "target_dir": str(target_dir),
@@ -255,6 +272,18 @@ def doctor_target(
             manifest = _load_manifest(target_dir)
             layout_issues = _target_layout_doctor_issues(target_dir, manifest)
     result["issues"].extend(layout_issues)
+
+    lock_issues = _artifact_lock_doctor_issues(target_dir, manifest)
+    if lock_issues and fix:
+        fixed_paths = _repair_managed_artifact_drift(target_dir, manifest, lock_issues)
+        if fixed_paths:
+            result["fixes"].append({
+                "id": "managed_artifact_drift_repaired",
+                "paths": fixed_paths,
+            })
+            manifest = _load_manifest(target_dir)
+            lock_issues = _artifact_lock_doctor_issues(target_dir, manifest)
+    result["issues"].extend(lock_issues)
 
     if adapter != "codex":
         result["ok"] = not result["issues"]
@@ -298,7 +327,11 @@ def doctor_target(
             "result": refresh_result,
         })
         result["after_issues"] = after_issues
-        result["issues"] = _target_layout_doctor_issues(target_dir, refreshed_manifest) + after_issues
+        result["issues"] = (
+            _target_layout_doctor_issues(target_dir, refreshed_manifest)
+            + _artifact_lock_doctor_issues(target_dir, refreshed_manifest)
+            + after_issues
+        )
         result["warnings"] = _target_layout_doctor_warnings(target_dir)
         result["ok"] = not result["issues"]
     return result
@@ -679,11 +712,19 @@ def _portable_source_files(source_target_dir):
         root = source_target_dir / root_name
         if not root.exists():
             continue
+        resolve_source_path(source_target_dir, root_name, "portable state root", require_file=False)
         if not root.is_dir():
             raise PackwrightValidationError([f"source portable state path is not a directory: {root}"])
         for path in sorted(root.rglob("*")):
-            if path.is_file():
-                result[str(path.relative_to(source_target_dir))] = path
+            rel_path = str(path.relative_to(source_target_dir))
+            resolved = resolve_source_path(
+                source_target_dir,
+                rel_path,
+                "portable state source",
+                require_file=False,
+            )
+            if resolved.is_file():
+                result[rel_path] = resolved
     return result
 
 
@@ -823,9 +864,8 @@ def _read_installed_pack(target_dir):
     manifest = _load_manifest(target_dir)
     pack = {}
     for rel_path in _manifest_artifacts(manifest):
-        path = target_dir / rel_path
-        if path.is_file():
-            pack[rel_path] = path.read_text(encoding="utf-8")
+        path = resolve_source_path(target_dir, rel_path, "installed artifact")
+        pack[rel_path] = path.read_text(encoding="utf-8")
     return pack
 
 
@@ -847,9 +887,159 @@ def _file_sha256(path):
     return _sha256_bytes(path.read_bytes())
 
 
-def _load_manifest(pack_dir):
-    manifest_path = pack_dir / "manifest.json"
+def _artifact_lock_enabled(manifest):
+    metadata = manifest.get("packwright", {}) if isinstance(manifest, dict) else {}
+    artifacts = manifest.get("artifacts", []) if isinstance(manifest, dict) else []
+    return metadata.get("lock") == LOCK_PATH or (isinstance(artifacts, list) and LOCK_PATH in artifacts)
+
+
+def _load_artifact_lock(target_dir):
+    path = resolve_source_path(target_dir, LOCK_PATH, "artifact lock")
     try:
+        lock = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PackwrightValidationError([f"invalid artifact lock {path}: {exc}"])
+    if not isinstance(lock, dict) or lock.get("schema") != "packwright-lock/v1":
+        raise PackwrightValidationError([f"artifact lock has an unexpected schema: {path}"])
+    artifacts = lock.get("artifacts")
+    if not isinstance(artifacts, dict) or not artifacts:
+        raise PackwrightValidationError([f"artifact lock must contain a non-empty artifacts mapping: {path}"])
+    normalized = {}
+    issues = []
+    for rel_path, digest in artifacts.items():
+        try:
+            relative = validate_relative_path(rel_path, "artifact lock path").as_posix()
+        except PackwrightValidationError as exc:
+            issues.extend(exc.issues)
+            continue
+        if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
+            issues.append(f"artifact lock digest must be a SHA-256 hex string: {rel_path}")
+            continue
+        normalized[relative] = digest.lower()
+    if issues:
+        raise PackwrightValidationError(issues)
+    return normalized
+
+
+def _refresh_artifact_lock(target_dir):
+    lock_path = target_dir / LOCK_PATH
+    if not lock_path.is_file():
+        return False
+    manifest = _load_manifest(target_dir)
+    artifacts = {}
+    for rel_path in _manifest_artifacts(manifest):
+        if rel_path == LOCK_PATH:
+            continue
+        path = resolve_source_path(target_dir, rel_path, "installed artifact")
+        artifacts[rel_path] = _file_sha256(path)
+    destination = resolve_destination_path(target_dir, LOCK_PATH, "artifact lock destination")
+    destination.write_text(
+        json.dumps({"schema": "packwright-lock/v1", "artifacts": artifacts}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def _update_artifact_lock_paths(target_dir, rel_paths):
+    lock_path = target_dir / LOCK_PATH
+    if not lock_path.is_file():
+        return False
+    locked = _load_artifact_lock(target_dir)
+    for rel_path in rel_paths:
+        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_CODEX_STATE_PATH:
+            continue
+        path = resolve_source_path(target_dir, rel_path, "managed artifact")
+        locked[rel_path] = _file_sha256(path)
+    destination = resolve_destination_path(target_dir, LOCK_PATH, "artifact lock destination")
+    destination.write_text(
+        json.dumps({"schema": "packwright-lock/v1", "artifacts": locked}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
+def _artifact_lock_doctor_issues(target_dir, manifest):
+    if not _artifact_lock_enabled(manifest):
+        return []
+    try:
+        locked = _load_artifact_lock(target_dir)
+    except PackwrightValidationError as exc:
+        return [_doctor_issue("artifact_lock_invalid", LOCK_PATH, "; ".join(exc.issues))]
+
+    issues = []
+    for rel_path, expected_hash in sorted(locked.items()):
+        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_CODEX_STATE_PATH:
+            continue
+        try:
+            path = resolve_source_path(target_dir, rel_path, "managed artifact")
+        except PackwrightValidationError as exc:
+            issues.append(_doctor_issue("managed_artifact_missing_or_unsafe", rel_path, "; ".join(exc.issues)))
+            continue
+        try:
+            actual_hash = _file_sha256(path)
+        except OSError as exc:
+            issues.append(_doctor_issue("managed_artifact_unreadable", rel_path, f"cannot read managed artifact: {exc}"))
+            continue
+        if actual_hash != expected_hash:
+            issues.append(_doctor_issue("managed_artifact_drift", rel_path, "managed artifact hash differs from .packwright/lock.json"))
+
+    try:
+        manifest_artifacts = _manifest_artifacts(manifest)
+    except PackwrightValidationError:
+        return issues
+    for rel_path in manifest_artifacts:
+        if (
+            rel_path == LOCK_PATH
+            or _is_portable_path(rel_path)
+            or rel_path == EMOTION_ENGINE_CODEX_STATE_PATH
+            or rel_path in EMOTION_ENGINE_CODEX_ARTIFACTS
+        ):
+            continue
+        if rel_path not in locked:
+            issues.append(_doctor_issue("managed_artifact_untracked", rel_path, "managed artifact is not recorded in .packwright/lock.json"))
+    return issues
+
+
+def _repair_managed_artifact_drift(target_dir, manifest, issues):
+    repairable_ids = {"managed_artifact_drift", "managed_artifact_missing_or_unsafe"}
+    candidates = [issue["path"] for issue in issues if issue.get("id") in repairable_ids]
+    if not candidates:
+        return []
+    canonical_inputs = {SPEC_PATH}
+    canonical_inputs.update(path for path in candidates if path.startswith(".packwright/source/"))
+    if canonical_inputs.intersection(candidates):
+        return []
+
+    try:
+        locked = _load_artifact_lock(target_dir)
+        resolved = load_embedded_spec(target_dir)
+        adapter = manifest.get("adapter")
+        expected = _compile_pack_for_adapter(adapter, resolved, {"source_mechanism": SPEC_PATH})
+        receipt = _score_migration_pack(resolved, expected, adapter)
+        expected = embed_pack_metadata(expected, resolved, receipt)
+    except (OSError, ValueError, PackwrightValidationError, json.JSONDecodeError):
+        return []
+
+    fixed = []
+    for rel_path in candidates:
+        if rel_path.startswith(".packwright/source/") or rel_path == SPEC_PATH:
+            continue
+        content = expected.get(rel_path)
+        expected_hash = locked.get(rel_path)
+        if content is None or expected_hash != _sha256_bytes(content.encode("utf-8")):
+            continue
+        destination = resolve_destination_path(target_dir, rel_path, "managed artifact repair destination")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+        if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
+            _make_executable(destination)
+        fixed.append(rel_path)
+    return sorted(set(fixed))
+
+
+def _load_manifest(pack_dir):
+    try:
+        manifest_path = resolve_source_path(pack_dir, "manifest.json", "adapter pack manifest")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise PackwrightValidationError([f"cannot read adapter pack manifest {manifest_path}: {exc}"])
@@ -910,7 +1100,7 @@ def _ensure_current_adapter_contract(data, to_adapter):
     for adapter in sorted(SUPPORTED_INSTALL_ADAPTERS):
         if adapter not in projection:
             projection[adapter] = (
-                "default_light_sidecar_at_install" if adapter == "codex" else "spec_guided_behavior_only"
+                "optional_sidecar_when_explicitly_enabled" if adapter == "codex" else "spec_guided_behavior_only"
             )
             changes.append({"id": "emotion_projection_added", "adapter": adapter})
 
@@ -1033,7 +1223,11 @@ def _compile_pack_for_adapter(adapter, resolved, references):
 
 def _write_pack_to_dir(pack, out_dir, force=False):
     out_dir = Path(out_dir)
-    existing = [rel_path for rel_path in pack if (out_dir / rel_path).exists()]
+    destinations = {
+        rel_path: resolve_destination_path(out_dir, rel_path, "pack artifact destination")
+        for rel_path in pack
+    }
+    existing = [rel_path for rel_path, path in destinations.items() if path.exists()]
     if existing and not force:
         raise PackwrightValidationError(
             [
@@ -1045,7 +1239,7 @@ def _write_pack_to_dir(pack, out_dir, force=False):
     if force:
         stale_removed = _remove_stale_manifest_artifacts(out_dir, set(pack))
     for rel_path, content in pack.items():
-        path = out_dir / rel_path
+        path = destinations[rel_path]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
@@ -1053,7 +1247,7 @@ def _write_pack_to_dir(pack, out_dir, force=False):
     return stale_removed
 
 
-def _remove_stale_manifest_artifacts(root_dir, next_artifacts):
+def _remove_stale_manifest_artifacts(root_dir, next_artifacts, preserve_portable=False):
     manifest_path = root_dir / "manifest.json"
     if not manifest_path.is_file():
         return []
@@ -1064,8 +1258,10 @@ def _remove_stale_manifest_artifacts(root_dir, next_artifacts):
         return []
     removed = []
     for artifact in sorted(set(previous_artifacts) - set(next_artifacts), key=lambda item: len(Path(item).parts), reverse=True):
-        path = root_dir / artifact
-        if not path.exists() or not _path_stays_in_root(path, root_dir):
+        if preserve_portable and _is_portable_path(artifact):
+            continue
+        path = resolve_destination_path(root_dir, artifact, "stale artifact destination")
+        if not path.exists():
             continue
         if path.is_dir():
             continue
@@ -1146,8 +1342,9 @@ def _target_layout_doctor_issues(target_dir, manifest):
 
     if manifest.get("adapter") == "cursor":
         for rel_path, expected_text in target_handoff_artifacts().items():
-            path = target_dir / rel_path
-            if not path.is_file():
+            try:
+                path = resolve_source_path(target_dir, rel_path, "handoff artifact")
+            except PackwrightValidationError:
                 _append_doctor_issue(
                     issues,
                     seen,
@@ -1155,14 +1352,15 @@ def _target_layout_doctor_issues(target_dir, manifest):
                     rel_path,
                     "target-local handoff helper file is missing",
                 )
-            elif path.read_text(encoding="utf-8") != expected_text:
-                _append_doctor_issue(
-                    issues,
-                    seen,
-                    "handoff_tool_file_drift",
-                    rel_path,
-                    "target-local handoff helper differs from expected projection",
-                )
+            else:
+                if path.read_text(encoding="utf-8") != expected_text:
+                    _append_doctor_issue(
+                        issues,
+                        seen,
+                        "handoff_tool_file_drift",
+                        rel_path,
+                        "target-local handoff helper differs from expected projection",
+                    )
 
     try:
         artifacts = _manifest_artifacts(manifest)
@@ -1176,7 +1374,9 @@ def _target_layout_doctor_issues(target_dir, manifest):
         )
         return issues
     for artifact in artifacts:
-        if not (target_dir / artifact).is_file():
+        try:
+            resolve_source_path(target_dir, artifact, "manifest artifact")
+        except PackwrightValidationError:
             _append_doctor_issue(
                 issues,
                 seen,
@@ -1216,31 +1416,31 @@ def _fix_target_layout(target_dir, issues):
         rel_path = issue.get("path")
         issue_id = issue.get("id")
         if issue_id == "workspace_layout_missing_directory" and rel_path in workspace_required_dirs():
-            (target_dir / rel_path).mkdir(parents=True, exist_ok=True)
+            resolve_destination_path(target_dir, rel_path, "workspace repair destination").mkdir(parents=True, exist_ok=True)
             fixed.append(rel_path)
             continue
         if rel_path == "workspace/README.md" and issue_id in {"workspace_layout_missing_file", "manifest_artifact_missing"}:
-            path = target_dir / rel_path
+            path = resolve_destination_path(target_dir, rel_path, "workspace repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(workspace_readme(), encoding="utf-8")
             fixed.append(rel_path)
             continue
         if rel_path in workspace_artifacts() and rel_path.endswith("/.gitkeep"):
-            path = target_dir / rel_path
+            path = resolve_destination_path(target_dir, rel_path, "workspace repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_text("", encoding="utf-8")
             fixed.append(rel_path)
             continue
         if issue_id == "knowledge_scaffold_missing_directory" and rel_path in knowledge_required_dirs():
-            (target_dir / rel_path).mkdir(parents=True, exist_ok=True)
+            resolve_destination_path(target_dir, rel_path, "knowledge repair destination").mkdir(parents=True, exist_ok=True)
             fixed.append(rel_path)
             continue
         if rel_path in knowledge_files() and issue_id in {
             "knowledge_scaffold_missing_file",
             "manifest_artifact_missing",
         }:
-            path = target_dir / rel_path
+            path = resolve_destination_path(target_dir, rel_path, "knowledge repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(knowledge_files()[rel_path], encoding="utf-8")
             fixed.append(rel_path)
@@ -1250,7 +1450,7 @@ def _fix_target_layout(target_dir, issues):
             "handoff_tool_file_drift",
             "manifest_artifact_missing",
         }:
-            path = target_dir / rel_path
+            path = resolve_destination_path(target_dir, rel_path, "handoff repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(handoff_artifacts[rel_path], encoding="utf-8")
             if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
@@ -1289,8 +1489,8 @@ def _fix_legacy_codex_skills(target_dir, issues):
             continue
         legacy = issue["path"]
         canonical = legacy.replace(".codex/skills/", ".agents/skills/", 1)
-        source = target_dir / legacy
-        destination = target_dir / canonical
+        source = resolve_destination_path(target_dir, legacy, "legacy skill source")
+        destination = resolve_destination_path(target_dir, canonical, "canonical skill destination")
         if not source.exists() or destination.exists():
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1300,13 +1500,13 @@ def _fix_legacy_codex_skills(target_dir, issues):
         fixed.extend((legacy, canonical))
     if not migrations:
         return fixed
-    manifest_path = target_dir / "manifest.json"
+    manifest_path = resolve_destination_path(target_dir, "manifest.json", "manifest repair destination")
     manifest_text = manifest_path.read_text(encoding="utf-8")
     for legacy, canonical in migrations:
         manifest_text = manifest_text.replace(legacy, canonical)
     manifest_path.write_text(manifest_text, encoding="utf-8")
     for rel_path in ("AGENTS.md", "memory/index.md", "memory/pinned.md", "memory/source-map.md"):
-        path = target_dir / rel_path
+        path = resolve_destination_path(target_dir, rel_path, "memory projection repair destination")
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
@@ -1328,6 +1528,7 @@ def _migration_target_conflicts(target_dir):
 
 
 def _copy_migrated_portable_state(source_target_dir, target_dir, resolved, to_adapter):
+    _portable_source_files(source_target_dir)
     copied = []
     for rel_path in PORTABLE_STATE_DIRS:
         source = source_target_dir / rel_path
@@ -1434,11 +1635,10 @@ def _manifest_artifacts(manifest):
         if not isinstance(artifact, str) or not artifact.strip():
             issues.append("adapter pack artifact paths must be non-empty strings")
             continue
-        path = Path(artifact)
-        if path.is_absolute() or ".." in path.parts:
-            issues.append(f"adapter pack artifact path must be relative and stay inside the pack: {artifact}")
-            continue
-        normalized.append(artifact)
+        try:
+            normalized.append(validate_relative_path(artifact, "adapter pack artifact path").as_posix())
+        except PackwrightValidationError as exc:
+            issues.extend(exc.issues)
     if issues:
         raise PackwrightValidationError(issues)
     return normalized

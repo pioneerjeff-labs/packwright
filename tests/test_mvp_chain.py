@@ -38,6 +38,7 @@ from packwright.core.handoff import (
     HANDOFF_SCHEMA,
     HANDOFF_WRAPPER_PATH,
 )
+from packwright.core.pack_metadata import embed_pack_metadata
 from packwright.core.workspace_contract import (
     WORKSPACE_DOMAIN_TEMPLATE_DIR,
     WORKSPACE_LAYOUT,
@@ -408,7 +409,7 @@ character:
 
         version = run_cli("--version")
         self.assertEqual(version.returncode, 0, version.stderr + version.stdout)
-        self.assertEqual(version.stdout.strip(), "packwright 0.1.0rc1")
+        self.assertEqual(version.stdout.strip(), "packwright 0.1.0")
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
@@ -754,8 +755,44 @@ character:
             with self.assertRaises(PackwrightValidationError):
                 install_pack(pack_dir, target_dir, adapter="codex")
 
+            preserved = {
+                "memory/todos.md": "keep memory\n",
+                "workspace/README.md": "keep workspace\n",
+                "knowledge/index.md": "keep knowledge\n",
+                "sources/local/manifest.json": '{"keep": "sources"}\n',
+            }
+            for rel_path, content in preserved.items():
+                (target_dir / rel_path).write_text(content, encoding="utf-8")
             forced = install_pack(pack_dir, target_dir, adapter="codex", force=True, include_emotion_engine_codex=False)
             self.assertEqual(forced["adapter"], "codex")
+            self.assertTrue(set(preserved).issubset(set(forced["preserved_portable_state"])))
+            for rel_path, content in preserved.items():
+                self.assertEqual((target_dir / rel_path).read_text(encoding="utf-8"), content)
+
+    def test_install_rejects_destination_symlink_escape(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        pack = compile_to_codex_pack(resolved)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            outside = root / "outside"
+            _write_pack(pack, pack_dir)
+            target_dir.mkdir()
+            outside.mkdir()
+            (target_dir / "memory").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaises(PackwrightValidationError):
+                install_pack(pack_dir, target_dir, adapter="codex")
+            self.assertFalse((outside / "index.md").exists())
+
+    def test_mechanism_source_paths_cannot_escape_source_root(self):
+        data = load_mechanism(MECHANISM_PATH)
+        data["identity"]["persona_path"] = "../../../outside.md"
+
+        with self.assertRaises(PackwrightValidationError):
+            resolve_mechanism(data)
 
     def test_install_pack_can_explicitly_include_light_emotion_engine_codex_sidecar(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
@@ -1611,6 +1648,34 @@ character:
             self.assertTrue((target_dir / "sources" / "local" / "manifest.json").exists())
             self.assertIn("target_layout_repaired", {fix["id"] for fix in fixed["fixes"]})
 
+    def test_doctor_uses_lock_to_detect_and_repair_managed_drift(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        compiled = compile_to_codex_pack(resolved)
+        receipt = score_mechanism(resolved, compiled, adapter="codex")
+        pack = embed_pack_metadata(compiled, resolved, receipt)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target_dir, adapter="codex")
+
+            entry = target_dir / "AGENTS.md"
+            original = entry.read_text(encoding="utf-8")
+            entry.write_text(original + "\n<!-- drift -->\n", encoding="utf-8")
+            (target_dir / "memory" / "todos.md").write_text("user state\n", encoding="utf-8")
+
+            diagnosed = doctor_target(target_dir)
+            self.assertFalse(diagnosed["ok"])
+            self.assertIn("managed_artifact_drift", {issue["id"] for issue in diagnosed["issues"]})
+
+            fixed = doctor_target(target_dir, fix=True)
+            self.assertTrue(fixed["ok"], fixed)
+            self.assertEqual(entry.read_text(encoding="utf-8"), original)
+            self.assertEqual((target_dir / "memory" / "todos.md").read_text(encoding="utf-8"), "user state\n")
+            self.assertIn("managed_artifact_drift_repaired", {item["id"] for item in fixed["fixes"]})
+
     def test_doctor_reports_compatibility_memory_files_without_failing(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
@@ -1817,6 +1882,28 @@ character:
             self.assertTrue((build_dir / "memory" / "emotion-state.json.example").exists())
             self.assertTrue((build_dir / "resolved.json").exists())
             self.assertTrue((build_dir / "score.json").exists())
+            self.assertNotIn(str(PROJECT_ROOT), (build_dir / "resolved.json").read_text(encoding="utf-8"))
+
+            refused = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "packwright",
+                    "build",
+                    str(MECHANISM_PATH),
+                    "--adapter",
+                    "codex",
+                    "--out-dir",
+                    str(build_dir),
+                ],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("would be overwritten", refused.stderr)
 
             scored = subprocess.run(
                 [
@@ -1922,7 +2009,7 @@ character:
                 text=True,
             )
             self.assertNotEqual(refused.returncode, 0)
-            self.assertIn("would be overwritten", refused.stdout)
+            self.assertIn("would be overwritten", refused.stderr)
 
             target_helper = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_utils.py"
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
@@ -2144,7 +2231,7 @@ character:
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
-        self.assertIn('version = "0.1.0rc1"', pyproject)
+        self.assertIn('version = "0.1.0"', pyproject)
         self.assertIn('packwright = "packwright.cli:main"', pyproject)
 
     def test_cli_handoff_export_writes_review_file(self):

@@ -3,6 +3,9 @@ import json
 import copy
 from pathlib import Path
 
+from .errors import PackwrightValidationError
+from .path_safety import resolve_source_path, validate_relative_path
+
 
 METADATA_ROOT = ".packwright"
 SPEC_PATH = f"{METADATA_ROOT}/spec.json"
@@ -47,9 +50,18 @@ def embed_pack_metadata(pack, resolved, checker_receipt):
 def load_embedded_spec(root):
     """Load the resolved snapshot with target-root-relative validation context."""
     root = Path(root)
-    path = root / SPEC_PATH
-    data = json.loads(path.read_text(encoding="utf-8"))
-    data["source"] = {"path": str(path), "base_dir": str(root / METADATA_ROOT / "source")}
+    path = resolve_source_path(root, SPEC_PATH, "embedded mechanism spec")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PackwrightValidationError([f"invalid embedded mechanism spec {path}: {exc}"])
+    if not isinstance(data, dict):
+        raise PackwrightValidationError([f"embedded mechanism spec must be a mapping: {path}"])
+    data["source"] = {
+        "path": str(path),
+        "base_dir": str(root / METADATA_ROOT / "source"),
+        "fallback_roots": [str(root)],
+    }
     return data
 
 
@@ -68,13 +80,15 @@ def _portable_snapshot(resolved):
                 if key == "source":
                     continue
                 if key == "path" or key.endswith("_path"):
-                    if isinstance(item, str) and not Path(item).is_absolute():
-                        candidate = base / item
-                        if candidate.is_file():
+                    if isinstance(item, str):
+                        relative = validate_relative_path(item, f"mechanism source path {key}")
+                        candidate = base.resolve() / relative
+                        if candidate.exists():
+                            candidate = resolve_source_path(base, item, f"mechanism source path {key}")
                             # Keep spec paths stable because adapters also use them
                             # as destination names, while storing their source bytes
                             # under a private metadata root.
-                            files[f"{METADATA_ROOT}/source/{item}"] = candidate.read_text(encoding="utf-8")
+                            files[f"{METADATA_ROOT}/source/{relative.as_posix()}"] = candidate.read_text(encoding="utf-8")
                 else:
                     visit(item)
         elif isinstance(value, list):

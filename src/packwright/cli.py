@@ -31,7 +31,9 @@ from packwright.core import (
     write_interviewer_prompt,
 )
 from packwright.core.emotion_engine_contract import EMOTION_ENGINE_CODEX_ARTIFACTS
+from packwright.core.errors import PackwrightValidationError
 from packwright.core.naming import normalize_slug
+from packwright.core.path_safety import resolve_destination_path, resolve_source_path
 
 
 def main(argv=None):
@@ -66,7 +68,7 @@ def main(argv=None):
         if args.command in {"build", "run"}:
             return _cmd_run(args)
     except PackwrightError as exc:
-        print(str(exc))
+        print(str(exc), file=sys.stderr)
         return 1
     return 1
 
@@ -105,6 +107,7 @@ def _build_parser():
     compile_cmd.add_argument("--adapter", default="codex", choices=["codex", "claude-code", "cursor"])
     compile_cmd.add_argument("--set", action="append", default=[], dest="sets", help="parameter override as key=value")
     compile_cmd.add_argument("--out-dir", default="build/codex", help="adapter pack output directory")
+    compile_cmd.add_argument("--force", action="store_true", help="overwrite existing pack artifacts")
 
     install = subparsers.add_parser("install", help="install an adapter pack into a local runtime directory")
     install.add_argument("pack_dir_positional", nargs="?", metavar="PACK_DIR", help="adapter pack directory")
@@ -123,7 +126,11 @@ def _build_parser():
         metavar="TARGET",
         help="local runtime working directory",
     )
-    install.add_argument("--force", action="store_true", help="overwrite existing target artifacts")
+    install.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite managed target artifacts while preserving portable state",
+    )
     install.add_argument(
         "--include-emotion-engine-codex",
         action="store_true",
@@ -367,6 +374,7 @@ def _add_build_arguments(parser):
         help="adapter pack output directory",
     )
     parser.add_argument("--threshold", type=int, help="score threshold override")
+    parser.add_argument("--force", action="store_true", help="overwrite existing pack artifacts")
 
 
 def _cmd_validate(args):
@@ -390,7 +398,7 @@ def _cmd_compile(args):
     receipt = score_mechanism(resolved, pack, adapter=args.adapter)
     pack = embed_pack_metadata(pack, resolved, receipt)
     out_dir = Path(args.out_dir)
-    _write_pack(pack, out_dir)
+    _write_pack(pack, out_dir, force=args.force)
     print(
         json.dumps(
             {
@@ -412,7 +420,7 @@ def _cmd_score(args):
         data = load_embedded_spec(input_path)
         if not args.pack_dir:
             args.pack_dir = str(input_path)
-        manifest = json.loads((input_path / "manifest.json").read_text(encoding="utf-8"))
+        manifest = _load_pack_manifest(input_path)
         args.adapter = manifest.get("adapter", args.adapter)
     else:
         data = load_mechanism(args.mechanism)
@@ -604,7 +612,6 @@ def _cmd_run(args):
     resolved = resolve_mechanism(data, _parse_sets(args.sets))
 
     build_dir = Path(args.build_dir)
-    build_dir.mkdir(parents=True, exist_ok=True)
     resolved_path = build_dir / "resolved.json"
     score_path = build_dir / "score.json"
 
@@ -621,9 +628,10 @@ def _cmd_run(args):
 
     pack = embed_pack_metadata(pack, resolved, result)
 
-    _write_json(resolved, resolved_path)
-    _write_pack(pack, build_dir)
-    _write_json(result, score_path)
+    outputs = dict(pack)
+    outputs["resolved.json"] = pack[SPEC_PATH]
+    outputs["score.json"] = json.dumps(result, indent=2, sort_keys=True) + "\n"
+    _write_pack(outputs, build_dir, force=args.force)
 
     manifest = {
         "adapter_pack": str(build_dir),
@@ -796,21 +804,31 @@ def _compile_pack(adapter, resolved, references):
 
 
 def _read_pack(pack_dir):
-    manifest_path = pack_dir / "manifest.json"
-    if not manifest_path.exists():
-        raise PackwrightError(f"adapter pack is missing manifest.json: {pack_dir}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = _load_pack_manifest(pack_dir)
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise PackwrightError("adapter pack manifest must contain a non-empty artifacts list")
     pack = {}
-    for artifact in manifest.get("artifacts", []):
-        path = pack_dir / artifact
-        if not path.exists():
-            raise PackwrightError(f"adapter pack is missing artifact: {artifact}")
+    for artifact in artifacts:
+        path = resolve_source_path(pack_dir, artifact, "adapter pack artifact")
         pack[artifact] = path.read_text(encoding="utf-8")
     for artifact in _optional_installed_artifacts():
         path = pack_dir / artifact
         if path.exists():
+            path = resolve_source_path(pack_dir, artifact, "optional installed artifact")
             pack[artifact] = path.read_text(encoding="utf-8")
     return pack
+
+
+def _load_pack_manifest(pack_dir):
+    try:
+        manifest_path = resolve_source_path(pack_dir, "manifest.json", "adapter pack manifest")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise PackwrightError(f"invalid adapter pack manifest {pack_dir / 'manifest.json'}: {exc}")
+    if not isinstance(manifest, dict):
+        raise PackwrightError(f"adapter pack manifest must be a mapping: {pack_dir / 'manifest.json'}")
+    return manifest
 
 
 def _optional_installed_artifacts():
@@ -826,9 +844,19 @@ def _pack_resolved_parameters(pack):
     return params if isinstance(params, dict) else {}
 
 
-def _write_pack(pack, out_dir):
+def _write_pack(pack, out_dir, force=False):
+    destinations = {
+        rel_path: resolve_destination_path(out_dir, rel_path, "pack artifact destination")
+        for rel_path in pack
+    }
+    existing = [rel_path for rel_path, path in destinations.items() if path.exists()]
+    if existing and not force:
+        raise PackwrightValidationError([
+            "pack directory already contains files that would be overwritten; rerun with --force after reviewing them",
+            *[f"existing pack artifact: {artifact}" for artifact in sorted(existing)],
+        ])
     for rel_path, content in pack.items():
-        path = out_dir / rel_path
+        path = destinations[rel_path]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 

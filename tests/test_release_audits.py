@@ -85,6 +85,51 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertTrue(any("commit metadata private email" in item for item in issues))
             self.assertTrue(any("old product name" in item for item in issues))
 
+    def test_pr_head_revision_excludes_unpublished_synthetic_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@users.noreply.github.com"],
+                cwd=root,
+                check=True,
+            )
+            safe = root / "safe.txt"
+            safe.write_text("safe\n", encoding="utf-8")
+            subprocess.run(["git", "add", "safe.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "safe"], cwd=root, check=True)
+            head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+            subprocess.run(
+                ["git", "config", "user.email", "person" + "@" + "gmail.com"],
+                cwd=root,
+                check=True,
+            )
+            later = root / "later.txt"
+            later.write_text("later\n", encoding="utf-8")
+            subprocess.run(["git", "add", "later.txt"], cwd=root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "synthetic"], cwd=root, check=True)
+
+            all_issues, _, all_commits = public_audit.run(root)
+            self.assertEqual(all_commits, 2)
+            self.assertTrue(any("commit metadata private email" in item for item in all_issues))
+
+            head_issues, _, head_commits = public_audit.run(root, revision=head)
+            self.assertEqual(head_commits, 1)
+            self.assertFalse(any("commit metadata private email" in item for item in head_issues))
+
+    def test_ci_scans_pr_head_instead_of_github_synthetic_merge(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha }}",
+            workflow,
+        )
+        self.assertEqual(
+            workflow.count('git fetch --no-tags origin "pull/${{ github.event.number }}/head"'),
+            2,
+        )
+
     def test_release_gate_declares_portable_temp_and_output_dir(self):
         script = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
         self.assertIn('TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"', script)
@@ -148,7 +193,7 @@ class PublicTreeAuditTest(unittest.TestCase):
         chinese_readme = readmes[1].read_text(encoding="utf-8")
         self.assertIn("Build your agent once. Carry it everywhere.", readme)
         self.assertIn("Explore the live product website", readme)
-        self.assertIn("一次构建 Agent。随心迁移，无缝运行。", chinese_readme)
+        self.assertIn("一次构建 agent，随处皆可运行。", chinese_readme)
         self.assertIn("查看在线产品网站", chinese_readme)
         self.assertLess(readme.index("assets/social-preview.png"), readme.index("## Start with your coding agent"))
         self.assertLess(chinese_readme.index("assets/social-preview.png"), chinese_readme.index("## 先交给 coding agent 代驾"))
@@ -156,14 +201,18 @@ class PublicTreeAuditTest(unittest.TestCase):
         landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
         self.assertIn("Packwright dovetail mark", landing)
         self.assertIn("Build your agent once. Carry it everywhere.", landing)
-        self.assertIn("plain files in · plain files out", landing)
+        self.assertIn("build a Claude Code target and migrate it to Codex", landing)
+        self.assertIn('<span class="wm">Packwright</span>', landing)
+        self.assertIn('>Packwright</text>', landing)
+        self.assertIn('<span>Packwright · MIT</span>', landing)
         self.assertIn('<script src="demo.js" defer></script>', landing)
         self.assertTrue((ROOT / "site" / "demo.js").is_file())
 
         chinese_landing = (ROOT / "site" / "zh-CN.html").read_text(encoding="utf-8")
         self.assertIn('<html lang="zh-CN"', chinese_landing)
-        self.assertIn("一次构建 Agent。", chinese_landing)
-        self.assertIn("随心迁移，无缝运行。", chinese_landing)
+        self.assertIn("一次构建 agent，", chinese_landing)
+        self.assertIn("随处皆可运行。", chinese_landing)
+        self.assertNotIn("无缝", chinese_landing)
         self.assertIn("自己掌舵，或让 Agent 代驾", chinese_landing)
         self.assertIn("packwright-han-serif-600.otf", chinese_landing)
         self.assertIn('<script src="demo.js" defer></script>', chinese_landing)
@@ -172,13 +221,34 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertNotIn("Claude is selected by default", landing)
         self.assertNotIn("默认选择 Claude", chinese_landing)
 
+        social_preview = (ROOT / "assets" / "social-preview.svg").read_text(encoding="utf-8")
+        self.assertIn(">Packwright</text>", social_preview)
+        self.assertIn("NATIVE PACKS · PORTABLE STATE · MIGRATION RECEIPTS", social_preview)
+
+        self.assertIn(
+            "Native packs. Portable state. Preview every migration before any files are written.",
+            readme,
+        )
+        self.assertIn("原生 Pack。可移植状态。每次迁移都先预览，再写入。", chinese_readme)
+
+        public_copy = (readme, chinese_readme, landing, chinese_landing, social_preview)
+        for document in public_copy:
+            self.assertIsNone(re.search(r"\bClaude\b(?! Code)", document))
+            self.assertNotIn("The output is files you can read", document)
+            self.assertNotIn("输出是你可以直接阅读的普通文件", document)
+            self.assertNotIn("输出结果皆为清晰可读的普通文件", document)
+
         for document in (landing, chinese_landing):
             self.assertLess(document.index('id="migrate"'), document.index('id="quickstart"'))
+            self.assertIn('<span class="wm">Packwright</span>', document)
+            self.assertIn('>Packwright</text>', document)
+            self.assertIn('<span>Packwright · MIT</span>', document)
             self.assertIn('data-adapter="claude-code"', document)
             self.assertIn('data-adapter="codex"', document)
             self.assertIn('data-adapter="cursor"', document)
             self.assertIn('id="runtime-claude"', document)
             self.assertIn('id="runtime-claude" type="button" role="tab" aria-selected="true"', document)
+            self.assertIn('data-adapter="claude-code">Claude Code</button>', document)
 
         demo = (ROOT / "site" / "demo.js").read_text(encoding="utf-8")
         self.assertIn("const englishLines = [", demo)
@@ -186,6 +256,9 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn('startsWith("zh")', demo)
         self.assertIn("pack compiled · checker score 100.0", demo)
         self.assertIn("Pack 编译完成 · checker 评分 100.0", demo)
+        self.assertIn("native Codex target ready · portable state verified", demo)
+        self.assertIn("原生 Codex Target 就绪 · 可移植状态已验证", demo)
+        self.assertNotIn("the output is files you can read", demo)
         self.assertIn('"packwright build work/mira --adapter codex -o pack/mira-codex"', demo)
         self.assertIn('"packwright build work/mira --adapter cursor -o pack/mira-cursor"', demo)
         self.assertIn("function legacyCopy(text)", demo)

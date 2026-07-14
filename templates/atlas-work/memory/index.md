@@ -23,7 +23,7 @@ This is the default memory router. Read this first when prior context may matter
 - Drafts, durable artifacts, and archived outputs -> `workspace/`
 - Action queue -> `memory/todos.md`
 - Collaboration calibration notes -> `memory/collaboration.md`
-- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json`
+- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json` when enabled
 
 ## Compatibility Files
 

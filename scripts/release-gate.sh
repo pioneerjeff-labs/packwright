@@ -83,12 +83,14 @@ done
 
 "$PYTHON" - "$DIST" "$DIST/release-artifacts.json" <<'PY'
 import hashlib, json, pathlib, sys
+sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
+from packwright import __version__
 dist = pathlib.Path(sys.argv[1])
 items = []
 for path in sorted(dist.iterdir()):
     if path.name == "release-artifacts.json" or not path.is_file():
         continue
     items.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size})
-pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": "0.1.0rc1", "artifacts": items}, indent=2) + "\n", encoding="utf-8")
+pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": __version__, "artifacts": items}, indent=2) + "\n", encoding="utf-8")
 PY
 echo "release artifacts: $DIST"

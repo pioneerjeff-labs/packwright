@@ -128,7 +128,7 @@ emotion:
   voice_modulation_path: emotion/voice-modulation.yaml
   memory_events_path: emotion/memory-events.yaml
   projection:
-    codex: default_light_sidecar_at_install
+    codex: optional_sidecar_when_explicitly_enabled
     claude-code: spec_guided_behavior_only
     cursor: spec_guided_behavior_only
   reserved_activation:

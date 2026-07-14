@@ -13,19 +13,19 @@
 <link rel="preload" href="../assets/fonts/inter-latin-400-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
-<title>Packwright — 一次构建 Agent，随处皆可运行</title>
-<meta name="description" content="Packwright 可将单一 Agent 定义编译为适配 Codex、Claude Code 和 Cursor 的原生 Pack。一次构建，随处运行。">
+<title>Packwright — 一次构建 agent，随处皆可运行</title>
+<meta name="description" content="Packwright 可将单一 agent 定义编译为适配 Codex、Claude Code 和 Cursor 的原生 pack。一次构建，随处运行。">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Packwright">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:locale:alternate" content="en_US">
-<meta property="og:title" content="Packwright — 一次构建 Agent，随处皆可运行">
-<meta property="og:description" content="将单一 Agent 定义编译为 Codex、Claude Code 与 Cursor 的原生 Pack。">
+<meta property="og:title" content="Packwright — 一次构建 agent，随处皆可运行">
+<meta property="og:description" content="将单一 agent 定义编译为 Codex、Claude Code 与 Cursor 的原生 pack。">
 <meta property="og:url" content="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">
 <meta property="og:image" content="https://pioneerjeff-labs.github.io/packwright/assets/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Packwright — 一次构建 Agent，随处皆可运行">
-<meta name="twitter:description" content="将单一 Agent 定义编译为 Codex、Claude Code 与 Cursor 的原生 Pack。">
+<meta name="twitter:title" content="Packwright — 一次构建 agent，随处皆可运行">
+<meta name="twitter:description" content="将单一 agent 定义编译为 Codex、Claude Code 与 Cursor 的原生 pack。">
 <meta name="twitter:image" content="https://pioneerjeff-labs.github.io/packwright/assets/social-preview.png">
 <style>
   @font-face{font-family:"Fraunces";font-style:normal;font-weight:600;font-display:swap;src:url("../assets/fonts/fraunces-latin-600.woff2") format("woff2");}
@@ -162,7 +162,7 @@
         <path fill="var(--mark-ink)" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
         <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
       </svg>
-      <span class="wm">packwright</span>
+      <span class="wm">Packwright</span>
     </a>
     <div class="links">
       <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
@@ -173,15 +173,15 @@
 
   <header class="hero">
     <div>
-      <h1>一次构建 Agent。<br>随心迁移，无缝运行。</h1>
-      <p class="sub">Packwright 能将单一 Agent 定义（包含规则、记忆、Skills 与工作区）直接编译为 Codex、Claude Code 和 Cursor 的原生 Pack。输出结果皆为清晰可读的普通文件。</p>
+      <h1>一次构建 agent，<br>随处皆可运行。</h1>
+      <p class="sub">Packwright 能将单一 Agent 定义（包含规则、记忆、Skills 与工作区）直接编译为 Codex、Claude Code 和 Cursor 的原生 Pack。迁移时，记忆、工作区、知识与来源索引也会随 Agent 一并带走。</p>
       <p class="trust">本地优先，零遥测。Packwright 自身不发起任何网络请求，你的 Coding Runtime 数据策略依然生效。</p>
       <div class="cta">
         <a class="btn btn-accent" href="#quickstart">快速开始</a>
         <a class="btn btn-ghost" href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       </div>
     </div>
-    <div class="term" aria-label="终端演示：普通文件输入，普通文件输出">
+    <div class="term" aria-label="终端演示：构建 Claude Code Target，再迁移到 Codex">
       <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="term-body" id="term"></div>
     </div>
@@ -199,7 +199,7 @@
       <text x="28" y="160" font-size="11" fill="var(--pw-text-muted)">工作区</text>
       <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">packwright</text>
+      <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">Packwright</text>
       <line x1="354" y1="120" x2="450" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <line x1="354" y1="120" x2="450" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <line x1="354" y1="120" x2="450" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
@@ -248,7 +248,7 @@ packwright doctor     # 修复状态漂移</div>
   </section>
 
   <section class="sec-border" id="migrate">
-    <p class="section-kicker">演示路径 · Claude → Codex</p>
+    <p class="section-kicker">演示路径 · Claude Code → Codex</p>
     <h2>迁移 Agent，工作状态一起带走。</h2>
     <p class="winline"><code>migrate --dry-run</code> 会提前报告目标 Runtime 无法兼容的内容——全程仅预览，不写入任何文件。</p>
     <svg class="diagram" viewBox="0 0 660 262" role="img" aria-label="从 Claude Code Target 迁移到 Codex Target：可移植状态会被携带，Runtime 专属文件会留在原处并提前报告">
@@ -289,13 +289,13 @@ packwright doctor     # 修复状态漂移</div>
     <h2>选择 Runtime，快速开始。</h2>
     <p class="lede">安装当前 RC 版本，再用三条命令构建并安装原生 Target。</p>
     <div class="runtime-tabs" role="tablist" aria-label="选择 Runtime">
-      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude</button>
+      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude Code</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
       <button class="runtime-tab" id="runtime-cursor" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="cursor" tabindex="-1">Cursor</button>
     </div>
     <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
       <button class="copybtn" id="copyqs" data-idle-label="复制" data-copied-label="已复制" aria-label="复制快速开始命令">复制</button>
-      <pre id="qs-code">python -m pip install packwright==0.1.0rc1
+      <pre id="qs-code">python -m pip install packwright==0.1.0
 packwright init --template creator -o work/mira
 packwright build work/mira --adapter claude-code -o pack/mira-claude
 packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
@@ -308,12 +308,12 @@ packwright install pack/mira-claude --adapter claude-code --target project/mira-
         <path fill="var(--mark-ink)" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
         <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
       </svg>
-      <span>packwright · MIT</span>
+      <span>Packwright · MIT</span>
     </div>
     <div class="flinks">
       <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/CLI.md">文档</a>
-      <a href="https://pypi.org/project/packwright/0.1.0rc1/">PyPI</a>
+      <a href="https://pypi.org/project/packwright/0.1.0/">PyPI</a>
     </div>
   </footer>
 </div>

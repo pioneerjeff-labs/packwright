@@ -84,8 +84,14 @@ Codex should then run the workflow below.
    ```text
    build/<slug>-codex-target/AGENTS.md
    build/<slug>-codex-target/.agents/skills/<slug>-save-context/SKILL.md
-   build/<slug>-codex-target/.agents/skills/emotion-engine-codex/SKILL.md
    build/<slug>-codex-target/memory/
+   ```
+
+   The optional Emotion Engine files exist only when installation explicitly
+   includes `--include-emotion-engine-codex` and a sidecar source:
+
+   ```text
+   build/<slug>-codex-target/.agents/skills/emotion-engine-codex/SKILL.md
    build/<slug>-codex-target/.emotion-engine/codex-state.json
    ```
 

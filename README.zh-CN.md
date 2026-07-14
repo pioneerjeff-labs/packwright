@@ -8,16 +8,16 @@
 
 <h1 align="center">Packwright</h1>
 
-<p align="center"><strong>一次构建 Agent。随心迁移，无缝运行。</strong></p>
+<p align="center"><strong>一次构建 agent，随处皆可运行。</strong></p>
 
 <p align="center">
   一次定义 agent 的规则、记忆、skills 与工作区，编译成 Codex、Claude Code 和 Cursor 的原生 pack；<br>
-  构建、安装、迁移与验证，全部落在可阅读的普通文件里。
+  构建并安装原生 Pack；迁移时把记忆、工作区与知识状态一起带走。
 </p>
 
 <p align="center">
   <strong><a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">查看在线产品网站 →</a></strong><br>
-  看动画终端完整跑一遍 Claude Code → Codex 迁移，并在 Claude、Codex 与 Cursor 之间切换快速开始命令。<br>
+  看动画终端完整跑一遍 Claude Code → Codex 迁移，并在 Claude Code、Codex 与 Cursor 之间切换快速开始命令。<br>
   <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a> · <a href="https://pioneerjeff-labs.github.io/packwright/">English</a>
 </p>
 
@@ -34,7 +34,7 @@
   <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/README-English-B87333?style=flat-square"></a>
 </p>
 
-<p align="center"><strong>输出是你可以直接阅读的普通文件。</strong></p>
+<p align="center"><strong>原生 Pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
 
 > [!NOTE]
 > Packwright 自身不会发起网络请求，也不会发送遥测数据。coding runtime 仍可能把它读取的文件发送给自己的模型服务商，其数据政策继续适用。
@@ -44,7 +44,7 @@
 最短的使用界面是一段对话。安装 Packwright，然后把现成提示词粘贴给 Codex、Claude Code 或 Cursor：
 
 ```bash
-python -m pip install packwright==0.1.0rc1
+python -m pip install packwright==0.1.0
 ```
 
 **[打开可直接粘贴的 agent 操作提示词 →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -122,13 +122,13 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 ## 检查结果究竟证明什么
 
 - `score` 检查公开结构与 artifact contract。`100.0` 表示结构通过，不承诺 runtime 行为完美。
-- `doctor` 诊断确定性的投影漂移，并能修复 Packwright 管理的文件，不把用户记忆当成生成物。
+- `doctor` 校验 Packwright 管理的投影哈希，并能修复可重建的漂移，不把可移植用户状态当成生成物。
 - 迁移会对 carried 与 rewritten 文件逐个做哈希验证，同时记录计划分数和安装后分数。
 - 当前三个 adapter 共覆盖六个有向迁移路径。新 adapter 只有通过 checker 才会加入。
 
 ## 当前发布边界
 
-`0.1.0rc1` 是用于外部安装和 runtime 测试的候选版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云同步服务；plain-file 结构分数与真实 runtime 兼容性是两件事。
+`0.1.0` 是 Packwright 的首个稳定版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云同步服务；plain-file 结构分数与真实 runtime 兼容性是两件事。
 
 ## 文档
 
@@ -137,7 +137,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [交给 coding agent 使用](docs/USE_WITH_YOUR_AGENT.md)
 - [角色起草](docs/CHARACTER_DRAFTING.md)
 - [Agent archetype](docs/AGENT_ARCHETYPES.md)
-- [0.1.0rc1 发布说明](docs/releases/0.1.0rc1.md)
+- [0.1.0 发布说明](docs/releases/0.1.0.md)
 - [参与贡献](CONTRIBUTING.md)
 - [安全政策](SECURITY.md)
 

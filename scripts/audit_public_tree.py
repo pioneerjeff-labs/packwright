@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Scan release content and reachable history for private data and old names."""
 
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 SELF = "scripts/audit_public_tree.py"
+REVISION_ENV = "PACKWRIGHT_PUBLIC_AUDIT_REVISION"
+FULL_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
 PATTERNS = {
     "private email": re.compile(r"[A-Z0-9._%+-]+@gmail\.com", re.I),
     "private path": re.compile(r"/(?:Users|home)/[^/\s]+/"),
     "old product name": re.compile(r"\bagent(?:[ _-]+)harness\b", re.I),
-    "private fixture": re.compile(r"\b(?:Rebecca|Norah|Nora)\b", re.I),
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "credential assignment": re.compile(r"\b(?:api[_-]?key|access[_-]?token|secret)\s*[:=]\s*['\"][^'\"]+", re.I),
 }
@@ -23,7 +25,12 @@ def git(root, *args):
 
 def scan_text(label, text):
     issues = []
-    for kind, pattern in PATTERNS.items():
+    patterns = dict(PATTERNS)
+    for index, value in enumerate(os.environ.get("PACKWRIGHT_PUBLIC_AUDIT_DENYLIST", "").splitlines(), start=1):
+        value = value.strip()
+        if value:
+            patterns[f"private denylist entry {index}"] = re.compile(re.escape(value), re.I)
+    for kind, pattern in patterns.items():
         for match in pattern.finditer(text):
             line = text.count("\n", 0, match.start()) + 1
             issues.append(f"{label}:{line}: {kind}")
@@ -49,9 +56,18 @@ def candidate_issues(root):
     return issues, count
 
 
-def history_issues(root):
+def history_revisions(root, revision=None):
+    revision = (revision or "").strip()
+    if not revision:
+        return git(root, "rev-list", "--all").decode().splitlines()
+    if not FULL_OBJECT_ID.fullmatch(revision):
+        raise ValueError(f"{REVISION_ENV} must be a full Git object ID")
+    return git(root, "rev-list", revision).decode().splitlines()
+
+
+def history_issues(root, revision=None):
     issues = []
-    revisions = git(root, "rev-list", "--all").decode().splitlines()
+    revisions = history_revisions(root, revision)
     for rev in revisions:
         metadata = git(root, "show", "-s", "--format=%ae%n%ce", rev).decode(errors="replace")
         for line in metadata.splitlines():
@@ -73,15 +89,19 @@ def history_issues(root):
     return issues, len(revisions)
 
 
-def run(root):
+def run(root, revision=None):
     candidate, files = candidate_issues(root)
-    history, commits = history_issues(root)
+    history, commits = history_issues(root, revision)
     return candidate + history, files, commits
 
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    issues, files, commits = run(root)
+    try:
+        issues, files, commits = run(root, revision=os.environ.get(REVISION_ENV))
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if issues:
         print("\n".join(issues), file=sys.stderr)
         return 1
