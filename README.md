@@ -17,7 +17,7 @@
 
 <p align="center">
   <strong><a href="https://pioneerjeff-labs.github.io/packwright/">Explore the live product website →</a></strong><br>
-  Watch the animated CLI, follow a Claude Code → Codex migration, and switch the Quickstart between Claude, Codex, and Cursor.<br>
+  Watch the animated CLI, follow a Claude Code → Codex migration, and switch the Quickstart between Claude Code, Codex, and Cursor.<br>
   <a href="https://pioneerjeff-labs.github.io/packwright/">English</a> · <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a>
 </p>
 
@@ -34,7 +34,7 @@
   <a href="README.zh-CN.md"><img alt="中文 README" src="https://img.shields.io/badge/README-中文-B87333?style=flat-square"></a>
 </p>
 
-<p align="center"><strong>The output is files you can read.</strong></p>
+<p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
@@ -44,7 +44,7 @@
 The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, or Cursor:
 
 ```bash
-python -m pip install packwright==0.1.0rc1
+python -m pip install packwright==0.1.0
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -122,13 +122,13 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 ## What the checks prove
 
 - `score` evaluates the public pack structure and artifact contract. `100.0` is a structural pass, not a promise that a runtime will behave perfectly.
-- `doctor` diagnoses deterministic drift and can repair Packwright-managed files without treating user memory as generated output.
+- `doctor` verifies Packwright-managed projection hashes and can repair reproducible drift without treating portable user state as generated output.
 - Migration verifies carried and rewritten files by hash and records planned and installed scores.
 - Packwright ships six directed migration paths across the three current adapters. New adapters land when they pass the checker.
 
 ## Current release boundary
 
-`0.1.0rc1` is a release candidate for external installation and runtime testing. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
+`0.1.0` is Packwright's first stable release. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
 
 ## Documentation
 
@@ -137,7 +137,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Use Packwright with your coding agent](docs/USE_WITH_YOUR_AGENT.md)
 - [Character drafting](docs/CHARACTER_DRAFTING.md)
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
-- [0.1.0rc1 release notes](docs/releases/0.1.0rc1.md)
+- [0.1.0 release notes](docs/releases/0.1.0.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 

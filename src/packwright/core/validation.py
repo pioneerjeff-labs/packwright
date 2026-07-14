@@ -1,10 +1,9 @@
 from collections.abc import Mapping, Sequence
-from pathlib import Path
-
 from .errors import PackwrightValidationError
 from .handoff import HANDOFF_ARTIFACTS
 from .knowledge_contract import knowledge_artifacts
 from .naming import character_slug, is_valid_slug, normalize_slug, save_context_skill_path
+from .path_safety import resolve_mechanism_file
 from .workspace_contract import (
     WORKSPACE_DOMAIN_TEMPLATE_DIR,
     WORKSPACE_INDEX_OWNER,
@@ -63,10 +62,11 @@ def path_exists(data, dotted_path):
 
 
 def file_exists(data, path):
-    for candidate in _candidate_paths(data, path):
-        if candidate.exists():
-            return True
-    return False
+    try:
+        resolve_mechanism_file(data, path)
+    except PackwrightValidationError:
+        return False
+    return True
 
 
 def _validate_top_level(data, issues):
@@ -313,7 +313,7 @@ def _validate_emotion(data, issues):
         issues.append("emotion.projection must be a mapping")
     else:
         allowed = {
-            "codex": {"default_light_sidecar_at_install", "spec_guided_behavior_only"},
+            "codex": {"optional_sidecar_when_explicitly_enabled", "spec_guided_behavior_only"},
             "claude-code": {"spec_guided_behavior_only"},
             "cursor": {"spec_guided_behavior_only"},
         }
@@ -617,25 +617,10 @@ def _validate_optional_slug(mapping, label, issues):
 def _validate_file_ref(data, rel_path, label, issues):
     if not _non_empty_string(rel_path):
         return
-    if not file_exists(data, rel_path):
-        candidates = ", ".join(str(path) for path in _candidate_paths(data, rel_path))
-        issues.append(f"{label} does not exist: {rel_path} (checked {candidates})")
-
-
-def _candidate_paths(data, path):
-    raw = Path(path)
-    if raw.is_absolute():
-        return [raw]
-
-    source = data.get("source", {}) if isinstance(data, Mapping) else {}
-    base_dir = source.get("base_dir") if isinstance(source, Mapping) else None
-    if not base_dir:
-        return []
-    base = Path(base_dir)
-    candidates = [base / raw]
-    if len(base.parents) >= 2:
-        candidates.append(base.parents[1] / raw)
-    return candidates
+    try:
+        resolve_mechanism_file(data, rel_path, label)
+    except PackwrightValidationError as exc:
+        issues.extend(exc.issues)
 
 
 def _is_mapping(value):

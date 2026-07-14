@@ -516,7 +516,7 @@ def _mechanism_yaml(character, slug):
             "voice_modulation_path": "emotion/voice-modulation.yaml",
             "memory_events_path": "emotion/memory-events.yaml",
             "projection": {
-                "codex": "default_light_sidecar_at_install",
+                "codex": "optional_sidecar_when_explicitly_enabled",
                 "claude-code": "spec_guided_behavior_only",
                 "cursor": "spec_guided_behavior_only",
             },
@@ -1058,7 +1058,7 @@ def _platform_capabilities_yaml(name):
                     "file_import_syntax": "plain_path_guidance",
                     "hooks": "project_config_or_plugin_dependent",
                     "memory_projection": "local_files",
-                    "emotion_projection": "default_light_sidecar_at_install",
+                    "emotion_projection": "optional_sidecar_when_explicitly_enabled",
                     "notes": [f"Skills carry repeatable {name} procedures."],
                 },
                 "claude-code": {
@@ -1323,7 +1323,7 @@ def _memory_index_md():
         "- Drafts, durable artifacts, and archived outputs -> `workspace/`\n"
         "- Action queue -> `memory/todos.md`\n"
         "- Collaboration calibration notes -> `memory/collaboration.md`\n"
-        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json`\n\n"
+        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json` when enabled\n\n"
         "## Compatibility Files\n\n"
         "- `memory/pinned.md` is compatibility-only in the MVP; avoid using it as a normal memory layer.\n"
         "- `memory/recent-activity.md` is an old name for session recall; prefer `memory/session-index.md`.\n"

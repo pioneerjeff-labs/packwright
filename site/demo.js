@@ -2,8 +2,8 @@
   "use strict";
 
   const englishLines = [
-    { className: "cmd", text: "python -m pip install packwright==0.1.0rc1" },
-    { className: "t-ok", text: "  ✓ installed packwright 0.1.0rc1" },
+    { className: "cmd", text: "python -m pip install packwright==0.1.0" },
+    { className: "t-ok", text: "  ✓ installed packwright 0.1.0" },
     { className: "cmd", text: "packwright init --template creator -o work/mira" },
     { className: "cmd", text: "packwright build work/mira --adapter claude-code -o pack/mira-claude" },
     { className: "t-ok", text: "  ✓ pack compiled · checker score 100.0" },
@@ -15,11 +15,11 @@
     { className: "t-note", text: "  would exclude: CLAUDE.md · .claude/** · no files written" },
     { className: "cmd", text: "packwright migrate project/mira-claude --to codex --target project/mira-codex --yes" },
     { className: "t-ok", text: "  ✓ carried hashes verified · installed score 100.0" },
-    { className: "t-dim", text: "# the output is files you can read" },
+    { className: "t-dim", text: "# native Codex target ready · portable state verified" },
   ];
   const chineseLines = [
-    { className: "cmd", text: "python -m pip install packwright==0.1.0rc1" },
-    { className: "t-ok", text: "  ✓ 已安装 packwright 0.1.0rc1" },
+    { className: "cmd", text: "python -m pip install packwright==0.1.0" },
+    { className: "t-ok", text: "  ✓ 已安装 packwright 0.1.0" },
     { className: "cmd", text: "packwright init --template creator -o work/mira" },
     { className: "cmd", text: "packwright build work/mira --adapter claude-code -o pack/mira-claude" },
     { className: "t-ok", text: "  ✓ Pack 编译完成 · checker 评分 100.0" },
@@ -31,25 +31,25 @@
     { className: "t-note", text: "  计划排除：CLAUDE.md · .claude/** · 未写入任何文件" },
     { className: "cmd", text: "packwright migrate project/mira-claude --to codex --target project/mira-codex --yes" },
     { className: "t-ok", text: "  ✓ 携带文件哈希验证通过 · 安装后评分 100.0" },
-    { className: "t-dim", text: "# 输出结果皆为清晰可读的普通文件" },
+    { className: "t-dim", text: "# 原生 Codex Target 就绪 · 可移植状态已验证" },
   ];
   const isChinese = document.documentElement.lang.toLowerCase().startsWith("zh");
   const lines = isChinese ? chineseLines : englishLines;
   const quickstartCommands = {
     "claude-code": [
-      "python -m pip install packwright==0.1.0rc1",
+      "python -m pip install packwright==0.1.0",
       "packwright init --template creator -o work/mira",
       "packwright build work/mira --adapter claude-code -o pack/mira-claude",
       "packwright install pack/mira-claude --adapter claude-code --target project/mira-claude",
     ].join("\n"),
     codex: [
-      "python -m pip install packwright==0.1.0rc1",
+      "python -m pip install packwright==0.1.0",
       "packwright init --template creator -o work/mira",
       "packwright build work/mira --adapter codex -o pack/mira-codex",
       "packwright install pack/mira-codex --adapter codex --target project/mira-codex",
     ].join("\n"),
     cursor: [
-      "python -m pip install packwright==0.1.0rc1",
+      "python -m pip install packwright==0.1.0",
       "packwright init --template creator -o work/mira",
       "packwright build work/mira --adapter cursor -o pack/mira-cursor",
       "packwright install pack/mira-cursor --adapter cursor --target project/mira-cursor",

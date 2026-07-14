@@ -159,7 +159,7 @@
         <path fill="var(--mark-ink)" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
         <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
       </svg>
-      <span class="wm">packwright</span>
+      <span class="wm">Packwright</span>
     </a>
     <div class="links">
       <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
@@ -171,14 +171,14 @@
   <header class="hero">
     <div>
       <h1>Build your agent once. Carry it everywhere.</h1>
-      <p class="sub">Packwright compiles one agent definition — rules, memory, skills, workspace — into native packs for Codex, Claude Code, and Cursor. The output is files you can read.</p>
+      <p class="sub">Packwright compiles one agent definition — rules, memory, skills, workspace — into native packs for Codex, Claude Code, and Cursor. When you migrate, its memory, workspace, knowledge, and sources move with it.</p>
       <p class="trust">Local-first. Zero telemetry. Packwright itself makes no network requests. Your coding runtime's data policy still applies.</p>
       <div class="cta">
         <a class="btn btn-accent" href="#quickstart">Get started</a>
         <a class="btn btn-ghost" href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       </div>
     </div>
-    <div class="term" aria-label="terminal demo: plain files in · plain files out">
+    <div class="term" aria-label="terminal demo: build a Claude Code target and migrate it to Codex">
       <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="term-body" id="term"></div>
     </div>
@@ -196,7 +196,7 @@
       <text x="28" y="160" font-size="11" fill="var(--pw-text-muted)">workspace</text>
       <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">packwright</text>
+      <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">Packwright</text>
       <line x1="354" y1="120" x2="450" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <line x1="354" y1="120" x2="450" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <line x1="354" y1="120" x2="450" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
@@ -245,12 +245,12 @@ packwright doctor     # repair drift</div>
   </section>
 
   <section class="sec-border" id="migrate">
-    <p class="section-kicker">Demo path · Claude → Codex</p>
+    <p class="section-kicker">Demo path · Claude Code → Codex</p>
     <h2>Move a working agent. Carry its working state.</h2>
     <p class="winline"><code>migrate --dry-run</code> reports what the destination runtime can't carry — without writing anything.</p>
     <svg class="diagram" viewBox="0 0 660 262" role="img" aria-label="Migrating from a Claude Code target to a Codex target: portable state carries over; runtime-specific files stay behind and are reported first">
       <rect x="16" y="28" width="208" height="200" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="30" y="52" font-size="12.5" fill="currentColor">claude code target</text>
+      <text x="30" y="52" font-size="12.5" fill="currentColor">Claude Code target</text>
       <rect x="30" y="66" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="6 3" opacity=".55"/>
       <text x="42" y="83" font-size="11" fill="var(--pw-text-muted)">CLAUDE.md</text>
       <rect x="30" y="100" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="6 3" opacity=".55"/>
@@ -265,7 +265,7 @@ packwright doctor     # repair drift</div>
       <rect x="262" y="144" width="132" height="20" fill="var(--pw-bg)"/>
       <text x="328" y="158" font-size="10.5" fill="var(--pw-text-muted)" text-anchor="middle">portable state</text>
       <rect x="436" y="28" width="208" height="200" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="450" y="52" font-size="12.5" fill="currentColor">codex target</text>
+      <text x="450" y="52" font-size="12.5" fill="currentColor">Codex target</text>
       <rect x="450" y="66" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
       <text x="462" y="83" font-size="11" fill="currentColor">AGENTS.md</text>
       <text x="462" y="60" font-size="9.5" fill="var(--pw-text-muted)"></text>
@@ -286,13 +286,13 @@ packwright doctor     # repair drift</div>
     <h2>Choose your runtime. Get started.</h2>
     <p class="lede">Install the RC, then run three commands to build and install a native target.</p>
     <div class="runtime-tabs" role="tablist" aria-label="Choose a runtime">
-      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude</button>
+      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude Code</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
       <button class="runtime-tab" id="runtime-cursor" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="cursor" tabindex="-1">Cursor</button>
     </div>
     <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
       <button class="copybtn" id="copyqs" aria-label="Copy quickstart commands">copy</button>
-      <pre id="qs-code">python -m pip install packwright==0.1.0rc1
+      <pre id="qs-code">python -m pip install packwright==0.1.0
 packwright init --template creator -o work/mira
 packwright build work/mira --adapter claude-code -o pack/mira-claude
 packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
@@ -305,12 +305,12 @@ packwright install pack/mira-claude --adapter claude-code --target project/mira-
         <path fill="var(--mark-ink)" d="M8 8 H50 V40 L76 30 V70 L50 60 V92 H8 Z"/>
         <path fill="#B87333" d="M92 8 H50 V40 L76 30 V70 L50 60 V92 H92 Z"/>
       </svg>
-      <span>packwright · MIT</span>
+      <span>Packwright · MIT</span>
     </div>
     <div class="flinks">
       <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/CLI.md">Docs</a>
-      <a href="https://pypi.org/project/packwright/0.1.0rc1/">PyPI</a>
+      <a href="https://pypi.org/project/packwright/0.1.0/">PyPI</a>
     </div>
   </footer>
 </div>

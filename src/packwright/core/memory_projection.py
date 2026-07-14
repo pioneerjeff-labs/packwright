@@ -32,7 +32,7 @@ def _project_memory_index(mechanism, adapter, text):
         text,
     )
     emotion_owner = (
-        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json`"
+        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json` when enabled"
         if adapter == "codex"
         else "- Dynamic emotion state and compact emotion history -> adapter-specific runtime state when installed; "
         "`memory/emotion-state.json.example` is the portable reference shape"

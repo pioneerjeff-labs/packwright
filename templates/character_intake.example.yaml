@@ -1,7 +1,7 @@
 version: "0.1"
 kind: CharacterIntake
 
-# Packwright defaults Emotion Engine to light mode:
+# Packwright recommends light mode by default; sidecar installation is explicit:
 # - light: <1% global token overhead
 # - always: ~3% target global token overhead, capped at <=5%
 #

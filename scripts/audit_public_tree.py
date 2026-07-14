@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scan release content and reachable history for private data and old names."""
 
+import os
 import re
 import subprocess
 import sys
@@ -11,7 +12,6 @@ PATTERNS = {
     "private email": re.compile(r"[A-Z0-9._%+-]+@gmail\.com", re.I),
     "private path": re.compile(r"/(?:Users|home)/[^/\s]+/"),
     "old product name": re.compile(r"\bagent(?:[ _-]+)harness\b", re.I),
-    "private fixture": re.compile(r"\b(?:Rebecca|Norah|Nora)\b", re.I),
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "credential assignment": re.compile(r"\b(?:api[_-]?key|access[_-]?token|secret)\s*[:=]\s*['\"][^'\"]+", re.I),
 }
@@ -23,7 +23,12 @@ def git(root, *args):
 
 def scan_text(label, text):
     issues = []
-    for kind, pattern in PATTERNS.items():
+    patterns = dict(PATTERNS)
+    for index, value in enumerate(os.environ.get("PACKWRIGHT_PUBLIC_AUDIT_DENYLIST", "").splitlines(), start=1):
+        value = value.strip()
+        if value:
+            patterns[f"private denylist entry {index}"] = re.compile(re.escape(value), re.I)
+    for kind, pattern in patterns.items():
         for match in pattern.finditer(text):
             line = text.count("\n", 0, match.start()) + 1
             issues.append(f"{label}:{line}: {kind}")

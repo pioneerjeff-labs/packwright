@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import yaml
 
@@ -21,6 +20,7 @@ from packwright.core.naming import (
     reference_prefix,
     save_context_skill_path,
 )
+from packwright.core.path_safety import resolve_mechanism_file
 from packwright.core.validation import validate_mechanism
 from packwright.core.workspace_contract import workspace_feature, workspace_files
 
@@ -374,17 +374,4 @@ def _load_yaml_ref(mechanism, rel_path):
 
 
 def _resolve_ref(mechanism, rel_path):
-    raw = Path(rel_path)
-    if raw.is_absolute():
-        return raw
-
-    source = mechanism.get("source", {})
-    base = Path(source.get("base_dir", "."))
-    candidates = [base / raw]
-    if len(base.parents) >= 2:
-        candidates.append(base.parents[1] / raw)
-
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    raise PackwrightValidationError([f"referenced file does not exist: {rel_path}"])
+    return resolve_mechanism_file(mechanism, rel_path)

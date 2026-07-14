@@ -35,12 +35,21 @@ packwright score project/mira-codex
 The longer pre-release forms such as `--pack-dir` and `--source-target-dir`
 remain accepted for compatibility.
 
+`build` refuses to overwrite existing pack artifacts unless `--force` is
+explicitly supplied. `install --force` replaces Packwright-managed runtime
+projections while preserving existing `memory/`, `workspace/`, `knowledge/`,
+and `sources/` state.
+
 Packs built by Packwright and their installed targets include portable
 `.packwright/` metadata: a canonical spec/source snapshot, artifact lock, and
 checker receipt. `score`, `doctor`, and `migrate` can therefore use a relocated
 installed target without its original work or pack directory. Shareable
 `manifest.json` uses relative metadata references instead of the build
 machine's absolute source path.
+
+`doctor` consumes the artifact lock for Packwright-managed projections.
+Portable state and live Emotion Engine state are intentionally excluded from
+managed hash repair.
 
 ## Adapter layout contract
 
