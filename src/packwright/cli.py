@@ -17,8 +17,8 @@ from packwright.core import (
     apply_migration,
     create_handoff,
     doctor_target,
-    generate_character_template,
-    generate_character_template_from_data,
+    generate_character_source,
+    generate_character_source_from_data,
     install_pack,
     load_mechanism,
     plan_migration,
@@ -26,7 +26,7 @@ from packwright.core import (
     render_interviewer_prompt,
     resolve_mechanism,
     starter_character_intake,
-    starter_character_template_names,
+    starter_character_preset_names,
     validate_mechanism,
     write_interviewer_prompt,
 )
@@ -82,12 +82,12 @@ def _build_parser():
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{init,build,install,migrate,doctor,score}",
+        metavar="{init,draft-character,adopt,build,install,migrate,doctor,score}",
     )
 
     init_cmd = subparsers.add_parser(
         "init",
-        help="create an editable agent source from a starter template or intake file",
+        help="create editable agent source from your intake or a nameless starter preset",
     )
     _add_init_arguments(init_cmd)
 
@@ -180,6 +180,7 @@ def _build_parser():
 
     adopt = subparsers.add_parser(
         "adopt",
+        help="inventory an existing agent for reviewable adoption",
         description="inventory an existing local agent/workspace for reviewable Packwright adoption",
     )
     adopt.add_argument("--from", required=True, dest="source_dir", help="existing local instance directory")
@@ -245,6 +246,7 @@ def _build_parser():
 
     draft_character = subparsers.add_parser(
         "draft-character",
+        help="draft a custom character intake through your coding agent",
         description="print the LLM interviewer contract for drafting canonical character_intake.yaml",
     )
     draft_character.add_argument("--user-name", default="the user", help="default user name in the interview contract")
@@ -345,9 +347,10 @@ def _add_init_arguments(parser):
     )
     parser.add_argument(
         "--template",
-        choices=starter_character_template_names(),
-        help="starter character template: productivity/system, creator/mira, or companion/lumen",
+        choices=starter_character_preset_names(),
+        help="nameless starter preset: code, work, or companion; requires --name",
     )
+    parser.add_argument("--name", help="character name chosen by the user; required with --template")
     parser.add_argument("--user-name", help="how the character should refer to the user in generated files")
     parser.add_argument("--slug", help="explicit lowercase ASCII character slug, useful for non-Latin names")
     parser.add_argument("--save-intake", help="write the generated or answered intake YAML to this path")
@@ -355,7 +358,7 @@ def _add_init_arguments(parser):
         "-o",
         "--out-dir",
         dest="out_dir",
-        help="output source directory; defaults to templates/<character>-work",
+        help="output source directory; defaults to work/<character>",
     )
     parser.add_argument("--force", action="store_true", help="overwrite generated character files")
     parser.add_argument("--out", help="output generation JSON path")
@@ -583,25 +586,37 @@ def _cmd_init_character(args):
             raise PackwrightError("init accepts either an intake path or --template, not both")
         if args.interactive:
             raise PackwrightError("init accepts either --interactive or --template, not both")
-        intake = starter_character_intake(args.template, user_name=args.user_name, slug=args.slug)
+        if not args.name:
+            raise PackwrightError("starter presets are nameless; provide the character name with --name")
+        intake = starter_character_intake(
+            args.template,
+            name=args.name,
+            user_name=args.user_name,
+            slug=args.slug,
+        )
         if args.save_intake:
             _write_yaml(intake, Path(args.save_intake))
-        result = generate_character_template_from_data(intake, out_dir=args.out_dir, force=args.force)
+        result = generate_character_source_from_data(intake, out_dir=args.out_dir, force=args.force)
         result["intake"] = args.save_intake or f"template:{args.template}"
     elif args.interactive:
+        if args.name:
+            raise PackwrightError("--name is only accepted with --template; interactive mode asks for a name")
         print(
             "warning: --interactive is a basic fallback and does not semantically normalize answers; "
-            "prefer `packwright draft-character` with an LLM-produced intake YAML."
+            "prefer `packwright draft-character` with an LLM-produced intake YAML.",
+            file=sys.stderr,
         )
         intake = _prompt_character_intake(args.user_name, slug=args.slug)
         if args.save_intake:
             _write_yaml(intake, Path(args.save_intake))
-        result = generate_character_template_from_data(intake, out_dir=args.out_dir, force=args.force)
+        result = generate_character_source_from_data(intake, out_dir=args.out_dir, force=args.force)
         result["intake"] = args.save_intake or "interactive"
     else:
+        if args.name:
+            raise PackwrightError("--name is only accepted with --template; intake files already contain a name")
         if not args.intake:
             raise PackwrightError("init requires an intake path unless --template or --interactive is used")
-        result = generate_character_template(args.intake, out_dir=args.out_dir, force=args.force)
+        result = generate_character_source(args.intake, out_dir=args.out_dir, force=args.force)
     _write_json_or_print(result, args.out)
     return 0
 
@@ -669,11 +684,18 @@ def _required_path_argument(positional, option, label, usage):
 def _prompt_character_intake(user_name, slug=None):
     print("Packwright character intake")
     print("Basic fallback mode: fixed questions, no LLM normalization.")
-    name = _prompt_required("1. 这个人物叫什么？")
+    name = _prompt_required("1. What should the character be called?")
     resolved_slug = normalize_slug(slug, default="") if slug else _prompt_optional_slug(name)
-    relationship = _prompt_required("2. TA 和你是什么关系？例如：工作搭档 / 秘书 / 教练 / 朋友式伙伴 / 研究员。")
-    primary_work = _prompt_list("3. 你主要希望 TA 帮你做什么？可以用逗号或分号分隔多项。")
-    voice = _prompt_required("4. 你希望 TA 说话像什么样？也可以说你讨厌什么口吻。")
+    relationship = _prompt_required(
+        "2. What relationship should they have with you? "
+        "For example: work partner, secretary, coach, friendly companion, or researcher."
+    )
+    primary_work = _prompt_list(
+        "3. What should they mainly help you do? Separate multiple items with commas or semicolons."
+    )
+    voice = _prompt_required(
+        "4. How should they sound? You can also describe tones or habits they should avoid."
+    )
     continuity = _prompt_relationship_continuity()
     resolved_user_name = (
         user_name
@@ -702,7 +724,8 @@ def _prompt_character_intake(user_name, slug=None):
 
 def _prompt_optional_slug(name):
     value = input(
-        "1b. 给 TA 一个英文/拼音 slug？用于文件名，比如 system。留空则自动生成。\n> "
+        "1b. Choose an English or romanized slug for filenames, such as nova. "
+        "Leave blank to generate one automatically.\n> "
     ).strip()
     if value:
         return normalize_slug(value)
@@ -714,7 +737,7 @@ def _prompt_required(prompt):
         value = input(prompt + "\n> ").strip()
         if value:
             return value
-        print("这个字段不能为空。")
+        print("This field is required.")
 
 
 def _prompt_list(prompt):
@@ -723,15 +746,15 @@ def _prompt_list(prompt):
         items = [item.strip() for item in re.split(r"[,，;；\n]+", value) if item.strip()]
         if items:
             return items
-        print("至少写一项。")
+        print("Enter at least one item.")
 
 
 def _prompt_relationship_continuity():
     prompt = (
-        "5. 你希望这个角色的关系连续性到什么程度？\n"
-        "   A = 只做事，不维护情绪关系\n"
-        "   B = 有温度，但只记重要偏好\n"
-        "   C = 更像长期陪伴，会持续记住相处细节"
+        "5. How much relationship continuity should this character maintain?\n"
+        "   A = Task-only, with no emotional relationship continuity\n"
+        "   B = Warm, but remembers only important preferences\n"
+        "   C = Close, long-term continuity that remembers interaction details"
     )
     choices = {
         "a": "task_only",
@@ -753,7 +776,7 @@ def _prompt_relationship_continuity():
         value = input(prompt + "\n> ").strip().lower()
         if value in choices:
             return choices[value]
-        print("请输入 A、B、C，或直接输入 task_only / warm_selective / close_continuous。")
+        print("Enter A, B, or C, or use task_only, warm_selective, or close_continuous.")
 
 
 def _direct_emotional_interaction_from_continuity(continuity):
@@ -824,6 +847,8 @@ def _load_pack_manifest(pack_dir):
     try:
         manifest_path = resolve_source_path(pack_dir, "manifest.json", "adapter pack manifest")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PackwrightError(f"cannot read adapter pack manifest {pack_dir / 'manifest.json'}: {exc}")
     except json.JSONDecodeError as exc:
         raise PackwrightError(f"invalid adapter pack manifest {pack_dir / 'manifest.json'}: {exc}")
     if not isinstance(manifest, dict):

@@ -8,6 +8,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 - Stable public release for Codex, Claude Code, and Cursor pack generation, installation, migration, diagnosis, and scoring.
 - Artifact-lock verification and deterministic repair for Packwright-managed projections.
+- First-class `draft-character` and `adopt` creation paths for custom and existing agents.
 
 ### Changed
 
@@ -15,6 +16,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - `install --force` preserves portable user state under `memory/`, `workspace/`, `knowledge/`, and `sources/`.
 - Emotion Engine sidecar installation is explicit instead of being implied by the default light mode.
 - Distributable metadata no longer records build-machine absolute source paths.
+- Public starter presets are now nameless `code`, `work`, and `companion` starting roles; users supply the character name with `--name` and can customize responsibilities, capabilities, voice, boundaries, and emotional feedback.
 
 ### Security
 

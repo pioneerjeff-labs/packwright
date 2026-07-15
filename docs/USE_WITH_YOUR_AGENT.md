@@ -4,21 +4,25 @@ Packwright's CLI is the deterministic engine. Codex, Claude Code, or Cursor can 
 
 ## Before you paste the prompt
 
-Install the current release candidate in the environment your coding agent can access:
+Install Packwright in the environment your coding agent can access:
 
 ```bash
 python -m pip install packwright==0.1.0
 packwright --version
 ```
 
-Use synthetic or reviewed files while evaluating the release candidate. Do not give a coding runtime access to secrets or private memory that its own data policy does not permit.
+Use synthetic or reviewed files while evaluating Packwright. Do not give a coding runtime access to secrets or private memory that its own data policy does not permit.
 
 ## Paste this prompt
 
 ```text
-Operate Packwright for me. First run `packwright --version`. Ask whether I want to build a new agent or migrate an existing target, and ask for the destination adapter (`codex`, `claude-code`, or `cursor`).
+Operate Packwright for me. First run `packwright --version`. Ask whether I want to create a new agent, adopt an existing local agent, or migrate an installed target. Ask for the destination adapter (`codex`, `claude-code`, or `cursor`) when build or migration begins.
 
-For a new agent, run `packwright init --template <productivity|creator|companion> -o <work-dir>`, edit only the generated source according to my description, then run `packwright build <work-dir> --adapter <adapter> -o <pack-dir>` and `packwright install <pack-dir> --target <target-dir>`.
+For a new agent, ask what I need it to do and what name I choose. Never invent or assign the character name. Run `packwright draft-character --user-name <user-name> --prompt-out <interviewer-prompt>` and use that contract to interview me. Ask one concise question at a time, show the completed canonical `CharacterIntake` YAML, and wait for my confirmation. Save the confirmed intake, run `packwright init <intake.yaml> -o <work-dir>`, then run `packwright build <work-dir> --adapter <adapter> -o <pack-dir>` and `packwright install <pack-dir> --target <target-dir>`.
+
+If I explicitly prefer a shortcut, offer the three nameless presets: `code`, `work`, and `companion`. Ask me to choose both the preset and the character name, then run `packwright init --template <code|work|companion> --name <chosen-name> --user-name <user-name> -o <work-dir>`. Explain that the preset shapes capabilities, voice, boundaries, memory, and continuity but does not define who the character is.
+
+For an existing local agent, begin with `packwright adopt --from <source-dir> --dry-run`. Show the inventory and review queues. Do not merge memory or import files automatically.
 
 Before every migration run `packwright migrate <source> --to <adapter> --target <destination> --json --dry-run`. Show the complete generated, carried, rewritten, and excluded report, then wait for my confirmation. After confirmation, rerun the same command with `--json --yes`. Never add `--force` without separate approval.
 

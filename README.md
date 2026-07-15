@@ -49,24 +49,58 @@ python -m pip install packwright==0.1.0
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
 
-The prompt makes the agent preview every migration, explain the receipt, wait for your approval, and verify the installed target afterward.
+For a new agent, describe what it should do and choose its name. The prompt makes your coding agent draft a canonical intake, confirm it with you, build the pack, and verify the installed target. For migration, it previews the receipt and waits for approval before writing.
 
-## Or run it by hand
+## Create your own
 
-Build and install an editable Claude Code target:
+Generate Packwright's interviewer contract, then let your coding agent turn the conversation into a confirmed `character_intake.yaml`:
 
 ```bash
-packwright init --template creator -o work/mira
-packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target project/mira-claude
+packwright draft-character \
+  --user-name Morgan \
+  --prompt-out work/character-interviewer.md
 ```
+
+After the agent saves the confirmed intake, create editable source and build it:
+
+```bash
+packwright init work/nova-intake.yaml -o work/nova
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
+```
+
+Already have an agent or workspace? Inventory it before importing anything:
+
+```bash
+packwright adopt --from existing-agent --dry-run
+```
+
+## Or use a nameless starter
+
+Three presets cover common starting points. Customize responsibilities, capabilities, voice, boundaries, and emotional feedback; the preset shapes how the agent works, while you always choose its name.
+
+| Preset | Starting role |
+|---|---|
+| `code` | Expert engineer — builds, reviews, debugs, tests, and ships technical work |
+| `work` | Versatile assistant — plans projects, drafts deliverables, clarifies decisions, and keeps execution moving |
+| `companion` | Personal secretary — supports daily routines, life decisions, travel planning, and emotional support |
+
+Choose a preset, answer a few simple questions, and supply the character name yourself.
+
+```bash
+packwright init --template code --name Nova --user-name Morgan -o work/nova
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
+```
+
+`Nova` is only an example of a user-chosen name. Edit the generated name, relationship, voice, and boundaries whenever you need.
 
 Preview a move from Claude Code to Codex. The destination is not created during this step:
 
 ```bash
-packwright migrate project/mira-claude \
+packwright migrate project/nova-claude \
   --to codex \
-  --target project/mira-codex --dry-run
+  --target project/nova-codex --dry-run
 ```
 
 The plan names four kinds of paths:
@@ -81,11 +115,11 @@ The plan names four kinds of paths:
 After reviewing the receipt, apply that exact move and verify the result:
 
 ```bash
-packwright migrate project/mira-claude \
+packwright migrate project/nova-claude \
   --to codex \
-  --target project/mira-codex --yes
-packwright doctor project/mira-codex
-packwright score project/mira-codex
+  --target project/nova-codex --yes
+packwright doctor project/nova-codex
+packwright score project/nova-codex
 ```
 
 Add `--json` to the dry run and confirmed run for a machine-readable `packwright-migration/v1` receipt. Packwright refuses to overwrite an existing target unless you separately opt into `--force`.
@@ -137,6 +171,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Use Packwright with your coding agent](docs/USE_WITH_YOUR_AGENT.md)
 - [Character drafting](docs/CHARACTER_DRAFTING.md)
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
+- [Optional Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
 - [0.1.0 release notes](docs/releases/0.1.0.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

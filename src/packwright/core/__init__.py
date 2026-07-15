@@ -1,10 +1,13 @@
 from .errors import PackwrightError, PackwrightValidationError
 from .adopt import adopt_existing
 from .character_intake import (
+    generate_character_source,
+    generate_character_source_from_data,
     generate_character_template,
     generate_character_template_from_data,
     load_character_intake,
     starter_character_intake,
+    starter_character_preset_names,
     starter_character_template_names,
     validate_character_intake,
 )
@@ -32,6 +35,8 @@ __all__ = [
     "create_handoff",
     "doctor_target",
     "file_exists",
+    "generate_character_source",
+    "generate_character_source_from_data",
     "generate_character_template",
     "generate_character_template_from_data",
     "install_pack",
@@ -44,6 +49,7 @@ __all__ = [
     "refresh_emotion_engine_codex",
     "resolve_mechanism",
     "starter_character_intake",
+    "starter_character_preset_names",
     "starter_character_template_names",
     "validate_character_intake",
     "validate_mechanism",

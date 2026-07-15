@@ -12,7 +12,7 @@
 
 <p align="center">
   一次定义 agent 的规则、记忆、skills 与工作区，编译成 Codex、Claude Code 和 Cursor 的原生 pack；<br>
-  构建并安装原生 Pack；迁移时把记忆、工作区与知识状态一起带走。
+  构建并安装原生 pack；迁移时把记忆、工作区与知识状态一起带走。
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@
   <a href="README.md"><img alt="English README" src="https://img.shields.io/badge/README-English-B87333?style=flat-square"></a>
 </p>
 
-<p align="center"><strong>原生 Pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
+<p align="center"><strong>原生 pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
 
 > [!NOTE]
 > Packwright 自身不会发起网络请求，也不会发送遥测数据。coding runtime 仍可能把它读取的文件发送给自己的模型服务商，其数据政策继续适用。
@@ -49,24 +49,58 @@ python -m pip install packwright==0.1.0
 
 **[打开可直接粘贴的 agent 操作提示词 →](docs/USE_WITH_YOUR_AGENT.md)**
 
-提示词会要求 agent 先做迁移预览、解释完整收据、等待你的确认，再写入并验证最终 target。
+创建新 agent 时，你只需描述它要做什么并亲自选名字。提示词会让 coding agent 起草 canonical intake、交给你确认、构建 pack，并验证最终 target；迁移时则会先预览收据，等待确认后再写入。
 
-## 或者手动运行
+## 创建你自己的 agent
 
-创建可编辑源，构建并安装一个 Claude Code target：
+先生成 Packwright 的采访契约，再让 coding agent 把对话整理成经你确认的 `character_intake.yaml`：
 
 ```bash
-packwright init --template creator -o work/mira
-packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target project/mira-claude
+packwright draft-character \
+  --user-name Morgan \
+  --prompt-out work/character-interviewer.md
 ```
+
+agent 保存确认后的 intake 后，再创建可编辑源并完成构建：
+
+```bash
+packwright init work/nova-intake.yaml -o work/nova
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
+```
+
+已经有 agent 或工作区？先做清单盘点，不会直接导入任何内容：
+
+```bash
+packwright adopt --from existing-agent --dry-run
+```
+
+## 或从无名 starter 开始
+
+三种 preset 分别覆盖常见高频需求。支持自定义 agent 的职责、能力、语气、边界与情绪反馈；preset 只决定 agent 怎么工作，名字始终由你自己选择。
+
+| preset | 起始角色 |
+|---|---|
+| `code` | 天才工程师——擅长编写、审查、调试、测试并交付技术工作 |
+| `work` | 全能助手——规划项目、起草产出、理清决策并推动后续执行 |
+| `companion` | 私人秘书——支持日常安排、生活决策、出行计划与情感陪伴 |
+
+选择一种 preset，回答几个简单问题，再由你亲自为角色命名。
+
+```bash
+packwright init --template code --name Nova --user-name Morgan -o work/nova
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
+```
+
+这里的 `Nova` 只是用户自选名字的示例；生成后仍可修改名字、关系、语气和边界。
 
 先预览从 Claude Code 到 Codex 的迁移。此时不会创建目标目录：
 
 ```bash
-packwright migrate project/mira-claude \
+packwright migrate project/nova-claude \
   --to codex \
-  --target project/mira-codex --dry-run
+  --target project/nova-codex --dry-run
 ```
 
 迁移计划会明确列出四类路径：
@@ -81,11 +115,11 @@ packwright migrate project/mira-claude \
 审阅收据后，再应用同一迁移并验证结果：
 
 ```bash
-packwright migrate project/mira-claude \
+packwright migrate project/nova-claude \
   --to codex \
-  --target project/mira-codex --yes
-packwright doctor project/mira-codex
-packwright score project/mira-codex
+  --target project/nova-codex --yes
+packwright doctor project/nova-codex
+packwright score project/nova-codex
 ```
 
 在预览和确认命令中加入 `--json`，即可得到机器可读的 `packwright-migration/v1` 收据。除非另行使用 `--force`，Packwright 不会覆盖已有 target。
@@ -94,7 +128,7 @@ packwright score project/mira-codex
 
 一个正在工作的 coding agent 不只有顶层 instructions，而且三个 runtime 要求不同的原生文件布局：
 
-| Runtime | 原生入口 | 可复用流程 |
+| runtime | 原生入口 | 可复用流程 |
 |---|---|---|
 | Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
@@ -136,7 +170,8 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [CLI 契约](docs/CLI.md)
 - [交给 coding agent 使用](docs/USE_WITH_YOUR_AGENT.md)
 - [角色起草](docs/CHARACTER_DRAFTING.md)
-- [Agent archetype](docs/AGENT_ARCHETYPES.md)
+- [agent archetype](docs/AGENT_ARCHETYPES.md)
+- [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
 - [0.1.0 发布说明](docs/releases/0.1.0.md)
 - [参与贡献](CONTRIBUTING.md)
 - [安全政策](SECURITY.md)

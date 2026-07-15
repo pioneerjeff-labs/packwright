@@ -69,7 +69,7 @@ SDIR="$(find "$WORK/sdist" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 "$WORK/wheel-venv/bin/python" -m pip install -q "$WHEEL"
 PW="$WORK/wheel-venv/bin/packwright"
 "$PW" --version
-"$PW" init --template creator -o "$WORK/work"
+"$PW" init --template code --name Nova -o "$WORK/work"
 for adapter in codex claude-code cursor; do
   "$PW" build "$WORK/work" --adapter "$adapter" -o "$WORK/pack-$adapter"
   "$PW" install "$WORK/pack-$adapter" --adapter "$adapter" --target "$WORK/target-$adapter"

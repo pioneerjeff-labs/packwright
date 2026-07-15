@@ -11,6 +11,8 @@ archetype
     -> optional runtime state
 ```
 
+Packwright's public starter presets are `code`, `work`, and `companion`. They are onboarding shortcuts, not named characters and not a replacement for the richer archetype model below. A preset supplies defaults; the user still supplies the character name, and custom drafting can select more specialized archetypes such as Creator, Operations, or Learning Coach.
+
 ## Core Layers
 
 - `AGENTS.md` or `CLAUDE.md`: stable identity, voice, and default behavior.

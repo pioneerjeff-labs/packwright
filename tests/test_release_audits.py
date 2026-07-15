@@ -23,8 +23,33 @@ class ZeroNetworkAuditTest(unittest.TestCase):
             path.write_text("value = 'https://example.test'\n", encoding="utf-8")
             self.assertEqual(audit.audit_python(path), [])
 
+    def test_python_blocks_indirect_network_and_execution_surfaces(self):
+        samples = (
+            "import subprocess\nsubprocess.run(['curl', 'https://example.test'])\n",
+            "import webbrowser\nwebbrowser.open('https://example.test')\n",
+            "import asyncio\nasyncio.open_connection('example.test', 443)\n",
+            "import importlib\nimportlib.import_module('requests')\n",
+            "import os\nos.system('curl https://example.test')\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.py"
+            for source in samples:
+                with self.subTest(source=source.splitlines()[0]):
+                    path.write_text(source, encoding="utf-8")
+                    self.assertTrue(audit.audit_python(path))
+
+    def test_embedded_generated_python_is_audited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "generator.py"
+            path.write_text(
+                'HELPER = """\nimport socket\nsocket.create_connection((\"example.test\", 443))\n"""\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(audit.audit_python(path), [])
+            self.assertTrue(audit.audit_embedded_python(path))
+
     def test_landing_blocks_auto_load_but_allows_links(self):
-        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:"
+        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; connect-src 'none'"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "index.html"
             path.write_text(f'<meta http-equiv="Content-Security-Policy" content="{csp}"><a href="https://example.test">link</a>', encoding="utf-8")
@@ -33,7 +58,7 @@ class ZeroNetworkAuditTest(unittest.TestCase):
             self.assertTrue(audit.audit_landing(path))
 
     def test_landing_detects_css_and_javascript_network_calls(self):
-        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:"
+        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; connect-src 'none'"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "index.html"
             path.write_text(f'<meta http-equiv="Content-Security-Policy" content="{csp}"><style>x{{background:url(https://example.test/x)}}</style>', encoding="utf-8")
@@ -44,11 +69,26 @@ class ZeroNetworkAuditTest(unittest.TestCase):
     def test_landing_rejects_inline_script_permission(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "index.html"
-            path.write_text('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; img-src \'self\' data:">', encoding="utf-8")
+            path.write_text('<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; img-src \'self\' data:; connect-src \'none\'">', encoding="utf-8")
+            self.assertTrue(audit.audit_landing(path))
+
+    def test_landing_requires_an_exact_connect_src_none_directive(self):
+        base = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.html"
+            path.write_text(
+                f'<meta http-equiv="Content-Security-Policy" content="{base}; x-connect-src \'none\'">',
+                encoding="utf-8",
+            )
+            self.assertTrue(audit.audit_landing(path))
+            path.write_text(
+                f'<meta http-equiv="Content-Security-Policy" content="{base}; connect-src https:">',
+                encoding="utf-8",
+            )
             self.assertTrue(audit.audit_landing(path))
 
     def test_landing_allows_self_hosted_script_and_audits_its_source(self):
-        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'none'"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             html = root / "index.html"
@@ -59,6 +99,35 @@ class ZeroNetworkAuditTest(unittest.TestCase):
             self.assertEqual(audit.audit_javascript(script), [])
             script.write_text("fetch('/beacon');", encoding="utf-8")
             self.assertTrue(audit.audit_javascript(script))
+
+    def test_javascript_blocks_dynamic_import_and_image_src_loading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "demo.js"
+            path.write_text('import("./remote-module.js");', encoding="utf-8")
+            self.assertTrue(audit.audit_javascript(path))
+            path.write_text('new Image().src = "https://example.test/pixel.png";', encoding="utf-8")
+            self.assertTrue(audit.audit_javascript(path))
+
+    def test_external_preload_is_treated_as_an_auto_load(self):
+        csp = "default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; connect-src 'none'"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.html"
+            path.write_text(
+                f'<meta http-equiv="Content-Security-Policy" content="{csp}"><link rel="preload" href="https://example.test/font.woff2" as="font">',
+                encoding="utf-8",
+            )
+            self.assertTrue(audit.audit_landing(path))
+
+    def test_run_scans_scripts_and_examples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "examples").mkdir()
+            (root / "scripts" / "helper.py").write_text("import webbrowser\n", encoding="utf-8")
+            (root / "examples" / "sample.py").write_text("import asyncio\n", encoding="utf-8")
+            issues = audit.run(root)
+            self.assertTrue(any("scripts/helper.py" in issue for issue in issues))
+            self.assertTrue(any("examples/sample.py" in issue for issue in issues))
 
 
 class PublicTreeAuditTest(unittest.TestCase):
@@ -160,21 +229,22 @@ class PublicTreeAuditTest(unittest.TestCase):
             ROOT / "site" / "zh-CN.html",
         ]
         required = (
-            "packwright init --template creator -o work/mira",
-            "packwright build work/mira --adapter claude-code -o pack/mira-claude",
-            "packwright install pack/mira-claude --adapter claude-code --target project/mira-claude",
-            "packwright migrate project/mira-claude",
-            "--target project/mira-codex --dry-run",
-            "--target project/mira-codex --yes",
-            "packwright doctor project/mira-codex",
-            "packwright score project/mira-codex",
+            "packwright init --template code --name Nova",
+            "packwright build work/nova --adapter claude-code -o pack/nova-claude",
+            "packwright install pack/nova-claude --adapter claude-code --target project/nova-claude",
+            "packwright migrate project/nova-claude",
+            "--target project/nova-codex --dry-run",
+            "--target project/nova-codex --yes",
+            "packwright doctor project/nova-codex",
+            "packwright score project/nova-codex",
         )
         for path in documents:
             text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8").replace("\\", " "))
             with self.subTest(path=path.name):
                 for command in required:
                     self.assertIn(command, text)
-                self.assertIsNone(re.search(r"packwright migrate project/mira(?!-claude)", text))
+                self.assertIsNone(re.search(r"packwright migrate project/nova(?!-claude)", text))
+                self.assertNotIn("--template creator", text)
 
     def test_public_entrypoints_share_brand_and_receipt_contract(self):
         readmes = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
@@ -201,6 +271,10 @@ class PublicTreeAuditTest(unittest.TestCase):
         landing = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
         self.assertIn("Packwright dovetail mark", landing)
         self.assertIn("Build your agent once. Carry it everywhere.", landing)
+        self.assertIn("Three agent presets. Make each one your own.", landing)
+        self.assertIn("Expert engineer:", landing)
+        self.assertIn("Versatile assistant:", landing)
+        self.assertIn("Personal secretary:", landing)
         self.assertIn("build a Claude Code target and migrate it to Codex", landing)
         self.assertIn('<span class="wm">Packwright</span>', landing)
         self.assertIn('>Packwright</text>', landing)
@@ -212,9 +286,18 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn('<html lang="zh-CN"', chinese_landing)
         self.assertIn("一次构建 agent，", chinese_landing)
         self.assertIn("随处皆可运行。", chinese_landing)
+        self.assertIn("三种预设 agent 模板，满足你多样的定制化需求。", chinese_landing)
+        self.assertIn("天才工程师：", chinese_landing)
+        self.assertIn("全能助手：", chinese_landing)
+        self.assertIn("私人秘书：", chinese_landing)
         self.assertNotIn("无缝", chinese_landing)
-        self.assertIn("自己掌舵，或让 Agent 代驾", chinese_landing)
-        self.assertIn("packwright-han-serif-600.otf", chinese_landing)
+        self.assertIn("自己掌舵，或让 agent 代驾", chinese_landing)
+        self.assertIn('font-family:"Packwright Han Serif"', chinese_landing)
+        self.assertIn('href="../assets/fonts/packwright-han-serif-600.otf"', chinese_landing)
+        self.assertIn('"Packwright Han Serif","Songti SC"', chinese_landing)
+        self.assertIsNone(
+            re.search(r"\b(?:Agent|Runtime|Pack|Prompt|Target|Skills|Instruction)\b", chinese_landing)
+        )
         self.assertIn('<script src="demo.js" defer></script>', chinese_landing)
         self.assertIn('href="index.html"', chinese_landing)
         self.assertIn('href="zh-CN.html"', landing)
@@ -229,7 +312,7 @@ class PublicTreeAuditTest(unittest.TestCase):
             "Native packs. Portable state. Preview every migration before any files are written.",
             readme,
         )
-        self.assertIn("原生 Pack。可移植状态。每次迁移都先预览，再写入。", chinese_readme)
+        self.assertIn("原生 pack。可移植状态。每次迁移都先预览，再写入。", chinese_readme)
 
         public_copy = (readme, chinese_readme, landing, chinese_landing, social_preview)
         for document in public_copy:
@@ -239,6 +322,7 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertNotIn("输出结果皆为清晰可读的普通文件", document)
 
         for document in (landing, chinese_landing):
+            self.assertLess(document.index('id="start"'), document.index('id="why"'))
             self.assertLess(document.index('id="migrate"'), document.index('id="quickstart"'))
             self.assertIn('<span class="wm">Packwright</span>', document)
             self.assertIn('>Packwright</text>', document)
@@ -255,12 +339,13 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn("const chineseLines = [", demo)
         self.assertIn('startsWith("zh")', demo)
         self.assertIn("pack compiled · checker score 100.0", demo)
-        self.assertIn("Pack 编译完成 · checker 评分 100.0", demo)
+        self.assertIn("pack 编译完成 · checker 评分 100.0", demo)
         self.assertIn("native Codex target ready · portable state verified", demo)
-        self.assertIn("原生 Codex Target 就绪 · 可移植状态已验证", demo)
+        self.assertIn("原生 Codex target 就绪 · 可移植状态已验证", demo)
         self.assertNotIn("the output is files you can read", demo)
-        self.assertIn('"packwright build work/mira --adapter codex -o pack/mira-codex"', demo)
-        self.assertIn('"packwright build work/mira --adapter cursor -o pack/mira-cursor"', demo)
+        self.assertIn('"packwright build work/nova --adapter codex -o pack/nova-codex"', demo)
+        self.assertIn('"packwright build work/nova --adapter cursor -o pack/nova-cursor"', demo)
+        self.assertIn("packwright init --template code --name Nova", demo)
         self.assertIn("function legacyCopy(text)", demo)
         self.assertIn('document.execCommand("copy")', demo)
 
