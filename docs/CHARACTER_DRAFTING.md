@@ -12,6 +12,8 @@ messy user intent
   -> install target
 ```
 
+The normal path begins with the user's description and chosen name. For a shorter path, Packwright also exposes three nameless capability presets—`code`, `work`, and `companion`—but the resulting character instance still requires a user-supplied name.
+
 ## LLM Interviewer
 
 The interviewer is responsible for understanding the user. It should ask dynamic questions, reject or follow up on unrelated answers, and normalize casual phrasing into canonical fields.

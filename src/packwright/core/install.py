@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -1517,16 +1518,6 @@ def _fix_legacy_codex_skills(target_dir, issues):
     return fixed
 
 
-def _migration_target_conflicts(target_dir):
-    if not target_dir.exists():
-        return []
-    conflicts = []
-    for rel_path in [*PORTABLE_STATE_DIRS, EMOTION_ENGINE_CODEX_STATE_PATH, "manifest.json"]:
-        if (target_dir / rel_path).exists():
-            conflicts.append(rel_path)
-    return conflicts
-
-
 def _copy_migrated_portable_state(source_target_dir, target_dir, resolved, to_adapter):
     _portable_source_files(source_target_dir)
     copied = []
@@ -1984,9 +1975,19 @@ def _ensure_emotion_state(state_file, emotion_style, mode, relationship_continui
 def _update_existing_emotion_state(state_file, mode, emotion_style, relationship_continuity):
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        warnings.warn(
+            f"could not update existing Emotion Engine state {state_file}: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return
     if not isinstance(state, dict):
+        warnings.warn(
+            f"could not update existing Emotion Engine state {state_file}: root must be a JSON object",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return
     changed = False
     if state.get("runtime_mode") != mode:

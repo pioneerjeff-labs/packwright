@@ -1,4 +1,5 @@
 import re
+import warnings
 
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -7,6 +8,13 @@ SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 def slugify(value, default="character"):
     text = str(value or "").strip().lower()
     slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    if text and not slug:
+        warnings.warn(
+            f"{value!r} cannot produce an ASCII slug; using {default!r}. "
+            "Provide an explicit --slug to avoid collisions.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return slug or default
 
 
@@ -43,7 +51,10 @@ def character_user_name(mechanism):
         return identity["user_name"]
 
     role = identity.get("role", "")
-    match = re.match(r"^([A-Z][A-Za-z0-9_-]+)'s\b", role)
+    match = re.match(r"^([^\s'’]+)(?:'s|’s)\b", role)
+    if match:
+        return match.group(1)
+    match = re.match(r"^([^\s的]{1,64})的", role)
     if match:
         return match.group(1)
     return "the user"

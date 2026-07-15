@@ -8,7 +8,9 @@ the default help screen.
 
 | Command | Purpose |
 |---|---|
-| `packwright init` | Create editable agent source from a starter template or intake file. |
+| `packwright init` | Create editable agent source from your intake or a nameless starter preset. |
+| `packwright draft-character` | Print the interviewer contract used by a coding agent to draft a custom intake. |
+| `packwright adopt` | Inventory an existing local agent for review before adoption. |
 | `packwright build` | Validate the source, compile an adapter pack, and score it. |
 | `packwright install` | Install an adapter pack into a local runtime target. |
 | `packwright migrate` | Compile and install an existing target for another adapter. |
@@ -20,15 +22,25 @@ Check the installed version with `packwright --version`.
 ## Canonical syntax
 
 ```bash
-packwright init --template creator --user-name Morgan -o work/mira
-packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target project/mira-claude
-packwright migrate project/mira-claude --to codex --target project/mira-codex --json --dry-run
-packwright migrate project/mira-claude --to codex --target project/mira-codex --json --yes
-packwright doctor project/mira-codex
-packwright score work/mira --adapter claude-code --pack-dir pack/mira-claude
-packwright score project/mira-codex
+packwright draft-character --user-name Morgan --prompt-out work/character-interviewer.md
+packwright init work/nova-intake.yaml -o work/nova
+
+# Shortcut: choose a nameless capability preset, then supply the name yourself.
+packwright init --template code --name Nova --user-name Morgan -o work/nova
+
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
+packwright migrate project/nova-claude --to codex --target project/nova-codex --json --dry-run
+packwright migrate project/nova-claude --to codex --target project/nova-codex --json --yes
+packwright doctor project/nova-codex
+packwright score work/nova --adapter claude-code --pack-dir pack/nova-claude
+packwright score project/nova-codex
+
+# Existing agent: inventory first; adoption never merges memory automatically.
+packwright adopt --from existing-agent --dry-run
 ```
+
+The three public starter presets are `code`, `work`, and `companion`. They contain capability, voice, boundary, memory, and continuity defaults, but no character name. `--name` is required with `--template`; the generated source remains fully editable.
 
 `init` and `build` accept `-o` as the short form of `--out-dir`. `install`,
 `migrate`, and `doctor` accept `--target` as the short form of `--target-dir`.
@@ -50,6 +62,9 @@ machine's absolute source path.
 `doctor` consumes the artifact lock for Packwright-managed projections.
 Portable state and live Emotion Engine state are intentionally excluded from
 managed hash repair.
+
+See [Emotion Engine sidecar](EMOTION_ENGINE.md) for the explicit Codex install,
+mode, refresh, and migration boundaries.
 
 ## Adapter layout contract
 
@@ -90,5 +105,4 @@ and `memory/source-map.md`; every actual rewrite is disclosed.
 
 The following commands remain callable but are not part of the default 0.1
 help surface: `init-character`, `run`, `migrate-target`, `validate`, `resolve`,
-`compile`, `draft-character`, `handoff-export`, `adopt`, and
-`refresh-emotion-engine-codex`.
+`compile`, `handoff-export`, and `refresh-emotion-engine-codex`.

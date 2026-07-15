@@ -52,7 +52,7 @@
     --pw-border:#DFD5C2; --pw-accent:#9C4F16; --pw-accent-hover:#7F3F10; --pw-on-accent:#FFFDF8;
     --pw-link:#2E5F86; --pw-code-bg:#F0EADC; --mark-ink:#221C15;}
 
-  body{margin:0;background:var(--pw-bg);color:var(--pw-text);font-family:var(--f-body);line-height:1.6;}
+  body{margin:0;background:var(--pw-bg);color:var(--pw-text);font-family:var(--f-body);font-size:16px;line-height:1.6;}
   .wrap{max-width:72rem;margin:0 auto;padding:0 1.5rem;}
   a{color:var(--pw-link);text-decoration:none;}
   a:hover{text-decoration:underline;}
@@ -97,16 +97,27 @@
   section{padding:3.25rem 0;}
   @media (min-width:900px){section{padding:4.5rem 0;}}
   .sec-border{border-top:1px solid var(--pw-border);}
-  h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.5rem,2vw,1.75rem);line-height:1.2;margin:0 0 .6rem;text-wrap:balance;}
-  .lede{color:var(--pw-text-muted);max-width:42rem;margin:0 0 1.75rem;}
-  .section-kicker{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-accent);margin:0 0 .55rem;}
+  h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.625rem,2.3vw,2rem);line-height:1.25;margin:0 0 .65rem;text-wrap:balance;}
+  .lede{color:var(--pw-text-muted);font-size:1rem;line-height:1.7;max-width:42rem;margin:0 0 1.75rem;}
+  .section-kicker{font-family:var(--f-mono);font-size:.78rem;line-height:1.4;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-accent);margin:0 0 .6rem;}
   .diagram{width:100%;max-width:660px;height:auto;display:block;margin:0 auto 2rem;color:var(--pw-text);}
   .diagram text{font-family:var(--f-mono);}
   .figcap{font-family:var(--f-mono);font-size:.72rem;color:var(--pw-text-muted);text-align:center;margin:-1rem 0 2rem;}
   .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;}
   .card{background:var(--pw-bg-raised);border:1px solid var(--pw-border);border-radius:6px;padding:1.2rem 1.3rem;}
-  .card h3{font-weight:600;font-size:1.02rem;margin:0 0 .35rem;}
-  .card p{margin:0;font-size:.9rem;color:var(--pw-text-muted);}
+  .card h3{font-weight:600;font-size:1.05rem;line-height:1.35;margin:0 0 .4rem;}
+  .card p{margin:0;font-size:.95rem;line-height:1.65;color:var(--pw-text-muted);}
+  .preset-section h2{max-width:58rem;margin-bottom:.8rem;}
+  .preset-section .lede{max-width:58rem;margin-bottom:2rem;}
+  .preset-card{padding:1.4rem 1.45rem;}
+  .preset-card h3{font-family:var(--f-display);font-size:1.15rem;margin-bottom:.6rem;}
+  .preset-card p{font-size:.975rem;line-height:1.72;}
+  .preset-card strong{color:var(--pw-text);font-weight:600;}
+  .preset-note{color:var(--pw-text-muted);font-size:.95rem;line-height:1.7;max-width:58rem;margin:1.5rem 0 0;}
+  @media (max-width:520px){
+    .preset-section h2{font-size:1.65rem;line-height:1.3;}
+    .preset-card{padding:1.2rem 1.25rem;}
+  }
   code{font-family:var(--f-mono);background:var(--pw-code-bg);padding:.12em .35em;border-radius:3px;font-size:.9em;}
 
   /* drive it your way */
@@ -174,7 +185,7 @@
       <p class="sub">Packwright compiles one agent definition — rules, memory, skills, workspace — into native packs for Codex, Claude Code, and Cursor. When you migrate, its memory, workspace, knowledge, and sources move with it.</p>
       <p class="trust">Local-first. Zero telemetry. Packwright itself makes no network requests. Your coding runtime's data policy still applies.</p>
       <div class="cta">
-        <a class="btn btn-accent" href="#quickstart">Get started</a>
+        <a class="btn btn-accent" href="#start">Get started</a>
         <a class="btn btn-ghost" href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       </div>
     </div>
@@ -183,6 +194,18 @@
       <div class="term-body" id="term"></div>
     </div>
   </header>
+
+  <section class="sec-border preset-section" id="start">
+    <p class="section-kicker">Start with what you need</p>
+    <h2>Three agent presets. Make each one your own.</h2>
+    <p class="lede">Packwright covers three common starting points. Customize responsibilities, capabilities, voice, boundaries, and emotional feedback—then answer a few simple questions to create your agent.</p>
+    <div class="cols">
+      <div class="card preset-card"><h3>Code</h3><p><strong>Expert engineer:</strong> Builds, reviews, debugs, tests, and ships technical work.</p></div>
+      <div class="card preset-card"><h3>Work</h3><p><strong>Versatile assistant:</strong> Plans projects, drafts deliverables, clarifies decisions, and keeps execution moving.</p></div>
+      <div class="card preset-card"><h3>Companion</h3><p><strong>Personal secretary:</strong> Supports daily routines, life decisions, travel planning, and emotional support.</p></div>
+    </div>
+    <p class="preset-note">Need something more specific? <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">Describe your own agent</a>, or use <code>packwright adopt</code> to inventory and adapt an existing agent for migration.</p>
+  </section>
 
   <section class="sec-border" id="why">
     <h2>Why not just prompts?</h2>
@@ -230,16 +253,17 @@
           <div class="bub bub-u">Move my agent from Claude Code to Codex.</div>
           <div class="bub bub-a">Preview first — carrying <code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code>. Excluded: <code>CLAUDE.md</code> and Claude Code-only files. <em>Proceed?</em></div>
           <div class="bub bub-u">Go.</div>
-          <div class="bub bub-a">Done — <code>project/mira-codex</code> · installed score 100.0.</div>
+          <div class="bub bub-a">Done — <code>project/nova-codex</code> · installed score 100.0.</div>
         </div>
         <p class="foot">Paste one prompt into Claude Code, Codex, or Cursor: <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
       </div>
       <div class="panel">
         <span class="tag">by hand</span>
-        <div class="minicode">packwright build      # compile a pack
-packwright migrate    # move it, state intact
-packwright doctor     # repair drift</div>
-        <p class="foot">Six public commands, plain files, no daemon. <a href="#quickstart">Quickstart ↓</a></p>
+        <div class="minicode">packwright draft-character  # describe your own
+packwright adopt            # inventory an existing agent
+packwright build            # compile a native pack
+packwright migrate          # move it, state intact</div>
+        <p class="foot">Eight public commands, plain files, no daemon. <a href="#quickstart">Quickstart ↓</a></p>
       </div>
     </div>
   </section>
@@ -276,15 +300,15 @@ packwright doctor     # repair drift</div>
       <text x="450" y="216" font-size="9.5" fill="var(--pw-text-muted)">native files · hashes verified</text>
     </svg>
     <div class="steps">
-      <div class="step"><span class="n">preview</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --dry-run</code><p>See the full carry/exclude report. Nothing is written.</p></div>
-      <div class="step"><span class="n">migrate</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --yes</code><p><code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code> carry with hash verification.</p></div>
-      <div class="step"><span class="n">verify</span><code>packwright doctor project/mira-codex<br>packwright score project/mira-codex</code><p>The installed destination is checked and graded. Receipts included.</p></div>
+      <div class="step"><span class="n">preview</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --dry-run</code><p>See the full carry/exclude report. Nothing is written.</p></div>
+      <div class="step"><span class="n">migrate</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --yes</code><p><code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code> carry with hash verification.</p></div>
+      <div class="step"><span class="n">verify</span><code>packwright doctor project/nova-codex<br>packwright score project/nova-codex</code><p>The installed destination is checked and graded. Receipts included.</p></div>
     </div>
   </section>
 
   <section class="sec-border qs" id="quickstart">
     <h2>Choose your runtime. Get started.</h2>
-    <p class="lede">Install the RC, then run three commands to build and install a native target.</p>
+    <p class="lede">Install the current release, choose a preset and name, then build a native target.</p>
     <div class="runtime-tabs" role="tablist" aria-label="Choose a runtime">
       <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude Code</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
@@ -293,9 +317,9 @@ packwright doctor     # repair drift</div>
     <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
       <button class="copybtn" id="copyqs" aria-label="Copy quickstart commands">copy</button>
       <pre id="qs-code">python -m pip install packwright==0.1.0
-packwright init --template creator -o work/mira
-packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
+packwright init --template code --name Nova -o work/nova
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude</pre>
     </div>
   </section>
 

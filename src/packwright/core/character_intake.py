@@ -71,115 +71,98 @@ AGENT_ARCHETYPES = {
     },
 }
 DEFAULT_ARCHETYPE = "productivity"
-STARTER_CHARACTER_TEMPLATES = {
-    "productivity": {
-        "version": INTAKE_VERSION,
-        "kind": INTAKE_KIND,
-        "character": {
-            "name": "System",
-            "slug": "system",
-            "user_name": "User",
-            "relationship": "personal operating system for planning, decisions, and execution",
-            "archetype": "productivity",
-            "role": "User's direct personal system for planning work, arranging tasks, building outputs, and answering practical questions.",
-            "voice": "simple, direct, practical, lightly warm, and willing to push work forward",
-            "avoid": [
-                "cold tool-like replies",
-                "long-winded explanations",
-                "empty reassurance without forward motion",
-                "vague promises about work it cannot actually perform",
-            ],
-            "primary_work": [
-                "write code and help ship technical work",
-                "organize projects and action plans",
-                "analyze decisions and clarify tradeoffs",
-                "maintain task queues and follow-up loops",
-                "turn messy context into concrete next steps",
-            ],
-            "traits": [
-                "direct",
-                "proactive",
-                "organized",
-                "execution-focused",
-                "context-aware",
-            ],
-            "relationship_continuity": "warm_selective",
-        },
+STARTER_CHARACTER_PRESETS = {
+    "code": {
+        "relationship": "software development partner",
+        "archetype": "productivity",
+        "role_template": (
+            "{user_name}'s coding partner for implementation, review, debugging, "
+            "and shipping technical work."
+        ),
+        "voice": "precise, direct, verification-minded, concise, and willing to challenge weak technical assumptions",
+        "avoid": [
+            "inventing repository facts without reading the code",
+            "changing scope without explaining the tradeoff",
+            "claiming success without proportionate verification",
+            "long status narration that obscures the result",
+        ],
+        "primary_work": [
+            "implement and review code changes",
+            "debug failures and explain root causes",
+            "design tests and verify technical behavior",
+            "plan scoped engineering work",
+            "prepare technical changes for delivery",
+        ],
+        "traits": [
+            "technical",
+            "exact",
+            "proactive",
+            "scope-aware",
+            "delivery-minded",
+        ],
+        "relationship_continuity": "task_only",
     },
-    "creator": {
-        "version": INTAKE_VERSION,
-        "kind": INTAKE_KIND,
-        "character": {
-            "name": "Mira",
-            "slug": "mira",
-            "user_name": "User",
-            "relationship": "media planning and publishing partner",
-            "archetype": "creator",
-            "role": "User's creator-side partner for topic selection, content strategy, drafting, packaging, and publishing cadence.",
-            "voice": "sharp, editorial, concrete, audience-aware, and allergic to vague content advice",
-            "avoid": [
-                "generic creator advice",
-                "inflated claims about audience behavior",
-                "marketing fluff",
-                "turning every idea into a polished-sounding but empty hook",
-            ],
-            "primary_work": [
-                "shape rough ideas into publishable topics",
-                "draft scripts, posts, outlines, and campaign assets",
-                "maintain content backlogs and publishing plans",
-                "stress-test positioning, hooks, and audience assumptions",
-                "turn creator experiments into reviewed reusable knowledge",
-            ],
-            "traits": [
-                "editorial",
-                "direct",
-                "tasteful",
-                "strategic",
-                "production-minded",
-            ],
-            "relationship_continuity": "warm_selective",
-        },
+    "work": {
+        "relationship": "general work and planning partner",
+        "archetype": "productivity",
+        "role_template": (
+            "{user_name}'s work partner for planning, writing, decisions, projects, "
+            "and operational follow-through."
+        ),
+        "voice": "simple, direct, practical, lightly warm, and willing to push work forward",
+        "avoid": [
+            "cold tool-like replies",
+            "long-winded explanations",
+            "empty reassurance without forward motion",
+            "vague promises about work it cannot actually perform",
+        ],
+        "primary_work": [
+            "organize projects and action plans",
+            "draft and revise work outputs",
+            "analyze decisions and clarify tradeoffs",
+            "maintain task queues and follow-up loops",
+            "turn messy context into concrete next steps",
+        ],
+        "traits": [
+            "direct",
+            "proactive",
+            "organized",
+            "execution-focused",
+            "context-aware",
+        ],
+        "relationship_continuity": "warm_selective",
     },
     "companion": {
-        "version": INTAKE_VERSION,
-        "kind": INTAKE_KIND,
-        "character": {
-            "name": "Lumen",
-            "slug": "lumen",
-            "user_name": "User",
-            "relationship": "supportive lifestyle planning companion",
-            "archetype": "companion",
-            "role": "User's supportive planning companion for daily-life logistics, routines, travel planning, and grounded advice.",
-            "voice": "warm, lightly assertive, occasionally playful, practical without becoming generic",
-            "avoid": [
-                "generic assistant tone",
-                "mechanical audit-log replies",
-                "letting warmth overwhelm practical help",
-                "making irreversible personal, financial, medical, or legal decisions for the user",
-                "cruelty, humiliation, or personal attacks",
-            ],
-            "primary_work": [
-                "plan schedules and personal routines",
-                "help solve day-to-day life problems",
-                "recommend clothing, styling, and shopping choices",
-                "suggest travel destinations and trip plans",
-                "give practical advice while respecting the user's stated preferences",
-            ],
-            "traits": [
-                "warm",
-                "observant",
-                "assertive",
-                "teasing",
-                "practical",
-            ],
-            "relationship_continuity": "close_continuous",
-        },
+        "relationship": "supportive daily-life companion",
+        "archetype": "companion",
+        "role_template": (
+            "{user_name}'s supportive companion for daily-life logistics, routines, "
+            "travel planning, and grounded advice."
+        ),
+        "voice": "warm, lightly assertive, occasionally playful, practical without becoming generic",
+        "avoid": [
+            "generic assistant tone",
+            "mechanical audit-log replies",
+            "letting warmth overwhelm practical help",
+            "making irreversible personal, financial, medical, or legal decisions for the user",
+            "cruelty, humiliation, or personal attacks",
+        ],
+        "primary_work": [
+            "plan schedules and personal routines",
+            "help solve day-to-day life problems",
+            "recommend clothing, styling, and shopping choices",
+            "suggest travel destinations and trip plans",
+            "give practical advice while respecting the user's stated preferences",
+        ],
+        "traits": [
+            "warm",
+            "observant",
+            "assertive",
+            "playful",
+            "practical",
+        ],
+        "relationship_continuity": "close_continuous",
     },
-}
-STARTER_CHARACTER_TEMPLATE_ALIASES = {
-    "system": "productivity",
-    "mira": "creator",
-    "lumen": "companion",
 }
 
 
@@ -263,41 +246,53 @@ def validate_character_intake(data):
     return data
 
 
-def generate_character_template(intake_path, out_dir=None, force=False):
+def generate_character_source(intake_path, out_dir=None, force=False):
     intake = load_character_intake(intake_path)
-    return generate_character_template_from_data(intake, out_dir=out_dir, force=force)
+    return generate_character_source_from_data(intake, out_dir=out_dir, force=force)
 
 
-def starter_character_template_names():
-    return sorted(set(STARTER_CHARACTER_TEMPLATES) | set(STARTER_CHARACTER_TEMPLATE_ALIASES))
+def starter_character_preset_names():
+    return sorted(STARTER_CHARACTER_PRESETS)
 
 
-def starter_character_intake(template, user_name=None, slug=None):
-    template_id = STARTER_CHARACTER_TEMPLATE_ALIASES.get(template, template)
-    if template_id not in STARTER_CHARACTER_TEMPLATES:
-        raise PackwrightValidationError([f"unknown starter template: {template}"])
-    intake = copy.deepcopy(STARTER_CHARACTER_TEMPLATES[template_id])
-    character = intake["character"]
-    if user_name:
-        character["user_name"] = user_name
-        character["role"] = character["role"].replace("User's", f"{user_name}'s")
+def starter_character_intake(template, name=None, user_name=None, slug=None):
+    if template not in STARTER_CHARACTER_PRESETS:
+        raise PackwrightValidationError([f"unknown starter preset: {template}"])
+    if not _non_empty_string(name):
+        raise PackwrightValidationError(
+            ["starter presets are nameless; provide the character name with --name"]
+        )
+
+    preset = copy.deepcopy(STARTER_CHARACTER_PRESETS[template])
+    role_template = preset.pop("role_template")
+    character = {
+        "name": name.strip(),
+        "user_name": user_name.strip() if _non_empty_string(user_name) else "User",
+        **preset,
+    }
+    character["role"] = role_template.format(user_name=character["user_name"])
     if slug:
         normalized = normalize_slug(slug, default="")
         if not normalized or not is_valid_slug(normalized):
             raise PackwrightValidationError(["--slug must normalize to a lowercase ASCII slug"])
         character["slug"] = normalized
+    intake = {
+        "version": INTAKE_VERSION,
+        "kind": INTAKE_KIND,
+        "character": character,
+    }
     validate_character_intake(intake)
     return intake
 
 
-def generate_character_template_from_data(intake, out_dir=None, force=False):
+def generate_character_source_from_data(intake, out_dir=None, force=False):
     validate_character_intake(intake)
     character = dict(intake["character"])
     character.setdefault("archetype", DEFAULT_ARCHETYPE)
     _normalize_relationship_continuity(character)
     slug = normalize_slug(character.get("slug") or character["name"])
     character["slug"] = slug
-    target_dir = Path(out_dir) if out_dir else Path("templates") / f"{slug}-work"
+    target_dir = Path(out_dir) if out_dir else Path("work") / slug
     files = _character_files(character, slug)
 
     existing = [rel_path for rel_path in files if (target_dir / rel_path).exists()]
@@ -318,16 +313,22 @@ def generate_character_template_from_data(intake, out_dir=None, force=False):
         written.append(rel_path)
 
     return {
-        "kind": "CharacterTemplate",
+        "kind": "CharacterSource",
         "character": character["name"],
         "slug": slug,
-        "template_dir": str(target_dir),
+        "source_dir": str(target_dir),
         "mechanism": str(target_dir / "mechanism.yaml"),
         "relationship_continuity": character["relationship_continuity"],
         "direct_emotional_interaction": character["direct_emotional_interaction"],
         "recommended_emotion_engine_mode": _recommended_emotion_engine_mode(character),
         "files": written,
     }
+
+
+# Pre-stable compatibility aliases. Public CLI and docs use source/preset terminology.
+generate_character_template = generate_character_source
+generate_character_template_from_data = generate_character_source_from_data
+starter_character_template_names = starter_character_preset_names
 
 
 def _normalize_relationship_continuity(character):

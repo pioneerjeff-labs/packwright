@@ -20,6 +20,8 @@ from packwright.core import (
     apply_migration,
     create_handoff,
     doctor_target,
+    generate_character_source,
+    generate_character_source_from_data,
     generate_character_template,
     generate_character_template_from_data,
     install_pack,
@@ -29,6 +31,7 @@ from packwright.core import (
     refresh_emotion_engine_codex,
     resolve_mechanism,
     starter_character_intake,
+    starter_character_preset_names,
     validate_mechanism,
 )
 from packwright.core.handoff import (
@@ -38,6 +41,8 @@ from packwright.core.handoff import (
     HANDOFF_SCHEMA,
     HANDOFF_WRAPPER_PATH,
 )
+from packwright.core.install import _update_existing_emotion_state
+from packwright.core.naming import character_user_name, slugify
 from packwright.core.pack_metadata import embed_pack_metadata
 from packwright.core.workspace_contract import (
     WORKSPACE_DOMAIN_TEMPLATE_DIR,
@@ -46,11 +51,11 @@ from packwright.core.workspace_contract import (
 )
 
 
-MECHANISM_PATH = PROJECT_ROOT / "templates" / "atlas-work" / "mechanism.yaml"
+MECHANISM_PATH = PROJECT_ROOT / "examples" / "atlas-work" / "mechanism.yaml"
 
 
 class MvpChainTest(unittest.TestCase):
-    def test_atlas_mechanism_validates(self):
+    def test_atlas_example_mechanism_validates(self):
         data = load_mechanism(MECHANISM_PATH)
         self.assertIs(validate_mechanism(data), data)
 
@@ -169,7 +174,7 @@ character:
                 encoding="utf-8",
             )
 
-            generated = generate_character_template(intake_path, out_dir=out_dir)
+            generated = generate_character_source(intake_path, out_dir=out_dir)
             self.assertEqual(generated["character"], "Mira")
             self.assertEqual(generated["direct_emotional_interaction"], "some_direct_emotional_interaction")
 
@@ -193,15 +198,23 @@ character:
             self.assertTrue(result["passed"], result)
             self.assertEqual(result["score"], 100.0)
 
-    def test_starter_companion_template_generates_clean_lumen_work_spec(self):
+    def test_starter_presets_are_nameless_and_use_user_chosen_identity(self):
+        self.assertEqual(starter_character_preset_names(), ["code", "companion", "work"])
+        with self.assertRaises(PackwrightValidationError) as raised:
+            starter_character_intake("code")
+        self.assertIn("presets are nameless", str(raised.exception))
+
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            out_dir = root / "lumen-work"
-            intake = starter_character_intake("lumen", user_name="Morgan")
+            out_dir = root / "sol-work"
+            intake = starter_character_intake("companion", name="Sol", user_name="Morgan")
 
-            generated = generate_character_template_from_data(intake, out_dir=out_dir)
-            self.assertEqual(generated["character"], "Lumen")
-            self.assertEqual(generated["slug"], "lumen")
+            generated = generate_character_source_from_data(intake, out_dir=out_dir)
+            self.assertEqual(generated["kind"], "CharacterSource")
+            self.assertEqual(generated["character"], "Sol")
+            self.assertEqual(generated["slug"], "sol")
+            self.assertEqual(generated["source_dir"], str(out_dir))
+            self.assertNotIn("template_dir", generated)
             self.assertEqual(generated["recommended_emotion_engine_mode"], "always")
 
             resolved = resolve_mechanism(load_mechanism(out_dir / "mechanism.yaml"))
@@ -210,7 +223,7 @@ character:
             self.assertEqual(resolved["emotion"]["recommended_mode"], "always")
 
             cursor_pack = compile_to_cursor_pack(resolved)
-            self.assertIn(".cursor/rules/lumen.mdc", cursor_pack)
+            self.assertIn(".cursor/rules/sol.mdc", cursor_pack)
             result = score_mechanism(resolved, cursor_pack, adapter="cursor")
             self.assertTrue(result["passed"], result)
 
@@ -254,6 +267,14 @@ character:
             self.assertEqual(manifest["character"]["slug"], "system")
             self.assertEqual(manifest["features"]["handoff"]["schema"], HANDOFF_SCHEMA)
             self.assertEqual(manifest["local_tools"]["handoff_export"]["command"], HANDOFF_WRAPPER_PATH)
+
+    def test_non_latin_slug_fallback_warns_and_unicode_role_recovers_user_name(self):
+        with self.assertWarnsRegex(RuntimeWarning, "--slug"):
+            self.assertEqual(slugify("小白"), "character")
+        self.assertEqual(
+            character_user_name({"identity": {"role": "老登的直接个人系统。"}}),
+            "老登",
+        )
 
     def test_character_intake_canonicalizes_legacy_decide_later_direct_emotion(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -413,28 +434,45 @@ character:
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
-        self.assertIn("{init,build,install,migrate,doctor,score}", help_result.stdout)
-        for hidden_command in ("init-character", "migrate-target", "handoff-export", "adopt"):
+        self.assertIn(
+            "{init,draft-character,adopt,build,install,migrate,doctor,score}",
+            help_result.stdout,
+        )
+        self.assertIn("draft-character", help_result.stdout)
+        self.assertIn("adopt", help_result.stdout)
+        for hidden_command in ("init-character", "migrate-target", "handoff-export"):
             self.assertNotIn(hidden_command, help_result.stdout)
+
+        init_help = run_cli("init", "--help")
+        self.assertEqual(init_help.returncode, 0, init_help.stderr + init_help.stdout)
+        self.assertIn("{code,companion,work}", init_help.stdout)
+        self.assertIn("--name NAME", init_help.stdout)
+
+        unnamed = run_cli("init", "--template", "code")
+        self.assertEqual(unnamed.returncode, 1)
+        self.assertEqual(unnamed.stdout, "")
+        self.assertIn("presets are nameless", unnamed.stderr)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            work_dir = root / "mira-work"
-            codex_pack_dir = root / "mira-codex-pack"
-            codex_target_dir = root / "mira-codex-target"
-            cursor_target_dir = root / "mira-cursor-target"
+            work_dir = root / "nova-work"
+            codex_pack_dir = root / "nova-codex-pack"
+            codex_target_dir = root / "nova-codex-target"
+            cursor_target_dir = root / "nova-cursor-target"
 
             initialized = run_cli(
                 "init",
                 "--template",
-                "creator",
+                "code",
+                "--name",
+                "Nova",
                 "--user-name",
                 "Morgan",
                 "-o",
                 str(work_dir),
             )
             self.assertEqual(initialized.returncode, 0, initialized.stderr + initialized.stdout)
-            self.assertEqual(json.loads(initialized.stdout)["slug"], "mira")
+            self.assertEqual(json.loads(initialized.stdout)["slug"], "nova")
 
             built = run_cli(
                 "build",
@@ -503,7 +541,10 @@ character:
             relocated = root / "new-root" / "target"
             migrated = root / "new-root" / "cursor-target"
 
-            self.assertEqual(run_cli("init", "--template", "creator", "-o", str(work)).returncode, 0)
+            self.assertEqual(
+                run_cli("init", "--template", "code", "--name", "Nova", "-o", str(work)).returncode,
+                0,
+            )
             self.assertEqual(run_cli("build", str(work), "-o", str(pack)).returncode, 0)
             self.assertEqual(run_cli("install", str(pack), "--target", str(target)).returncode, 0)
             manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
@@ -533,8 +574,8 @@ character:
         env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            out_dir = root / "mira-work"
-            intake_path = root / "mira-intake.yaml"
+            out_dir = root / "nova-work"
+            intake_path = root / "nova-intake.yaml"
             completed = subprocess.run(
                 [
                     sys.executable,
@@ -542,7 +583,9 @@ character:
                     "packwright",
                     "init-character",
                     "--template",
-                    "creator",
+                    "code",
+                    "--name",
+                    "Nova",
                     "--user-name",
                     "Morgan",
                     "--out-dir",
@@ -558,13 +601,13 @@ character:
             )
             self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
             manifest = json.loads(completed.stdout)
-            self.assertEqual(manifest["character"], "Mira")
-            self.assertEqual(manifest["slug"], "mira")
+            self.assertEqual(manifest["character"], "Nova")
+            self.assertEqual(manifest["slug"], "nova")
             self.assertEqual(manifest["intake"], str(intake_path))
             self.assertTrue((out_dir / "mechanism.yaml").exists())
 
             intake = yaml.safe_load(intake_path.read_text(encoding="utf-8"))
-            self.assertEqual(intake["character"]["archetype"], "creator")
+            self.assertEqual(intake["character"]["archetype"], "productivity")
             self.assertEqual(intake["character"]["user_name"], "Morgan")
 
             resolved = resolve_mechanism(load_mechanism(out_dir / "mechanism.yaml"))
@@ -616,7 +659,10 @@ character:
                 text=True,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
-            self.assertIn("basic fallback", completed.stdout)
+            self.assertIn("basic fallback", completed.stderr)
+            self.assertIn("What should the character be called?", completed.stdout)
+            self.assertIn("How much relationship continuity", completed.stdout)
+            self.assertNotIn("这个人物", completed.stdout)
 
             result = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(result["character"], "Pulse")
@@ -631,6 +677,60 @@ character:
             self.assertIn("You are Pulse.", pack["AGENTS.md"])
             self.assertIn(".agents/skills/pulse-save-context/SKILL.md", pack)
             self.assertIn("Morgan's coach", resolved["identity"]["role"])
+
+    def test_score_reports_manifest_errors_without_tracebacks_or_stdout_noise(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pack_dir = Path(tmpdir) / "broken-pack"
+            pack_dir.mkdir()
+            command = [
+                sys.executable,
+                "-m",
+                "packwright",
+                "score",
+                str(MECHANISM_PATH),
+                "--pack-dir",
+                str(pack_dir),
+            ]
+            missing = subprocess.run(
+                command,
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(missing.returncode, 1)
+            self.assertEqual(missing.stdout, "")
+            self.assertIn("adapter pack manifest does not exist", missing.stderr)
+            self.assertNotIn("Traceback", missing.stderr)
+
+            (pack_dir / "manifest.json").write_text("{bad json", encoding="utf-8")
+            invalid = subprocess.run(
+                command,
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(invalid.returncode, 1)
+            self.assertEqual(invalid.stdout, "")
+            self.assertIn("invalid adapter pack manifest", invalid.stderr)
+            self.assertNotIn("Traceback", invalid.stderr)
+
+    def test_invalid_existing_emotion_state_emits_warning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_file = Path(tmpdir) / "codex-state.json"
+            state_file.write_text("{bad json", encoding="utf-8")
+            with self.assertWarnsRegex(RuntimeWarning, "could not update existing Emotion Engine state"):
+                _update_existing_emotion_state(
+                    state_file,
+                    "light",
+                    "calm and direct",
+                    "warm_selective",
+                )
 
     def test_projection_fixture_boundaries_stay_runtime_appropriate(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))

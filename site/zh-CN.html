@@ -37,7 +37,7 @@
     --pw-bg:#F8F4EC; --pw-bg-raised:#FFFDF8; --pw-text:#221C15; --pw-text-muted:#5C5245;
     --pw-border:#DFD5C2; --pw-accent:#9C4F16; --pw-accent-hover:#7F3F10; --pw-on-accent:#FFFDF8;
     --pw-link:#2E5F86; --pw-code-bg:#F0EADC; --mark-ink:#221C15;
-    --f-display:"Packwright Han Serif","Noto Serif SC","Source Han Serif SC",serif;
+    --f-display:"Packwright Han Serif","Songti SC","STSong","Noto Serif SC","Source Han Serif SC","SimSun",serif;
     --f-body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
     --f-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,"PingFang SC",monospace;
   }
@@ -54,7 +54,7 @@
     --pw-border:#DFD5C2; --pw-accent:#9C4F16; --pw-accent-hover:#7F3F10; --pw-on-accent:#FFFDF8;
     --pw-link:#2E5F86; --pw-code-bg:#F0EADC; --mark-ink:#221C15;}
 
-  body{margin:0;background:var(--pw-bg);color:var(--pw-text);font-family:var(--f-body);line-height:1.6;}
+  body{margin:0;background:var(--pw-bg);color:var(--pw-text);font-family:var(--f-body);font-size:16px;line-height:1.6;}
   .wrap{max-width:72rem;margin:0 auto;padding:0 1.5rem;}
   a{color:var(--pw-link);text-decoration:none;}
   a:hover{text-decoration:underline;}
@@ -100,16 +100,27 @@
   section{padding:3.25rem 0;}
   @media (min-width:900px){section{padding:4.5rem 0;}}
   .sec-border{border-top:1px solid var(--pw-border);}
-  h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.5rem,2vw,1.75rem);line-height:1.2;margin:0 0 .6rem;text-wrap:balance;}
-  .lede{color:var(--pw-text-muted);max-width:42rem;margin:0 0 1.75rem;}
-  .section-kicker{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-accent);margin:0 0 .55rem;}
+  h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.625rem,2.3vw,2rem);line-height:1.25;margin:0 0 .65rem;text-wrap:balance;}
+  .lede{color:var(--pw-text-muted);font-size:1rem;line-height:1.7;max-width:42rem;margin:0 0 1.75rem;}
+  .section-kicker{font-family:var(--f-mono);font-size:.78rem;line-height:1.4;letter-spacing:.08em;text-transform:uppercase;color:var(--pw-accent);margin:0 0 .6rem;}
   .diagram{width:100%;max-width:660px;height:auto;display:block;margin:0 auto 2rem;color:var(--pw-text);}
   .diagram text{font-family:var(--f-mono);}
   .figcap{font-family:var(--f-mono);font-size:.72rem;color:var(--pw-text-muted);text-align:center;margin:-1rem 0 2rem;}
   .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;}
   .card{background:var(--pw-bg-raised);border:1px solid var(--pw-border);border-radius:6px;padding:1.2rem 1.3rem;}
-  .card h3{font-weight:600;font-size:1.02rem;margin:0 0 .35rem;}
-  .card p{margin:0;font-size:.9rem;color:var(--pw-text-muted);}
+  .card h3{font-weight:600;font-size:1.05rem;line-height:1.35;margin:0 0 .4rem;}
+  .card p{margin:0;font-size:.95rem;line-height:1.65;color:var(--pw-text-muted);}
+  .preset-section h2{max-width:58rem;margin-bottom:.8rem;}
+  .preset-section .lede{max-width:58rem;margin-bottom:2rem;}
+  .preset-card{padding:1.4rem 1.45rem;}
+  .preset-card h3{font-family:var(--f-display);font-size:1.15rem;margin-bottom:.6rem;}
+  .preset-card p{font-size:.975rem;line-height:1.72;}
+  .preset-card strong{color:var(--pw-text);font-weight:600;}
+  .preset-note{color:var(--pw-text-muted);font-size:.95rem;line-height:1.7;max-width:58rem;margin:1.5rem 0 0;}
+  @media (max-width:520px){
+    .preset-section h2{font-size:1.65rem;line-height:1.3;}
+    .preset-card{padding:1.2rem 1.25rem;}
+  }
   code{font-family:var(--f-mono);background:var(--pw-code-bg);padding:.12em .35em;border-radius:3px;font-size:.9em;}
 
   /* drive it your way */
@@ -174,28 +185,40 @@
   <header class="hero">
     <div>
       <h1>一次构建 agent，<br>随处皆可运行。</h1>
-      <p class="sub">Packwright 能将单一 Agent 定义（包含规则、记忆、Skills 与工作区）直接编译为 Codex、Claude Code 和 Cursor 的原生 Pack。迁移时，记忆、工作区、知识与来源索引也会随 Agent 一并带走。</p>
-      <p class="trust">本地优先，零遥测。Packwright 自身不发起任何网络请求，你的 Coding Runtime 数据策略依然生效。</p>
+      <p class="sub">Packwright 能将单一 agent 定义（包含规则、记忆、skills 与工作区）直接编译为 Codex、Claude Code 和 Cursor 的原生 pack。迁移时，记忆、工作区、知识与来源索引也会随 agent 一并带走。</p>
+      <p class="trust">本地优先，零遥测。Packwright 自身不发起任何网络请求，你的 coding runtime 数据策略依然生效。</p>
       <div class="cta">
-        <a class="btn btn-accent" href="#quickstart">快速开始</a>
+        <a class="btn btn-accent" href="#start">快速开始</a>
         <a class="btn btn-ghost" href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       </div>
     </div>
-    <div class="term" aria-label="终端演示：构建 Claude Code Target，再迁移到 Codex">
+    <div class="term" aria-label="终端演示：构建 Claude Code target，再迁移到 Codex">
       <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i></div>
       <div class="term-body" id="term"></div>
     </div>
   </header>
 
+  <section class="sec-border preset-section" id="start">
+    <p class="section-kicker">从你的需求出发</p>
+    <h2>三种预设 agent 模板，满足你多样的定制化需求。</h2>
+    <p class="lede">Packwright 提供三种 preset，分别覆盖常见高频需求。支持自定义他们的职责，能力、语气、边界、情绪反馈，回答几个简单问题，就能快速完成角色创建。</p>
+    <div class="cols">
+      <div class="card preset-card"><h3>代码</h3><p><strong>天才工程师：</strong>擅长编写、审查、调试、测试并交付技术工作。</p></div>
+      <div class="card preset-card"><h3>工作</h3><p><strong>全能助手：</strong>规划项目、起草产出、理清决策并推动后续执行。</p></div>
+      <div class="card preset-card"><h3>陪伴</h3><p><strong>私人秘书：</strong>支持日常安排、生活决策、出行计划与情感陪伴。</p></div>
+    </div>
+    <p class="preset-note">需求更特别？可以<a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">直接描述自己的 agent</a>，也可以用 <code>packwright adopt</code> 盘点已有 agent 进行迁移适配。</p>
+  </section>
+
   <section class="sec-border" id="why">
-    <h2>为何不只用 Prompt？</h2>
-    <p class="lede">每款 AI 编程工具都有各自的 Instruction 格式要求。Packwright 另辟蹊径：将同一份 Agent 定义直接编译为适配各 Runtime 的原生 Pack。</p>
-    <svg class="diagram" viewBox="0 0 660 240" role="img" aria-label="一份 Agent 定义通过 Packwright 编译成 Codex、Claude Code 和 Cursor 的原生 Pack">
+    <h2>为何不只用 prompt？</h2>
+    <p class="lede">每款 AI 编程工具都有各自的 instruction 格式要求。Packwright 另辟蹊径：将同一份 agent 定义直接编译为适配各 runtime 的原生 pack。</p>
+    <svg class="diagram" viewBox="0 0 660 240" role="img" aria-label="一份 agent 定义通过 Packwright 编译成 Codex、Claude Code 和 Cursor 的原生 pack">
       <rect x="16" y="60" width="160" height="120" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="28" y="84" font-size="12.5" fill="currentColor">Agent 定义</text>
+      <text x="28" y="84" font-size="12.5" fill="currentColor">agent 定义</text>
       <text x="28" y="106" font-size="11" fill="var(--pw-text-muted)">角色设定</text>
       <text x="28" y="124" font-size="11" fill="var(--pw-text-muted)">记忆契约</text>
-      <text x="28" y="142" font-size="11" fill="var(--pw-text-muted)">Skills</text>
+      <text x="28" y="142" font-size="11" fill="var(--pw-text-muted)">skills</text>
       <text x="28" y="160" font-size="11" fill="var(--pw-text-muted)">工作区</text>
       <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
@@ -217,43 +240,44 @@
       <text x="466" y="210" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
     </svg>
     <div class="cols">
-      <div class="card"><h3>可移植</h3><p>将单一 Agent 定义映射为各 Runtime 的原生 Pack。</p></div>
-      <div class="card"><h3>可校验</h3><p>内置 <code>score</code> 命令为每个 Pack 评分，校验规则与代码同源。</p></div>
+      <div class="card"><h3>可移植</h3><p>将单一 agent 定义映射为各 runtime 的原生 pack。</p></div>
+      <div class="card"><h3>可校验</h3><p>内置 <code>score</code> 命令为每个 pack 评分，校验规则与代码同源。</p></div>
       <div class="card"><h3>可修复</h3><p>通过 <code>doctor --fix</code> 修复状态漂移，全程不触碰用户记忆。</p></div>
     </div>
   </section>
 
   <section class="sec-border" id="drive">
-    <h2>自己掌舵，或让 Agent 代驾</h2>
-    <p class="lede">爱敲命令，就亲自上手；不想碰终端，就把 Prompt 交给 Coding Agent。聊几句，它替你完成。</p>
+    <h2>自己掌舵，或让 agent 代驾</h2>
+    <p class="lede">爱敲命令，就亲自上手；不想碰终端，就把 prompt 交给 coding agent。聊几句，它替你完成。</p>
     <div class="drive">
       <div class="panel">
-        <span class="tag">Agent 代驾</span>
-        <div class="chat" aria-label="与 Coding Agent 对话的示例">
-          <div class="bub bub-u">将我的 Agent 从 Claude Code 迁移到 Codex。</div>
+        <span class="tag">agent 代驾</span>
+        <div class="chat" aria-label="与 coding agent 对话的示例">
+          <div class="bub bub-u">将我的 agent 从 Claude Code 迁移到 Codex。</div>
           <div class="bub bub-a">正在预览——将携带 <code>memory/</code>、<code>workspace/</code>、<code>knowledge/</code> 和 <code>sources/</code>。排除 <code>CLAUDE.md</code> 及 Claude Code 专属文件。<em>确认继续吗？</em></div>
           <div class="bub bub-u">继续。</div>
-          <div class="bub bub-a">迁移完成——<code>project/mira-codex</code> · 安装后评分 100.0。</div>
+          <div class="bub bub-a">迁移完成——<code>project/nova-codex</code> · 安装后评分 100.0。</div>
         </div>
-        <p class="foot">将以下 Prompt 粘贴至 Claude Code、Codex 或 Cursor 即可：<a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
+        <p class="foot">将以下 prompt 粘贴至 Claude Code、Codex 或 Cursor 即可：<a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
       </div>
       <div class="panel">
         <span class="tag">亲自掌舵</span>
-        <div class="minicode">packwright build      # 编译 Pack
-packwright migrate    # 携带状态迁移
-packwright doctor     # 修复状态漂移</div>
-        <p class="foot">仅 6 个公开命令，全普通文件操作，无需后台守护进程（Daemon）。<a href="#quickstart">快速开始 ↓</a></p>
+        <div class="minicode">packwright draft-character  # 描述自己的 agent
+packwright adopt            # 盘点已有 agent
+packwright build            # 编译原生 pack
+packwright migrate          # 携带状态迁移</div>
+        <p class="foot">仅 8 个公开命令，全普通文件操作，无需后台守护进程（daemon）。<a href="#quickstart">快速开始 ↓</a></p>
       </div>
     </div>
   </section>
 
   <section class="sec-border" id="migrate">
     <p class="section-kicker">演示路径 · Claude Code → Codex</p>
-    <h2>迁移 Agent，工作状态一起带走。</h2>
-    <p class="winline"><code>migrate --dry-run</code> 会提前报告目标 Runtime 无法兼容的内容——全程仅预览，不写入任何文件。</p>
-    <svg class="diagram" viewBox="0 0 660 262" role="img" aria-label="从 Claude Code Target 迁移到 Codex Target：可移植状态会被携带，Runtime 专属文件会留在原处并提前报告">
+    <h2>迁移 agent，工作状态一起带走。</h2>
+    <p class="winline"><code>migrate --dry-run</code> 会提前报告目标 runtime 无法兼容的内容——全程仅预览，不写入任何文件。</p>
+    <svg class="diagram" viewBox="0 0 660 262" role="img" aria-label="从 Claude Code target 迁移到 Codex target：可移植状态会被携带，runtime 专属文件会留在原处并提前报告">
       <rect x="16" y="28" width="208" height="200" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="30" y="52" font-size="12.5" fill="currentColor">Claude Code Target</text>
+      <text x="30" y="52" font-size="12.5" fill="currentColor">Claude Code target</text>
       <rect x="30" y="66" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="6 3" opacity=".55"/>
       <text x="42" y="83" font-size="11" fill="var(--pw-text-muted)">CLAUDE.md</text>
       <rect x="30" y="100" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="6 3" opacity=".55"/>
@@ -262,13 +286,13 @@ packwright doctor     # 修复状态漂移</div>
       <text x="42" y="151" font-size="11" fill="currentColor">memory/ · knowledge/</text>
       <rect x="30" y="168" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
       <text x="42" y="185" font-size="11" fill="currentColor">workspace/ · sources/</text>
-      <text x="30" y="216" font-size="9.5" fill="var(--pw-text-muted)">虚线 = Runtime 专属 · 预览时优先报告</text>
+      <text x="30" y="216" font-size="9.5" fill="var(--pw-text-muted)">虚线 = runtime 专属 · 预览时优先报告</text>
       <line x1="224" y1="160" x2="428" y2="160" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <path d="M420 154 L428 160 L420 166" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="262" y="144" width="132" height="20" fill="var(--pw-bg)"/>
       <text x="328" y="158" font-size="10.5" fill="var(--pw-text-muted)" text-anchor="middle">可移植状态</text>
       <rect x="436" y="28" width="208" height="200" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="450" y="52" font-size="12.5" fill="currentColor">Codex Target</text>
+      <text x="450" y="52" font-size="12.5" fill="currentColor">Codex target</text>
       <rect x="450" y="66" width="180" height="26" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
       <text x="462" y="83" font-size="11" fill="currentColor">AGENTS.md</text>
       <text x="462" y="60" font-size="9.5" fill="var(--pw-text-muted)"></text>
@@ -279,16 +303,16 @@ packwright doctor     # 修复状态漂移</div>
       <text x="450" y="216" font-size="9.5" fill="var(--pw-text-muted)">原生文件 · 哈希已验证</text>
     </svg>
     <div class="steps">
-      <div class="step"><span class="n">预览</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --dry-run</code><p>查看完整的携带与排除报告，不执行任何写入。</p></div>
-      <div class="step"><span class="n">迁移</span><code>packwright migrate project/mira-claude --to codex --target project/mira-codex --yes</code><p>携带 <code>memory/</code>、<code>workspace/</code>、<code>knowledge/</code> 与 <code>sources/</code>，并进行逐一哈希验证。</p></div>
-      <div class="step"><span class="n">验证</span><code>packwright doctor project/mira-codex<br>packwright score project/mira-codex</code><p>检查目标安装目录并进行评分，自动生成可核验的迁移记录。</p></div>
+      <div class="step"><span class="n">预览</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --dry-run</code><p>查看完整的携带与排除报告，不执行任何写入。</p></div>
+      <div class="step"><span class="n">迁移</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --yes</code><p>携带 <code>memory/</code>、<code>workspace/</code>、<code>knowledge/</code> 与 <code>sources/</code>，并进行逐一哈希验证。</p></div>
+      <div class="step"><span class="n">验证</span><code>packwright doctor project/nova-codex<br>packwright score project/nova-codex</code><p>检查目标安装目录并进行评分，自动生成可核验的迁移记录。</p></div>
     </div>
   </section>
 
   <section class="sec-border qs" id="quickstart">
-    <h2>选择 Runtime，快速开始。</h2>
-    <p class="lede">安装当前 RC 版本，再用三条命令构建并安装原生 Target。</p>
-    <div class="runtime-tabs" role="tablist" aria-label="选择 Runtime">
+    <h2>选择 runtime，快速开始。</h2>
+    <p class="lede">安装当前版本，选择 preset 和名字，再构建一个原生 target。</p>
+    <div class="runtime-tabs" role="tablist" aria-label="选择 runtime">
       <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude Code</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
       <button class="runtime-tab" id="runtime-cursor" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="cursor" tabindex="-1">Cursor</button>
@@ -296,9 +320,9 @@ packwright doctor     # 修复状态漂移</div>
     <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
       <button class="copybtn" id="copyqs" data-idle-label="复制" data-copied-label="已复制" aria-label="复制快速开始命令">复制</button>
       <pre id="qs-code">python -m pip install packwright==0.1.0
-packwright init --template creator -o work/mira
-packwright build work/mira --adapter claude-code -o pack/mira-claude
-packwright install pack/mira-claude --adapter claude-code --target project/mira-claude</pre>
+packwright init --template code --name Nova -o work/nova
+packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude</pre>
     </div>
   </section>
 
