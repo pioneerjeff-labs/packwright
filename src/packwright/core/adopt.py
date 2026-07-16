@@ -3,11 +3,22 @@ import json
 from datetime import date
 from pathlib import Path
 
+import yaml
+
 from .errors import PackwrightValidationError
 from .knowledge_contract import knowledge_files
 
 
 MIGRATION_DIR = "workspace/shared/artifacts/migrations"
+ADOPTION_REVIEW_SCHEMA = "packwright-adoption-review/v1"
+ADOPTION_REVIEW_DECISIONS = (
+    "pending",
+    "exclude",
+    "register_source",
+    "carry_verbatim",
+    "copy_to_workspace",
+    "manual_memory_merge",
+)
 RUNTIME_PATTERNS = (
     "AGENTS.md",
     "CLAUDE.md",
@@ -46,6 +57,7 @@ def adopt_existing(source_dir, target_dir=None, dry_run=True, force=False):
 
     inventory = _inventory(source_dir)
     categories = _category_counts(inventory)
+    review_queue = _review_queue(source_dir, inventory)
     result = {
         "source_dir": str(source_dir),
         "dry_run": bool(dry_run),
@@ -58,6 +70,12 @@ def adopt_existing(source_dir, target_dir=None, dry_run=True, force=False):
             "in_place_modification": False,
         },
         "inventory": inventory,
+        "review_queue": {
+            "schema": ADOPTION_REVIEW_SCHEMA,
+            "items": len(review_queue["items"]),
+            "pending": len(review_queue["items"]),
+            "applies_decisions": False,
+        },
     }
     if dry_run:
         return result
@@ -66,23 +84,33 @@ def adopt_existing(source_dir, target_dir=None, dry_run=True, force=False):
     target_dir = Path(target_dir)
     report_path = target_dir / MIGRATION_DIR / f"adopt-report-{date.today().isoformat()}.md"
     inventory_path = target_dir / MIGRATION_DIR / "inventory.json"
-    if not force and (report_path.exists() or inventory_path.exists()):
+    review_path = target_dir / MIGRATION_DIR / "adoption-review.yaml"
+    existing = [path for path in (report_path, inventory_path, review_path) if path.exists()]
+    if not force and existing:
         raise PackwrightValidationError([
             "adopt migration report already exists; rerun with --force after reviewing it",
-            f"existing target artifact: {report_path.relative_to(target_dir)}",
-            f"existing target artifact: {inventory_path.relative_to(target_dir)}",
+            *[
+                f"existing target artifact: {path.relative_to(target_dir)}"
+                for path in existing
+            ],
         ])
     _write_knowledge_scaffold(target_dir, force=force)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(_render_report(source_dir, inventory, categories), encoding="utf-8")
     inventory_path.write_text(json.dumps({"files": inventory}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    review_path.write_text(
+        yaml.safe_dump(review_queue, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
     result.update({
         "target_dir": str(target_dir),
         "report": str(report_path),
         "inventory_json": str(inventory_path),
+        "review_queue_yaml": str(review_path),
         "written": [
             str(report_path.relative_to(target_dir)),
             str(inventory_path.relative_to(target_dir)),
+            str(review_path.relative_to(target_dir)),
         ],
     })
     return result
@@ -130,6 +158,32 @@ def _category_counts(inventory):
     for item in inventory:
         counts[item["category"]] = counts.get(item["category"], 0) + 1
     return counts
+
+
+def _review_queue(source_dir, inventory):
+    return {
+        "schema": ADOPTION_REVIEW_SCHEMA,
+        "source_dir": str(source_dir),
+        "policy": {
+            "all_items_require_review": True,
+            "automatic_memory_merge": False,
+            "automatic_knowledge_promotion": False,
+            "apply_supported": False,
+        },
+        "allowed_decisions": list(ADOPTION_REVIEW_DECISIONS),
+        "items": [
+            {
+                "source": item["path"],
+                "category": item["category"],
+                "size": item["size"],
+                "sha256": item["sha256"],
+                "decision": "pending",
+                "destination": None,
+                "rationale": None,
+            }
+            for item in inventory
+        ],
+    }
 
 
 def _sha256(path):
@@ -190,10 +244,12 @@ def _render_report(source_dir, inventory, categories):
         [
             "## Next Steps",
             "",
-            "1. Review runtime instructions and decide which intent belongs in a Packwright mechanism.",
-            "2. Promote only current, confirmed state into `memory/*` owner files.",
-            "3. Promote only stable reusable models into `knowledge/**/*.md` with source refs.",
-            "4. Keep original files registered as sources when provenance matters.",
+            "1. Open `adoption-review.yaml` and choose a decision for each item.",
+            "2. Leave uncertain items as `pending`; this release does not apply the queue automatically.",
+            "3. Review runtime instructions and decide which intent belongs in a Packwright mechanism.",
+            "4. Promote only current, confirmed state into `memory/*` owner files.",
+            "5. Promote only stable reusable models into `knowledge/**/*.md` with source refs.",
+            "6. Keep original files registered as sources when provenance matters.",
         ]
     )
     return "\n".join(lines) + "\n"

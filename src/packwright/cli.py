@@ -26,6 +26,7 @@ from packwright.core import (
     render_interviewer_prompt,
     resolve_mechanism,
     starter_character_intake,
+    starter_character_preset,
     starter_character_preset_names,
     validate_mechanism,
     write_interviewer_prompt,
@@ -63,6 +64,8 @@ def main(argv=None):
             return _cmd_doctor(args)
         if args.command == "draft-character":
             return _cmd_draft_character(args)
+        if args.command == "presets":
+            return _cmd_presets(args)
         if args.command in {"init", "init-character"}:
             return _cmd_init_character(args)
         if args.command in {"build", "run"}:
@@ -82,7 +85,7 @@ def _build_parser():
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{init,draft-character,adopt,build,install,migrate,doctor,score}",
+        metavar="{init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
     )
 
     init_cmd = subparsers.add_parser(
@@ -90,6 +93,18 @@ def _build_parser():
         help="create editable agent source from your intake or a nameless starter preset",
     )
     _add_init_arguments(init_cmd)
+
+    presets = subparsers.add_parser(
+        "presets",
+        help="list or inspect the exact defaults for nameless starter presets",
+    )
+    presets.add_argument(
+        "preset",
+        nargs="?",
+        choices=starter_character_preset_names(),
+        help="optional preset to inspect in full",
+    )
+    presets.add_argument("--out", help="output preset JSON path")
 
     build = subparsers.add_parser("build", help="validate, compile, and score an adapter pack")
     _add_build_arguments(build)
@@ -580,6 +595,21 @@ def _cmd_draft_character(args):
     return 0
 
 
+def _cmd_presets(args):
+    if args.preset:
+        result = starter_character_preset(args.preset)
+    else:
+        result = {
+            "kind": "StarterCharacterPresetCatalog",
+            "presets": [
+                starter_character_preset(name)
+                for name in starter_character_preset_names()
+            ],
+        }
+    _write_json_or_print(result, args.out)
+    return 0
+
+
 def _cmd_init_character(args):
     if args.template:
         if args.intake:
@@ -598,6 +628,30 @@ def _cmd_init_character(args):
             _write_yaml(intake, Path(args.save_intake))
         result = generate_character_source_from_data(intake, out_dir=args.out_dir, force=args.force)
         result["intake"] = args.save_intake or f"template:{args.template}"
+        result["creation_mode"] = "preset"
+        result["preset"] = args.template
+        result["review"] = {
+            "required_before": "build",
+            "message": "Review and confirm the preset-derived character summary before building an adapter pack.",
+            "editable_files": [
+                "mechanism.yaml",
+                "identity/persona.md",
+                "identity/relationship.md",
+                "identity/voice.md",
+                "operating/boundaries.md",
+            ],
+        }
+        result["next_actions"] = [
+            {
+                "action": "review_character",
+                "required": True,
+                "source": "character_summary",
+            },
+            {
+                "action": "build",
+                "run_after": "the user confirms or edits the preset-derived character",
+            },
+        ]
     elif args.interactive:
         if args.name:
             raise PackwrightError("--name is only accepted with --template; interactive mode asks for a name")
@@ -607,10 +661,17 @@ def _cmd_init_character(args):
             file=sys.stderr,
         )
         intake = _prompt_character_intake(args.user_name, slug=args.slug)
+        print("\nCanonical CharacterIntake preview:\n")
+        print(yaml.safe_dump(intake, sort_keys=False, allow_unicode=True), end="")
+        if not _confirm_character_intake():
+            print("Character creation cancelled. No files written.")
+            return 1
         if args.save_intake:
             _write_yaml(intake, Path(args.save_intake))
         result = generate_character_source_from_data(intake, out_dir=args.out_dir, force=args.force)
         result["intake"] = args.save_intake or "interactive"
+        result["creation_mode"] = "interactive"
+        result["intake_confirmed"] = True
     else:
         if args.name:
             raise PackwrightError("--name is only accepted with --template; intake files already contain a name")
@@ -949,6 +1010,14 @@ def _migration_conflict_summary(conflicts):
 def _confirm_migration():
     try:
         answer = input("Apply this migration? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def _confirm_character_intake():
+    try:
+        answer = input("Create source from this CharacterIntake? [y/N] ").strip().lower()
     except EOFError:
         return False
     return answer in {"y", "yes"}

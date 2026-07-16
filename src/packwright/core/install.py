@@ -54,12 +54,6 @@ from .workspace_contract import workspace_artifacts, workspace_readme, workspace
 SUPPORTED_INSTALL_ADAPTERS = {"codex", "claude-code", "cursor"}
 PORTABLE_STATE_DIRS = ("memory", "workspace", KNOWLEDGE_ROOT, SOURCES_ROOT)
 MIGRATION_SCHEMA = "packwright-migration/v1"
-COMPATIBILITY_MEMORY_FILES = (
-    "memory/pinned.md",
-    "memory/recent-activity.md",
-    "memory/knowledge_map.md",
-    "memory/relationship-state.md",
-)
 EMOTION_ENGINE_SECTION = """## Emotion Engine
 - Default mode: `{mode}`. The Codex sidecar is installed, but normal work should use it only according to this mode's loading policy.
 - Use `.agents/skills/emotion-engine-codex/SKILL.md` for Emotion Engine controls and `.emotion-engine/codex-state.json` for project-local runtime state.
@@ -258,7 +252,7 @@ def doctor_target(
         "adapter": adapter,
         "ok": True,
         "issues": [],
-        "warnings": _target_layout_doctor_warnings(target_dir),
+        "warnings": [],
         "fixes": [],
     }
 
@@ -333,7 +327,7 @@ def doctor_target(
             + _artifact_lock_doctor_issues(target_dir, refreshed_manifest)
             + after_issues
         )
-        result["warnings"] = _target_layout_doctor_warnings(target_dir)
+        result["warnings"] = []
         result["ok"] = not result["issues"]
     return result
 
@@ -1386,18 +1380,6 @@ def _target_layout_doctor_issues(target_dir, manifest):
                 "manifest artifact is missing",
             )
     return issues
-
-
-def _target_layout_doctor_warnings(target_dir):
-    warnings = []
-    for rel_path in COMPATIBILITY_MEMORY_FILES:
-        if (target_dir / rel_path).is_file():
-            warnings.append({
-                "id": "compatibility_memory_file_present",
-                "path": rel_path,
-                "message": "compatibility-only memory file is present; keep for legacy reads but do not use as an active memory owner",
-            })
-    return warnings
 
 
 def _append_doctor_issue(issues, seen, issue_id, path, message):

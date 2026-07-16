@@ -246,6 +246,19 @@ class PublicTreeAuditTest(unittest.TestCase):
                 self.assertIsNone(re.search(r"packwright migrate project/nova(?!-claude)", text))
                 self.assertNotIn("--template creator", text)
 
+    def test_agent_prompt_keeps_adapter_and_write_guardrails_executable(self):
+        prompt = (ROOT / "docs" / "USE_WITH_YOUR_AGENT.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "packwright install <pack-dir> --adapter <adapter> --target <target-dir>",
+            prompt,
+        )
+        self.assertIn("where `<source>` is the directory previously installed into", prompt)
+        self.assertIn("with `--yes` in place of `--dry-run`", prompt)
+        self.assertIn("never edit user-authored content under `memory/` or `workspace/`", prompt)
+        self.assertIn("doctor --fix` requires my separate approval", prompt)
+        self.assertIn("packwright presets <chosen-preset>", prompt)
+        self.assertIn("Do not begin build until I confirm or edit that summary", prompt)
+
     def test_public_entrypoints_share_brand_and_receipt_contract(self):
         readmes = [ROOT / "README.md", ROOT / "README.zh-CN.md"]
         for path in readmes:

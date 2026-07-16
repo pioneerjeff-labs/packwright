@@ -31,6 +31,7 @@ from packwright.core import (
     refresh_emotion_engine_codex,
     resolve_mechanism,
     starter_character_intake,
+    starter_character_preset,
     starter_character_preset_names,
     validate_mechanism,
 )
@@ -200,6 +201,18 @@ character:
 
     def test_starter_presets_are_nameless_and_use_user_chosen_identity(self):
         self.assertEqual(starter_character_preset_names(), ["code", "companion", "work"])
+        described = starter_character_preset("work")
+        self.assertEqual(described["kind"], "StarterCharacterPreset")
+        self.assertEqual(described["preset"], "work")
+        self.assertTrue(described["name_required"])
+        self.assertEqual(
+            described["character_defaults"]["relationship_continuity"],
+            "warm_selective",
+        )
+        self.assertIn("voice", described["character_defaults"])
+        self.assertIn("avoid", described["character_defaults"])
+        self.assertIn("primary_work", described["character_defaults"])
+        self.assertEqual(described["recommended_emotion_engine_mode"], "light")
         with self.assertRaises(PackwrightValidationError) as raised:
             starter_character_intake("code")
         self.assertIn("presets are nameless", str(raised.exception))
@@ -216,6 +229,10 @@ character:
             self.assertEqual(generated["source_dir"], str(out_dir))
             self.assertNotIn("template_dir", generated)
             self.assertEqual(generated["recommended_emotion_engine_mode"], "always")
+            self.assertEqual(generated["character_summary"]["name"], "Sol")
+            self.assertEqual(generated["character_summary"]["user_name"], "Morgan")
+            self.assertIn("voice", generated["character_summary"])
+            self.assertIn("avoid", generated["character_summary"])
 
             resolved = resolve_mechanism(load_mechanism(out_dir / "mechanism.yaml"))
             self.assertEqual(resolved["metadata"]["archetype"], "companion")
@@ -435,10 +452,11 @@ character:
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
         self.assertIn(
-            "{init,draft-character,adopt,build,install,migrate,doctor,score}",
+            "{init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
             help_result.stdout,
         )
         self.assertIn("draft-character", help_result.stdout)
+        self.assertIn("presets", help_result.stdout)
         self.assertIn("adopt", help_result.stdout)
         for hidden_command in ("init-character", "migrate-target", "handoff-export"):
             self.assertNotIn(hidden_command, help_result.stdout)
@@ -447,6 +465,21 @@ character:
         self.assertEqual(init_help.returncode, 0, init_help.stderr + init_help.stdout)
         self.assertIn("{code,companion,work}", init_help.stdout)
         self.assertIn("--name NAME", init_help.stdout)
+
+        preset = run_cli("presets", "work")
+        self.assertEqual(preset.returncode, 0, preset.stderr + preset.stdout)
+        preset_result = json.loads(preset.stdout)
+        self.assertEqual(preset_result["preset"], "work")
+        self.assertEqual(
+            preset_result["character_defaults"]["relationship_continuity"],
+            "warm_selective",
+        )
+
+        preset_catalog = run_cli("presets")
+        self.assertEqual(
+            [item["preset"] for item in json.loads(preset_catalog.stdout)["presets"]],
+            ["code", "companion", "work"],
+        )
 
         unnamed = run_cli("init", "--template", "code")
         self.assertEqual(unnamed.returncode, 1)
@@ -472,7 +505,16 @@ character:
                 str(work_dir),
             )
             self.assertEqual(initialized.returncode, 0, initialized.stderr + initialized.stdout)
-            self.assertEqual(json.loads(initialized.stdout)["slug"], "nova")
+            initialized_result = json.loads(initialized.stdout)
+            self.assertEqual(initialized_result["slug"], "nova")
+            self.assertEqual(initialized_result["creation_mode"], "preset")
+            self.assertEqual(initialized_result["preset"], "code")
+            self.assertEqual(initialized_result["character_summary"]["name"], "Nova")
+            self.assertEqual(initialized_result["character_summary"]["user_name"], "Morgan")
+            self.assertIn("voice", initialized_result["character_summary"])
+            self.assertIn("avoid", initialized_result["character_summary"])
+            self.assertEqual(initialized_result["review"]["required_before"], "build")
+            self.assertEqual(initialized_result["next_actions"][0]["action"], "review_character")
 
             built = run_cli(
                 "build",
@@ -498,7 +540,9 @@ character:
 
             diagnosed = run_cli("doctor", str(codex_target_dir))
             self.assertEqual(diagnosed.returncode, 0, diagnosed.stderr + diagnosed.stdout)
-            self.assertTrue(json.loads(diagnosed.stdout)["ok"])
+            diagnosed_result = json.loads(diagnosed.stdout)
+            self.assertTrue(diagnosed_result["ok"])
+            self.assertEqual(diagnosed_result["warnings"], [])
 
             migrated = run_cli(
                 "migrate",
@@ -631,7 +675,7 @@ character:
                     "organize priorities; challenge weak assumptions",
                     "calm, direct, warm through precision",
                     "B",
-                    "",
+                    "y",
                 ]
             )
 
@@ -662,6 +706,9 @@ character:
             self.assertIn("basic fallback", completed.stderr)
             self.assertIn("What should the character be called?", completed.stdout)
             self.assertIn("How much relationship continuity", completed.stdout)
+            self.assertIn("Canonical CharacterIntake preview", completed.stdout)
+            self.assertIn("kind: CharacterIntake", completed.stdout)
+            self.assertIn("Create source from this CharacterIntake?", completed.stdout)
             self.assertNotIn("这个人物", completed.stdout)
 
             result = json.loads(result_path.read_text(encoding="utf-8"))
@@ -669,6 +716,8 @@ character:
             self.assertEqual(result["relationship_continuity"], "warm_selective")
             self.assertEqual(result["direct_emotional_interaction"], "some_direct_emotional_interaction")
             self.assertEqual(result["recommended_emotion_engine_mode"], "light")
+            self.assertEqual(result["creation_mode"], "interactive")
+            self.assertTrue(result["intake_confirmed"])
             self.assertTrue((out_dir / "mechanism.yaml").exists())
             self.assertTrue(intake_path.exists())
 
@@ -677,6 +726,57 @@ character:
             self.assertIn("You are Pulse.", pack["AGENTS.md"])
             self.assertIn(".agents/skills/pulse-save-context/SKILL.md", pack)
             self.assertIn("Morgan's coach", resolved["identity"]["role"])
+
+    def test_cli_init_character_basic_interactive_rejection_writes_nothing(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_dir = root / "cancelled-work"
+            intake_path = root / "cancelled-intake.yaml"
+            result_path = root / "cancelled-result.json"
+            answers = "\n".join(
+                [
+                    "Cancelled",
+                    "cancelled",
+                    "work partner",
+                    "organize priorities",
+                    "calm and direct",
+                    "A",
+                    "n",
+                ]
+            )
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "packwright",
+                    "init",
+                    "--interactive",
+                    "--user-name",
+                    "Morgan",
+                    "--out-dir",
+                    str(out_dir),
+                    "--save-intake",
+                    str(intake_path),
+                    "--out",
+                    str(result_path),
+                ],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                input=answers,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
+            self.assertIn("kind: CharacterIntake", completed.stdout)
+            self.assertIn("Character creation cancelled. No files written.", completed.stdout)
+            self.assertFalse(out_dir.exists())
+            self.assertFalse(intake_path.exists())
+            self.assertFalse(result_path.exists())
 
     def test_score_reports_manifest_errors_without_tracebacks_or_stdout_noise(self):
         env = os.environ.copy()
@@ -1776,7 +1876,7 @@ character:
             self.assertEqual((target_dir / "memory" / "todos.md").read_text(encoding="utf-8"), "user state\n")
             self.assertIn("managed_artifact_drift_repaired", {item["id"] for item in fixed["fixes"]})
 
-    def test_doctor_reports_compatibility_memory_files_without_failing(self):
+    def test_fresh_install_doctor_does_not_warn_about_expected_compatibility_files(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
 
@@ -1795,15 +1895,14 @@ character:
             diagnosed = doctor_target(target_dir)
 
             self.assertTrue(diagnosed["ok"], diagnosed)
-            warning_paths = {
-                warning["path"]
-                for warning in diagnosed["warnings"]
-                if warning["id"] == "compatibility_memory_file_present"
-            }
-            self.assertIn("memory/pinned.md", warning_paths)
-            self.assertIn("memory/recent-activity.md", warning_paths)
-            self.assertIn("memory/knowledge_map.md", warning_paths)
-            self.assertIn("memory/relationship-state.md", warning_paths)
+            self.assertEqual(diagnosed["warnings"], [])
+            for rel_path in (
+                "memory/pinned.md",
+                "memory/recent-activity.md",
+                "memory/knowledge_map.md",
+                "memory/relationship-state.md",
+            ):
+                self.assertTrue((target_dir / rel_path).is_file())
 
     def test_doctor_upgrades_legacy_codex_skill_layout_and_migration_recognizes_it(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
@@ -1888,6 +1987,10 @@ character:
             self.assertTrue(dry_run["dry_run"])
             self.assertEqual(dry_run["categories"]["runtime_instruction"], 1)
             self.assertGreaterEqual(dry_run["categories"]["memory_candidate"], 1)
+            self.assertEqual(dry_run["review_queue"]["schema"], "packwright-adoption-review/v1")
+            self.assertEqual(dry_run["review_queue"]["items"], 3)
+            self.assertEqual(dry_run["review_queue"]["pending"], 3)
+            self.assertFalse(dry_run["review_queue"]["applies_decisions"])
             self.assertFalse(target.exists())
 
             applied = adopt_existing(source, target_dir=target, dry_run=False)
@@ -1895,12 +1998,25 @@ character:
             self.assertFalse(applied["dry_run"])
             self.assertTrue((target / "workspace" / "shared" / "artifacts" / "migrations" / "inventory.json").exists())
             self.assertTrue(Path(applied["report"]).exists())
+            review_path = Path(applied["review_queue_yaml"])
+            self.assertTrue(review_path.exists())
+            review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+            self.assertEqual(review["schema"], "packwright-adoption-review/v1")
+            self.assertFalse(review["policy"]["apply_supported"])
+            self.assertFalse(review["policy"]["automatic_memory_merge"])
+            self.assertIn("manual_memory_merge", review["allowed_decisions"])
+            self.assertEqual(len(review["items"]), 3)
+            self.assertEqual({item["decision"] for item in review["items"]}, {"pending"})
+            self.assertIn("memory/todos.md", {item["source"] for item in review["items"]})
+            self.assertTrue(all(len(item["sha256"]) == 64 for item in review["items"]))
             self.assertTrue((target / "knowledge" / "index.md").exists())
             self.assertTrue((target / "sources" / "local" / "manifest.json").exists())
             self.assertFalse((target / "memory" / "todos.md").exists())
             report = Path(applied["report"]).read_text(encoding="utf-8")
             self.assertIn("Existing instances are source material", report)
             self.assertIn("memory_candidate", report)
+            self.assertIn("adoption-review.yaml", report)
+            self.assertIn("does not apply the queue automatically", report)
 
     def test_cli_run_writes_cursor_pack(self):
         env = os.environ.copy()

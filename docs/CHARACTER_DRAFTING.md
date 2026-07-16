@@ -34,6 +34,16 @@ packwright draft-character \
   --prompt-out build/character-interviewer.md
 ```
 
+## Basic Terminal Fallback
+
+For a fixed-question flow without an LLM interviewer, run:
+
+```bash
+packwright init --interactive --user-name Morgan -o work/nova
+```
+
+This fallback performs only deterministic normalization. It prints the completed canonical `CharacterIntake` YAML and asks for confirmation before writing either the intake or generated source. Rejecting the preview writes nothing.
+
 ## Canonical Intake
 
 The compiler expects this shape:

@@ -10,6 +10,7 @@ the default help screen.
 |---|---|
 | `packwright init` | Create editable agent source from your intake or a nameless starter preset. |
 | `packwright draft-character` | Print the interviewer contract used by a coding agent to draft a custom intake. |
+| `packwright presets` | List or inspect the exact defaults for nameless starter presets. |
 | `packwright adopt` | Inventory an existing local agent for review before adoption. |
 | `packwright build` | Validate the source, compile an adapter pack, and score it. |
 | `packwright install` | Install an adapter pack into a local runtime target. |
@@ -25,7 +26,11 @@ Check the installed version with `packwright --version`.
 packwright draft-character --user-name Morgan --prompt-out work/character-interviewer.md
 packwright init work/nova-intake.yaml -o work/nova
 
+# Basic terminal fallback: preview and confirm canonical YAML before any write.
+packwright init --interactive --user-name Morgan -o work/nova
+
 # Shortcut: choose a nameless capability preset, then supply the name yourself.
+packwright presets code
 packwright init --template code --name Nova --user-name Morgan -o work/nova
 
 packwright build work/nova --adapter claude-code -o pack/nova-claude
@@ -38,9 +43,16 @@ packwright score project/nova-codex
 
 # Existing agent: inventory first; adoption never merges memory automatically.
 packwright adopt --from existing-agent --dry-run
+packwright adopt --from existing-agent --target project/nova
 ```
 
-The three public starter presets are `code`, `work`, and `companion`. They contain capability, voice, boundary, memory, and continuity defaults, but no character name. `--name` is required with `--template`; the generated source remains fully editable.
+The three public starter presets are `code`, `work`, and `companion`. They contain capability, voice, boundary, memory, and continuity defaults, but no character name. Run `packwright presets` to list all exact defaults or `packwright presets <name>` to inspect one. `--name` is required with `--template`; the generated source remains fully editable.
+
+Preset-based `init` output includes the complete `character_summary`, the source files most relevant for editing it, and an explicit review step before `build`. Show that summary to the user instead of reporting only the generated file list.
+
+`init --interactive` is a deterministic terminal fallback, not an LLM interviewer. It prints the completed canonical `CharacterIntake` YAML and requires confirmation before writing the intake or source directory. Rejecting the preview writes nothing.
+
+`adopt --dry-run` only returns the inventory and review summary. With an explicit target, adopt writes `inventory.json`, a Markdown report, and `adoption-review.yaml` under `workspace/shared/artifacts/migrations/`. The `packwright-adoption-review/v1` queue records path, category, size, SHA-256, a `pending` decision, optional destination, and rationale for every candidate. Packwright 0.1 does not apply this queue or merge content automatically.
 
 `init` and `build` accept `-o` as the short form of `--out-dir`. `install`,
 `migrate`, and `doctor` accept `--target` as the short form of `--target-dir`.

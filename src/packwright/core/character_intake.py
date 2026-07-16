@@ -255,6 +255,21 @@ def starter_character_preset_names():
     return sorted(STARTER_CHARACTER_PRESETS)
 
 
+def starter_character_preset(template):
+    if template not in STARTER_CHARACTER_PRESETS:
+        raise PackwrightValidationError([f"unknown starter preset: {template}"])
+    preset = copy.deepcopy(STARTER_CHARACTER_PRESETS[template])
+    return {
+        "kind": "StarterCharacterPreset",
+        "preset": template,
+        "name_required": True,
+        "character_defaults": preset,
+        "recommended_emotion_engine_mode": RELATIONSHIP_CONTINUITY_TO_MODE[
+            preset["relationship_continuity"]
+        ],
+    }
+
+
 def starter_character_intake(template, name=None, user_name=None, slug=None):
     if template not in STARTER_CHARACTER_PRESETS:
         raise PackwrightValidationError([f"unknown starter preset: {template}"])
@@ -315,6 +330,7 @@ def generate_character_source_from_data(intake, out_dir=None, force=False):
     return {
         "kind": "CharacterSource",
         "character": character["name"],
+        "character_summary": _character_summary(character),
         "slug": slug,
         "source_dir": str(target_dir),
         "mechanism": str(target_dir / "mechanism.yaml"),
@@ -322,6 +338,28 @@ def generate_character_source_from_data(intake, out_dir=None, force=False):
         "direct_emotional_interaction": character["direct_emotional_interaction"],
         "recommended_emotion_engine_mode": _recommended_emotion_engine_mode(character),
         "files": written,
+    }
+
+
+def _character_summary(character):
+    fields = (
+        "name",
+        "slug",
+        "user_name",
+        "relationship",
+        "archetype",
+        "role",
+        "voice",
+        "avoid",
+        "primary_work",
+        "traits",
+        "relationship_continuity",
+        "direct_emotional_interaction",
+    )
+    return {
+        field: copy.deepcopy(character[field])
+        for field in fields
+        if field in character
     }
 
 

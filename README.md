@@ -75,6 +75,10 @@ Already have an agent or workspace? Inventory it before importing anything:
 packwright adopt --from existing-agent --dry-run
 ```
 
+To create review materials, add `--target <target-dir>`. Packwright writes an `adoption-review.yaml` queue with every decision set to `pending`; it does not apply the queue or merge content automatically.
+
+Without a coding agent, `packwright init --interactive` offers a fixed-question fallback. It shows the completed canonical YAML and waits for confirmation before writing.
+
 ## Or use a nameless starter
 
 Three presets cover common starting points. Customize responsibilities, capabilities, voice, boundaries, and emotional feedback; the preset shapes how the agent works, while you always choose its name.
@@ -85,9 +89,10 @@ Three presets cover common starting points. Customize responsibilities, capabili
 | `work` | Versatile assistant — plans projects, drafts deliverables, clarifies decisions, and keeps execution moving |
 | `companion` | Personal secretary — supports daily routines, life decisions, travel planning, and emotional support |
 
-Choose a preset, answer a few simple questions, and supply the character name yourself.
+Inspect the exact defaults, choose a preset, and supply the character name yourself. Preset-based init returns the full character summary for review before build.
 
 ```bash
+packwright presets code
 packwright init --template code --name Nova --user-name Morgan -o work/nova
 packwright build work/nova --adapter claude-code -o pack/nova-claude
 packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
