@@ -1,9 +1,11 @@
 from collections.abc import Mapping, Sequence
+from .adapter_layout import supported_adapters
 from .errors import PackwrightValidationError
 from .handoff import HANDOFF_ARTIFACTS
 from .knowledge_contract import knowledge_artifacts
 from .naming import character_slug, is_valid_slug, normalize_slug, save_context_skill_path
 from .path_safety import resolve_mechanism_file
+from .skill_projection import SKILL_CAPABILITIES
 from .workspace_contract import (
     WORKSPACE_DOMAIN_TEMPLATE_DIR,
     WORKSPACE_INDEX_OWNER,
@@ -16,9 +18,10 @@ from .workspace_contract import (
 
 
 SUPPORTED_KINDS = {"AtlasMechanismSpec", "CharacterMechanismSpec"}
-SUPPORTED_VERSIONS = {"0.5", "0.6"}
+SUPPORTED_VERSIONS = {"0.5", "0.6", "0.7"}
 MVP_ADAPTER = "codex"
-SUPPORTED_ADAPTERS = {"codex", "claude-code", "cursor"}
+SUPPORTED_ADAPTERS = set(supported_adapters())
+RUNTIME_NEUTRAL_VERSION = "0.7"
 
 
 def validate_mechanism(data):
@@ -32,25 +35,32 @@ def validate_mechanism(data):
     _validate_parameters(data.get("parameters", {}), issues)
     _validate_run(data.get("run"), issues)
     _validate_archetype(data.get("archetype"), issues)
-    _validate_targets(data.get("targets"), issues)
-    _validate_implementation_scope(data.get("implementation_scope"), issues)
+    if "targets" in data:
+        _validate_targets(data.get("targets"), issues)
+    if "implementation_scope" in data:
+        _validate_implementation_scope(data.get("implementation_scope"), issues)
     _validate_identity(data, issues)
     _validate_operating(data, issues)
     _validate_mechanism_refs(data, issues)
-    _validate_projection(data, issues)
+    if "projection" in data:
+        _validate_projection(data, issues)
     _validate_emotion(data, issues)
     _validate_session_start(data.get("session_start"), issues)
     _validate_memory(data, issues)
     _validate_workspace(data.get("workspace"), issues)
     _validate_skills(data, issues)
-    _validate_outputs(data, issues)
+    if "outputs" in data:
+        _validate_outputs(data, issues)
     _validate_checker(data.get("checker"), issues)
     _validate_coverage(data, issues)
-    _validate_reserved_specs(data, issues)
+    if "reserved_specs" in data:
+        _validate_reserved_specs(data, issues)
 
     if issues:
         raise PackwrightValidationError(issues)
     return data
+
+
 def path_exists(data, dotted_path):
     current = data
     for part in dotted_path.split("."):
@@ -70,29 +80,26 @@ def file_exists(data, path):
 
 
 def _validate_top_level(data, issues):
-    required = (
+    required = [
         "version",
         "kind",
         "metadata",
         "parameters",
         "run",
         "archetype",
-        "targets",
-        "implementation_scope",
         "identity",
         "operating",
         "mechanism",
-        "projection",
         "emotion",
         "session_start",
         "memory",
         "workspace",
         "skills",
-        "outputs",
         "checker",
         "coverage",
-        "reserved_specs",
-    )
+    ]
+    if str(data.get("version")) in {"0.5", "0.6"}:
+        required.extend(("targets", "implementation_scope", "projection", "outputs", "reserved_specs"))
     for key in required:
         if key not in data:
             issues.append(f"missing top-level key: {key}")
@@ -166,8 +173,10 @@ def _validate_targets(targets, issues):
     if targets.get("mvp_adapter") != MVP_ADAPTER:
         issues.append(f"targets.mvp_adapter must be {MVP_ADAPTER}")
     supported = targets.get("supported")
-    if not _is_non_empty_list(supported) or not SUPPORTED_ADAPTERS.issubset(set(supported)):
-        issues.append("targets.supported must include codex, claude-code, and cursor")
+    if not _is_non_empty_list(supported):
+        issues.append("targets.supported must be a non-empty legacy adapter list")
+    elif any(not _non_empty_string(adapter) for adapter in supported):
+        issues.append("targets.supported entries must be non-empty strings")
     reserved = targets.get("reserved", {})
     if not _is_mapping(reserved):
         issues.append("targets.reserved must be a mapping")
@@ -309,16 +318,17 @@ def _validate_emotion(data, issues):
         else:
             _validate_file_ref(data, emotion.get(key), f"emotion.{key}", issues)
     projection = emotion.get("projection")
-    if not _is_mapping(projection):
-        issues.append("emotion.projection must be a mapping")
-    else:
+    if projection is not None:
+        if not _is_mapping(projection):
+            issues.append("emotion.projection must be a mapping")
+            return
         allowed = {
             "codex": {"optional_sidecar_when_explicitly_enabled", "spec_guided_behavior_only"},
             "claude-code": {"spec_guided_behavior_only"},
             "cursor": {"spec_guided_behavior_only"},
         }
-        for adapter in SUPPORTED_ADAPTERS:
-            if projection.get(adapter) not in allowed[adapter]:
+        for adapter, value in projection.items():
+            if adapter in allowed and value not in allowed[adapter]:
                 issues.append(f"emotion.projection.{adapter} must be one of {sorted(allowed[adapter])}")
 
 
@@ -326,8 +336,13 @@ def _validate_session_start(session_start, issues):
     if not _is_mapping(session_start):
         issues.append("session_start must be a mapping")
         return
-    if session_start.get("hook") != "SessionStart":
-        issues.append("session_start.hook must be SessionStart")
+    event = session_start.get("event")
+    hook = session_start.get("hook")
+    if event is not None:
+        if event != "session_start":
+            issues.append("session_start.event must be session_start")
+    elif hook != "SessionStart":
+        issues.append("session_start must declare event: session_start")
     if session_start.get("injects_facts_only") is not True:
         issues.append("session_start.injects_facts_only must be true")
     facts = session_start.get("facts")
@@ -429,13 +444,31 @@ def _validate_skills(data, issues):
         issues.append("skills must be a non-empty list")
         return
     _validate_id_list(skills, "skills", issues)
+    if not any(isinstance(skill, Mapping) and skill.get("id") == "save-context" for skill in skills):
+        issues.append("skills must include the required save-context skill")
     for index, skill in enumerate(_as_list(skills)):
         if not _is_mapping(skill):
             continue
+        if "adapters" in skill:
+            issues.append(
+                f"skills[{index}].adapters is not allowed; declare semantic capabilities and let the adapter registry project them"
+            )
         for key in ("path", "layer", "trigger"):
             if not _non_empty_string(skill.get(key)):
                 issues.append(f"skills[{index}].{key} must be a non-empty string")
         _validate_file_ref(data, skill.get("path"), f"skills[{index}].path", issues)
+        skill_id = skill.get("id")
+        if _non_empty_string(skill_id) and not is_valid_slug(skill_id):
+            issues.append(f"skills[{index}].id must be a lowercase ASCII slug")
+        capabilities = skill.get("capabilities", [])
+        if not isinstance(capabilities, list) or not all(
+            isinstance(item, str) and item in SKILL_CAPABILITIES for item in capabilities
+        ):
+            issues.append(
+                f"skills[{index}].capabilities must contain only {sorted(SKILL_CAPABILITIES)}"
+            )
+        elif len(capabilities) != len(set(capabilities)):
+            issues.append(f"skills[{index}].capabilities must not contain duplicates")
 
 
 def _validate_outputs(data, issues):
@@ -443,8 +476,9 @@ def _validate_outputs(data, issues):
     if not _is_mapping(outputs):
         issues.append("outputs must be a mapping")
         return
-    for adapter in SUPPORTED_ADAPTERS:
-        config = outputs.get(adapter)
+    for adapter, config in outputs.items():
+        if adapter not in SUPPORTED_ADAPTERS:
+            continue
         if not _is_mapping(config):
             issues.append(f"outputs.{adapter} must be a mapping")
             continue

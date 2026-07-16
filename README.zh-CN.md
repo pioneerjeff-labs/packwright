@@ -75,6 +75,10 @@ packwright install pack/nova-claude --adapter claude-code --target project/nova-
 packwright adopt --from existing-agent --dry-run
 ```
 
+如需生成审核材料，可增加 `--target <target-dir>`。Packwright 会写出一份所有决定均为 `pending` 的 `adoption-review.yaml` 队列；它不会自动应用队列或合并内容。
+
+不通过 coding agent 时，可使用 `packwright init --interactive` 的固定问题后备流程。它会先展示完整 canonical YAML，确认后才写入。
+
 ## 或从无名 starter 开始
 
 三种 preset 分别覆盖常见高频需求。支持自定义 agent 的职责、能力、语气、边界与情绪反馈；preset 只决定 agent 怎么工作，名字始终由你自己选择。
@@ -85,9 +89,10 @@ packwright adopt --from existing-agent --dry-run
 | `work` | 全能助手——规划项目、起草产出、理清决策并推动后续执行 |
 | `companion` | 私人秘书——支持日常安排、生活决策、出行计划与情感陪伴 |
 
-选择一种 preset，回答几个简单问题，再由你亲自为角色命名。
+先查看精确默认值，再选择一种 preset，并由你亲自为角色命名。preset 路径的 init 会返回完整角色摘要，供你在 build 前确认。
 
 ```bash
+packwright presets code
 packwright init --template code --name Nova --user-name Morgan -o work/nova
 packwright build work/nova --adapter claude-code -o pack/nova-claude
 packwright install pack/nova-claude --adapter claude-code --target project/nova-claude

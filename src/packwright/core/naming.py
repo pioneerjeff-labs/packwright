@@ -78,20 +78,13 @@ def save_context_skill_path(mechanism, adapter):
     from .adapter_layout import save_context_artifact
 
     slug = character_slug(mechanism)
-    if adapter in {"codex", "claude-code", "cursor"}:
-        return save_context_artifact(adapter, slug)
-    return f"skills/{slug}-save-context/SKILL.md"
+    return save_context_artifact(adapter, slug)
 
 
 def reference_prefix(mechanism, adapter):
-    slug = character_slug(mechanism)
-    if adapter == "codex":
-        return f".codex/{slug}/references"
-    if adapter == "claude-code":
-        return f".claude/{slug}/references"
-    if adapter == "cursor":
-        return f".cursor/{slug}/references"
-    return f"{slug}/references"
+    from .adapter_layout import adapter_reference_root
+
+    return adapter_reference_root(adapter, character_slug(mechanism))
 
 
 def durable_memory_source(mechanism):

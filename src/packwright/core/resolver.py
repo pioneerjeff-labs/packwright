@@ -3,6 +3,7 @@ import re
 from collections.abc import Mapping, Sequence
 
 from .errors import PackwrightValidationError
+from .mechanism_contract import normalize_mechanism
 from .validation import validate_mechanism
 
 
@@ -15,6 +16,7 @@ def resolve_mechanism(data, parameters=None):
     values = _resolve_parameter_values(data.get("parameters", {}), parameters or {})
     resolved = _replace_placeholders(copy.deepcopy(data), values)
     resolved["resolved_parameters"] = copy.deepcopy(values)
+    resolved = normalize_mechanism(resolved)
     validate_mechanism(resolved)
     return resolved
 def _resolve_parameter_values(parameter_specs, overrides):

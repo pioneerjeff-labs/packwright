@@ -2,6 +2,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from .adapter_layout import supported_adapters
 from .errors import PackwrightValidationError
 
 
@@ -12,7 +13,7 @@ HANDOFF_ARTIFACTS = (HANDOFF_HELPER_PATH, HANDOFF_WRAPPER_PATH)
 HANDOFF_EXECUTABLE_ARTIFACTS = (HANDOFF_WRAPPER_PATH,)
 DEFAULT_HANDOFF_DIR = "workspace/shared/artifacts/handoffs"
 DEFAULT_SESSION_BRIEF_DIR = "workspace/shared/artifacts/session-briefs"
-SUPPORTED_HANDOFF_ADAPTERS = {"codex", "claude-code", "cursor"}
+SUPPORTED_HANDOFF_ADAPTERS = set(supported_adapters())
 PORTABLE_STATE_DIRS = ("memory", "workspace")
 DEFAULT_HANDOFF_READS = (
     "memory/index.md",
@@ -111,6 +112,7 @@ def render_target_handoff_helper():
         _TARGET_HANDOFF_HELPER_SOURCE.replace("__HANDOFF_SCHEMA__", HANDOFF_SCHEMA)
         .replace("__DEFAULT_HANDOFF_DIR__", DEFAULT_HANDOFF_DIR)
         .replace("__DEFAULT_SESSION_BRIEF_DIR__", DEFAULT_SESSION_BRIEF_DIR)
+        .replace("__SUPPORTED_ADAPTERS__", repr(list(supported_adapters())))
         .lstrip()
     )
 
@@ -276,7 +278,7 @@ from pathlib import Path
 HANDOFF_SCHEMA = "__HANDOFF_SCHEMA__"
 DEFAULT_HANDOFF_DIR = "__DEFAULT_HANDOFF_DIR__"
 DEFAULT_SESSION_BRIEF_DIR = "__DEFAULT_SESSION_BRIEF_DIR__"
-SUPPORTED_ADAPTERS = {"codex", "claude-code", "cursor"}
+SUPPORTED_ADAPTERS = set(__SUPPORTED_ADAPTERS__)
 PORTABLE_STATE_DIRS = ("memory", "workspace")
 DEFAULT_READS = (
     "memory/index.md",

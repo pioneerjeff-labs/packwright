@@ -1,22 +1,33 @@
 import json
 
+from packwright.core.adapter_layout import (
+    adapter_entry,
+    adapter_pack_kind,
+    supported_adapters,
+)
 from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_AVAILABLE_RUNTIME,
     EMOTION_ENGINE_CLAUDE_RUNTIME,
-    EMOTION_ENGINE_CODEX_HELPER_PATH,
-    EMOTION_ENGINE_CODEX_MCP_PATH,
-    EMOTION_ENGINE_CODEX_MCP_REGISTRATION_PATH,
-    EMOTION_ENGINE_CODEX_SCRIPT_PATH,
-    EMOTION_ENGINE_CODEX_SKILL_DIR,
-    EMOTION_ENGINE_CODEX_SKILL_PATH,
-    EMOTION_ENGINE_CODEX_STATE_PATH,
-    EMOTION_ENGINE_CODEX_WRAPPER_PATH,
+    EMOTION_ENGINE_MCP_WRAPPER_PATH,
     EMOTION_ENGINE_MODES,
     EMOTION_ENGINE_RUNTIME,
-    emotion_engine_codex_expected,
-    emotion_engine_codex_manifest_diagnostics,
+    EMOTION_ENGINE_RUNTIME_ROOT,
+    EMOTION_ENGINE_STATE_PATH,
+    EMOTION_ENGINE_WRAPPER_PATH,
+    emotion_engine_artifacts,
+    emotion_engine_expected,
+    emotion_engine_manifest_diagnostics,
+    emotion_engine_skill_path,
 )
 from packwright.core.errors import PackwrightValidationError
+from packwright.core.mechanism_contract import normalize_mechanism
+from packwright.core.locale import (
+    identity_line,
+    locale_feature,
+    mechanism_locale,
+    section_heading,
+)
+from packwright.core.skill_projection import projected_skill_path, skill_projection_records
 from packwright.core.handoff import (
     DEFAULT_HANDOFF_DIR,
     DEFAULT_SESSION_BRIEF_DIR,
@@ -52,6 +63,8 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     checks = []
     try:
         validate_mechanism(mechanism)
+        mechanism = normalize_mechanism(mechanism)
+        validate_mechanism(mechanism)
         _add(checks, "mechanism_valid", True, 15, "mechanism spec passes validation")
     except PackwrightValidationError as exc:
         _add(checks, "mechanism_valid", False, 15, "; ".join(exc.issues))
@@ -67,6 +80,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     skill = adapter_pack.get(skill_path, "")
     settings = adapter_pack.get(".claude/settings.local.json.example", "")
     manifest = _parse_json(adapter_pack.get("manifest.json", "{}"))
+    locale = mechanism_locale(mechanism)
 
     implemented_by = mechanism["coverage"]["implemented_by"]
     identity = mechanism["identity"]
@@ -95,6 +109,13 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     )
     _add(
         checks,
+        "locale_projection_contract",
+        manifest.get("features", {}).get("locale") == locale_feature(mechanism, adapter),
+        10,
+        "adapter manifest records the resolved compiler locale and semantic entry sections",
+    )
+    _add(
+        checks,
         "projection_contracts_present",
         _projection_contracts_present(mechanism, adapter_pack, adapter),
         10,
@@ -110,14 +131,14 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     _add(
         checks,
         "entry_has_identity",
-        identity["name"] in entry and identity["role"] in entry and f"You are {name}." in entry,
+        identity["name"] in entry and identity["role"] in entry and identity_line(locale, name) in entry,
         10,
         "entry file keeps character person-like stable identity hot",
     )
     _add(
         checks,
         "entry_has_voice",
-        _entry_has_voice(entry),
+        _entry_has_voice(entry, locale),
         10,
         "entry file carries stable voice guidance",
     )
@@ -138,14 +159,14 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     _add(
         checks,
         "entry_uses_runtime_appropriate_links",
-        _entry_uses_runtime_appropriate_links(entry, adapter, skill_path),
+        _entry_uses_runtime_appropriate_links(entry, adapter, skill_path, locale),
         10,
         "entry file uses Codex plain paths or Claude Code @path syntax as appropriate",
     )
     _add(
         checks,
         "on_demand_references_have_purpose",
-        _on_demand_references_have_purpose(entry, adapter),
+        _on_demand_references_have_purpose(entry, adapter, locale),
         10,
         "on-demand entry references describe when or why to read each file",
     )
@@ -158,11 +179,25 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     )
     _add(
         checks,
+        "semantic_skills_projected",
+        _semantic_skills_projected(mechanism, adapter_pack, manifest, entry, adapter),
+        10,
+        "every supported semantic skill has one native projection and unsupported capabilities are explicit",
+    )
+    _add(
+        checks,
+        "semantic_skill_projection_neutral",
+        _semantic_skill_projection_neutral(mechanism, adapter_pack, adapter),
+        10,
+        "semantic skill bodies do not acquire runtime-specific meaning",
+    )
+    _add(
+        checks,
         "save_context_skill_valid",
-        "## Procedure" in skill
+        section_heading(locale, "procedure") in skill
         and "memory/session-index.md" in skill
-        and "canonical owner file" in skill
-        and "## Memory Tracks" in skill,
+        and ("canonical owner file" in skill if locale == "en" else "规范文件" in skill)
+        and section_heading(locale, "memory_tracks") in skill,
         10,
         "save-context skill carries the heavy memory handoff procedure",
     )
@@ -268,55 +303,55 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         10,
         "reserved runtimes and specs remain explicitly non-implemented",
     )
-    if adapter == "codex" and _emotion_engine_codex_enabled(adapter_pack, entry, manifest):
+    if _emotion_engine_enabled(adapter_pack, entry, manifest):
         _add(
             checks,
-            "emotion_engine_codex_skill_present",
-            EMOTION_ENGINE_CODEX_SKILL_PATH in adapter_pack,
+            "emotion_engine_skill_present",
+            emotion_engine_skill_path(adapter) in adapter_pack,
             10,
-            "Emotion Engine Codex sidecar skill is installed when enabled",
+            "adapter-native Emotion Engine guidance is installed when enabled",
         )
         _add(
             checks,
-            "emotion_engine_codex_state_present",
-            _emotion_engine_codex_state_valid(adapter_pack.get(EMOTION_ENGINE_CODEX_STATE_PATH, "")),
+            "emotion_engine_state_present",
+            _emotion_engine_state_valid(adapter_pack.get(EMOTION_ENGINE_STATE_PATH, "")),
             10,
-            "Emotion Engine Codex state exists as project-local runtime state when enabled",
+            "Emotion Engine state exists at the adapter-neutral project path when enabled",
         )
         _add(
             checks,
-            "emotion_engine_codex_settle_trust_present",
-            _emotion_engine_codex_settle_trust_present(adapter_pack, entry),
+            "emotion_engine_settle_trust_present",
+            _emotion_engine_settle_trust_present(adapter_pack, entry, adapter),
             10,
-            "Emotion Engine Codex sidecar supports conservative trust settlement",
+            "Emotion Engine supports conservative trust settlement",
         )
         _add(
             checks,
-            "emotion_engine_codex_record_policy_present",
-            _emotion_engine_codex_record_policy_present(adapter_pack, entry),
+            "emotion_engine_record_policy_present",
+            _emotion_engine_record_policy_present(adapter_pack, entry, adapter),
             10,
-            "Emotion Engine Codex sidecar supports deterministic light/always record policy",
+            "Emotion Engine supports deterministic light/always record policy",
         )
         _add(
             checks,
-            "emotion_engine_codex_mcp_present",
-            _emotion_engine_codex_mcp_present(adapter_pack, manifest),
+            "emotion_engine_mcp_present",
+            _emotion_engine_mcp_present(adapter_pack, manifest),
             10,
-            "Emotion Engine Codex sidecar exposes MCP state tools without owning Packwright repair",
+            "Emotion Engine exposes MCP state tools without owning Packwright repair",
         )
         _add(
             checks,
-            "emotion_engine_codex_project_wrapper_present",
-            _emotion_engine_codex_project_wrapper_present(adapter_pack, manifest),
+            "emotion_engine_project_wrappers_present",
+            _emotion_engine_project_wrappers_present(adapter_pack, manifest),
             10,
-            "project-root Emotion Engine wrapper forwards to the installed sidecar",
+            "project-root shell and MCP wrappers forward to the shared runtime",
         )
         _add(
             checks,
-            "emotion_engine_codex_entry_internal",
-            _emotion_engine_codex_entry_internal(entry),
+            "emotion_engine_entry_internal",
+            _emotion_engine_entry_internal(adapter_pack, entry, adapter),
             10,
-            "AGENTS.md keeps Emotion Engine internals hidden from normal replies",
+            "adapter guidance keeps Emotion Engine internals hidden from normal replies",
         )
         _add(
             checks,
@@ -329,15 +364,15 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
             10,
             "collaboration memory stays human-readable and does not store PAD/trust runtime JSON",
         )
-        manifest_diagnostics = emotion_engine_codex_manifest_diagnostics(manifest)
+        manifest_diagnostics = emotion_engine_manifest_diagnostics(manifest)
         _add(
             checks,
-            "emotion_engine_codex_manifest_consistent",
+            "emotion_engine_manifest_consistent",
             not manifest_diagnostics,
             10,
-            _emotion_engine_codex_diagnostic_message(
+            _emotion_engine_diagnostic_message(
                 manifest_diagnostics,
-                "installed Emotion Engine Codex sidecar is reflected in manifest features and sidecars",
+                "installed Emotion Engine runtime is reflected in manifest features and sidecars",
             ),
         )
 
@@ -352,8 +387,6 @@ def _source_files_exist(mechanism):
         mechanism["mechanism"]["context_loading_path"],
         mechanism["mechanism"]["session_guards_path"],
         mechanism["mechanism"]["memory_policy_path"],
-        mechanism["projection"]["platform_capabilities_path"],
-        mechanism["projection"]["ownership_contract_path"],
         mechanism["emotion"]["model_path"],
         mechanism["emotion"]["state_schema_path"],
         mechanism["emotion"]["update_policy_path"],
@@ -372,17 +405,11 @@ def _source_files_exist_for_refs(mechanism, refs):
 def _adapter_from_manifest(adapter_pack, fallback):
     manifest = _parse_json(adapter_pack.get("manifest.json", "{}"))
     adapter = manifest.get("adapter")
-    return adapter if adapter in {"codex", "claude-code", "cursor"} else fallback
+    return adapter if adapter in supported_adapters() else fallback
 
 
 def _entry_path(mechanism, adapter):
-    if adapter == "codex":
-        return "AGENTS.md"
-    if adapter == "claude-code":
-        return "CLAUDE.md"
-    if adapter == "cursor":
-        return f".cursor/rules/{character_slug(mechanism)}.mdc"
-    return "AGENTS.md"
+    return adapter_entry(adapter, character_slug(mechanism))
 
 
 def _manifest_matches_pack(manifest, adapter_pack, adapter):
@@ -392,21 +419,15 @@ def _manifest_matches_pack(manifest, adapter_pack, adapter):
     external = _manifest_external_artifacts(all_paths)
     artifacts = set(manifest.get("artifacts", [])) - external
     emitted = set(adapter_pack.keys()) - external
-    expected_kinds = {
-        "codex": "CodexAdapterPack",
-        "claude-code": "ClaudeCodeAdapterPack",
-        "cursor": "CursorAdapterPack",
-    }
-    expected_kind = expected_kinds.get(adapter)
+    expected_kind = adapter_pack_kind(adapter)
     return manifest.get("kind") == expected_kind and manifest.get("adapter") == adapter and artifacts == emitted
 
 
 def _manifest_external_artifacts(paths):
-    allowed_prefixes = (
-        f"{EMOTION_ENGINE_CODEX_SKILL_DIR}/",
-        f"{EMOTION_ENGINE_CODEX_STATE_PATH.rsplit('/', 1)[0]}/",
-    )
-    return {path for path in paths if path.startswith(allowed_prefixes)}
+    allowed = set()
+    for adapter in supported_adapters():
+        allowed.update(emotion_engine_artifacts(adapter))
+    return set(paths).intersection(allowed)
 
 
 def _projection_contracts_present(mechanism, adapter_pack, adapter):
@@ -415,13 +436,7 @@ def _projection_contracts_present(mechanism, adapter_pack, adapter):
         f"{prefix}/projection/platform-capabilities.yaml",
         f"{prefix}/projection/ownership-contract.yaml",
     ]
-    return all(path in adapter_pack for path in expected) and _source_files_exist_for_refs(
-        mechanism,
-        [
-            mechanism["projection"]["platform_capabilities_path"],
-            mechanism["projection"]["ownership_contract_path"],
-        ],
-    )
+    return all(path in adapter_pack for path in expected)
 
 
 def _ownership_contract_valid(mechanism, manifest, adapter):
@@ -434,13 +449,22 @@ def _ownership_contract_valid(mechanism, manifest, adapter):
     )
 
 
-def _entry_has_voice(entry):
-    return (
-        "## Voice" in entry
-        and "Say what matters first." in entry
-        and "When uncertain, name the uncertainty" in entry
-        and "When corrected, restate the corrected model" in entry
-    )
+def _entry_has_voice(entry, locale):
+    if locale == "zh-CN":
+        markers = (
+            section_heading(locale, "voice"),
+            "先说最重要的事。",
+            "不确定时，明确指出不确定之处并核对来源。",
+            "被纠正时，重述修正后的理解并直接调整",
+        )
+    else:
+        markers = (
+            section_heading(locale, "voice"),
+            "Say what matters first.",
+            "When uncertain, name the uncertainty",
+            "When corrected, restate the corrected model",
+        )
+    return all(marker in entry for marker in markers)
 
 
 def _entry_excludes_implementation_scope(mechanism, entry):
@@ -486,28 +510,46 @@ def _emotion_specs_present(mechanism, adapter_pack, adapter):
 
 
 def _foundation_mechanisms_not_projected_as_skills(adapter_pack):
-    forbidden = (
-        ".agents/skills/atlas-recent-activity/SKILL.md",
-        ".agents/skills/atlas-fact-check/SKILL.md",
-        ".agents/skills/atlas-work/SKILL.md",
-        ".agents/skills/atlas-work/references/source-skills/recent-activity/SKILL.md",
-        ".agents/skills/atlas-work/references/source-skills/fact-check/SKILL.md",
-        ".claude/skills/atlas-recent-activity/SKILL.md",
-        ".claude/skills/atlas-fact-check/SKILL.md",
-        ".claude/skills/atlas-work/SKILL.md",
-        ".claude/skills/atlas-work/references/source-skills/recent-activity/SKILL.md",
-        ".claude/skills/atlas-work/references/source-skills/fact-check/SKILL.md",
-    )
-    if any(path in adapter_pack for path in forbidden):
+    if any("/source-skills/" in path for path in adapter_pack):
         return False
     projected_foundation_suffixes = (
         "recent-activity/SKILL.md",
         "fact-check/SKILL.md",
+        "-recent-activity.mdc",
+        "-fact-check.mdc",
     )
     return not any(path.endswith(projected_foundation_suffixes) for path in adapter_pack)
 
 
-def _entry_uses_runtime_appropriate_links(entry, adapter, skill_path):
+def _semantic_skills_projected(mechanism, adapter_pack, manifest, entry, adapter):
+    records = skill_projection_records(mechanism, adapter)
+    feature = manifest.get("features", {}).get("skills", {}) if isinstance(manifest, dict) else {}
+    feature_items = feature.get("items", []) if isinstance(feature, dict) else []
+    if feature_items != records or feature.get("count") != len(records):
+        return False
+    for record in records:
+        present = record["path"] in adapter_pack
+        if record["status"] == "projected":
+            if not present or record["path"] not in entry:
+                return False
+        elif present:
+            return False
+    return True
+
+
+def _semantic_skill_projection_neutral(mechanism, adapter_pack, adapter):
+    forbidden = ("Codex", "Claude Code", "Cursor", ".codex/", ".claude/", ".cursor/")
+    for skill in mechanism.get("skills", []):
+        if skill.get("id") == "save-context":
+            continue
+        path = projected_skill_path(mechanism, adapter, skill)
+        text = adapter_pack.get(path)
+        if text is not None and any(item in text for item in forbidden):
+            return False
+    return True
+
+
+def _entry_uses_runtime_appropriate_links(entry, adapter, skill_path, locale):
     daily_memory_paths = (
         "memory/index.md",
         "memory/profile.md",
@@ -519,7 +561,7 @@ def _entry_uses_runtime_appropriate_links(entry, adapter, skill_path):
     )
     if adapter == "codex":
         return (
-            "## Use When Needed" in entry
+            section_heading(locale, "use_when_needed") in entry
             and f"`{skill_path}`" in entry
             and "@" not in entry
             and all(f"`{path}`" in entry for path in daily_memory_paths)
@@ -527,28 +569,43 @@ def _entry_uses_runtime_appropriate_links(entry, adapter, skill_path):
         )
     if adapter == "cursor":
         return (
-            "## Use When Needed" in entry
+            section_heading(locale, "use_when_needed") in entry
             and f"`{skill_path}`" in entry
             and all(f"`{path}`" in entry for path in daily_memory_paths)
             and "`memory/emotion-state.json.example`" not in entry
         )
     memory_paths = (*daily_memory_paths, "memory/emotion-state.json.example")
     return (
-        "## Load When Needed" in entry
+        section_heading(locale, "load_when_needed") in entry
         and f"@{skill_path}" in entry
         and all(f"@{path}" in entry for path in memory_paths)
     )
 
 
-def _on_demand_references_have_purpose(entry, adapter):
-    heading = "## Load When Needed" if adapter == "claude-code" else "## Use When Needed"
+def _on_demand_references_have_purpose(entry, adapter, locale):
+    section_id = "load_when_needed" if adapter == "claude-code" else "use_when_needed"
+    heading = section_heading(locale, section_id)
     lines = _section_bullets(entry, heading)
     minimum = 11 if adapter == "claude-code" else 10
     if len(lines) < minimum:
         return False
-    if adapter in {"codex", "cursor"}:
-        return all((" for " in line or " when " in line or " only as " in line) for line in lines)
-    return all(": " in line and line.split(": ", 1)[1].strip() for line in lines)
+    return all(_reference_bullet_has_purpose(line) for line in lines)
+
+
+def _reference_bullet_has_purpose(line):
+    text = line[2:].strip() if line.startswith("- ") else line.strip()
+    if text.startswith("@"):
+        for separator in (": ", "："):
+            if separator in text:
+                return bool(text.split(separator, 1)[1].strip())
+        return False
+    if "`" not in text:
+        return False
+    parts = text.split("`")
+    if len(parts) < 3:
+        return False
+    purpose = " ".join(parts[::2]).strip(" ，。,:;")
+    return len(purpose) >= 3
 
 
 def _section_bullets(text, heading):
@@ -748,7 +805,14 @@ def _emotion_reserved_not_runtime(mechanism, manifest):
     return (
         mechanism["emotion"].get("status") == "structured_reserved"
         and mechanism["emotion"].get("runtime") == "not_implemented"
-        and runtime in {False, EMOTION_ENGINE_AVAILABLE_RUNTIME, EMOTION_ENGINE_RUNTIME, EMOTION_ENGINE_CLAUDE_RUNTIME}
+        and runtime in {
+            False,
+            "optional_project_mcp_sidecar",
+            "spec_guided_behavior_only",
+            EMOTION_ENGINE_AVAILABLE_RUNTIME,
+            EMOTION_ENGINE_RUNTIME,
+            EMOTION_ENGINE_CLAUDE_RUNTIME,
+        }
     )
 
 
@@ -781,24 +845,21 @@ def _reserved_runtimes_not_implemented(mechanism, manifest):
     return specs_ok and targets_ok and manifest_ok
 
 
-def _emotion_engine_codex_enabled(adapter_pack, entry, manifest):
+def _emotion_engine_enabled(adapter_pack, entry, manifest):
     return (
-        emotion_engine_codex_expected(manifest, adapter_pack)
+        emotion_engine_expected(manifest, adapter_pack)
         or "## Emotion Engine" in entry
         or "## Optional Emotion Engine" in entry
     )
 
 
-def _emotion_engine_codex_state_valid(text):
+def _emotion_engine_state_valid(text):
     state = _parse_json(text)
-    return (
-        isinstance(state, dict)
-        and state.get("_schema") == "emotion-engine-state/v2"
-        and isinstance(state.get("character_profile"), dict)
-    )
+    return isinstance(state, dict) and state.get("_schema") == "emotion-engine-state/v2"
 
 
-def _emotion_engine_codex_entry_internal(entry):
+def _emotion_engine_entry_internal(adapter_pack, entry, adapter):
+    guidance = adapter_pack.get(emotion_engine_skill_path(adapter), "")
     forbidden = (
         '"pleasure"',
         '"arousal"',
@@ -810,35 +871,33 @@ def _emotion_engine_codex_entry_internal(entry):
         "trust_history",
         "emotion_trajectory",
     )
-    return (
-        ("## Emotion Engine" in entry or "## Optional Emotion Engine" in entry)
-        and EMOTION_ENGINE_CODEX_SKILL_PATH in entry
-        and EMOTION_ENGINE_CODEX_STATE_PATH in entry
-        and "settle_trust" in entry
-        and "record_policy" in entry
-        and not any(item in entry for item in forbidden)
+    routing_ok = (
+        EMOTION_ENGINE_STATE_PATH in guidance
+        and "settle_trust" in guidance
+        and "record_policy" in guidance
     )
+    if adapter != "cursor":
+        routing_ok = routing_ok and emotion_engine_skill_path(adapter) in entry
+    return routing_ok and not any(item in entry for item in forbidden)
 
 
-def _emotion_engine_codex_settle_trust_present(adapter_pack, entry):
-    skill = adapter_pack.get(EMOTION_ENGINE_CODEX_SKILL_PATH, "")
-    helper = adapter_pack.get(EMOTION_ENGINE_CODEX_HELPER_PATH, "")
-    wrapper = adapter_pack.get(EMOTION_ENGINE_CODEX_SCRIPT_PATH, "")
+def _emotion_engine_settle_trust_present(adapter_pack, entry, adapter):
+    skill = adapter_pack.get(emotion_engine_skill_path(adapter), "")
+    helper = adapter_pack.get(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py", "")
+    wrapper = adapter_pack.get(EMOTION_ENGINE_WRAPPER_PATH, "")
     return (
-        "settle_trust" in entry
-        and "settle_trust" in skill
+        "settle_trust" in skill
         and "settle_trust" in helper
-        and 'exec "$PYTHON" "$ENGINE" "$COMMAND" "$STATE_FILE"' in wrapper
+        and "emotion_engine_utils.py" in wrapper
+        and EMOTION_ENGINE_STATE_PATH in wrapper
     )
 
 
-def _emotion_engine_codex_record_policy_present(adapter_pack, entry):
-    skill = adapter_pack.get(EMOTION_ENGINE_CODEX_SKILL_PATH, "")
-    helper = adapter_pack.get(EMOTION_ENGINE_CODEX_HELPER_PATH, "")
+def _emotion_engine_record_policy_present(adapter_pack, entry, adapter):
+    skill = adapter_pack.get(emotion_engine_skill_path(adapter), "")
+    helper = adapter_pack.get(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py", "")
     return (
-        "record_policy" in entry
-        and "record_policy" in skill
-        and "Runtime Modes And Record Policy" in skill
+        "record_policy" in skill
         and "record_policy" in helper
         and "parse_record_policy_args" in helper
         and "reply_bias" in helper
@@ -847,15 +906,17 @@ def _emotion_engine_codex_record_policy_present(adapter_pack, entry):
     )
 
 
-def _emotion_engine_codex_mcp_present(adapter_pack, manifest):
-    mcp = adapter_pack.get(EMOTION_ENGINE_CODEX_MCP_PATH, "")
-    registration = adapter_pack.get(EMOTION_ENGINE_CODEX_MCP_REGISTRATION_PATH, "")
+def _emotion_engine_mcp_present(adapter_pack, manifest):
+    mcp_path = f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py"
+    registration_path = f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py"
+    mcp = adapter_pack.get(mcp_path, "")
+    registration = adapter_pack.get(registration_path, "")
     artifacts = set(manifest.get("artifacts", [])) if isinstance(manifest, dict) else set()
     return (
-        EMOTION_ENGINE_CODEX_MCP_PATH in adapter_pack
-        and EMOTION_ENGINE_CODEX_MCP_REGISTRATION_PATH in adapter_pack
-        and EMOTION_ENGINE_CODEX_MCP_PATH in artifacts
-        and EMOTION_ENGINE_CODEX_MCP_REGISTRATION_PATH in artifacts
+        mcp_path in adapter_pack
+        and registration_path in adapter_pack
+        and mcp_path in artifacts
+        and registration_path in artifacts
         and "tools/list" in mcp
         and "emotion_engine_record_policy" in mcp
         and "codex" in registration
@@ -865,13 +926,17 @@ def _emotion_engine_codex_mcp_present(adapter_pack, manifest):
     )
 
 
-def _emotion_engine_codex_project_wrapper_present(adapter_pack, manifest):
-    wrapper = adapter_pack.get(EMOTION_ENGINE_CODEX_WRAPPER_PATH, "")
+def _emotion_engine_project_wrappers_present(adapter_pack, manifest):
+    wrapper = adapter_pack.get(EMOTION_ENGINE_WRAPPER_PATH, "")
+    mcp_wrapper = adapter_pack.get(EMOTION_ENGINE_MCP_WRAPPER_PATH, "")
     artifacts = set(manifest.get("artifacts", [])) if isinstance(manifest, dict) else set()
     return (
-        EMOTION_ENGINE_CODEX_WRAPPER_PATH in adapter_pack
-        and EMOTION_ENGINE_CODEX_WRAPPER_PATH in artifacts
-        and EMOTION_ENGINE_CODEX_SCRIPT_PATH in wrapper
+        EMOTION_ENGINE_WRAPPER_PATH in adapter_pack
+        and EMOTION_ENGINE_MCP_WRAPPER_PATH in adapter_pack
+        and EMOTION_ENGINE_WRAPPER_PATH in artifacts
+        and EMOTION_ENGINE_MCP_WRAPPER_PATH in artifacts
+        and "emotion_engine_utils.py" in wrapper
+        and "emotion_engine_mcp.py" in mcp_wrapper
     )
 
 
@@ -888,7 +953,7 @@ def _relationship_state_not_runtime_state(text):
     return not any(item in text for item in forbidden)
 
 
-def _emotion_engine_codex_diagnostic_message(diagnostics, fallback):
+def _emotion_engine_diagnostic_message(diagnostics, fallback):
     if not diagnostics:
         return fallback
     return "; ".join(issue["message"] for issue in diagnostics)

@@ -8,32 +8,42 @@ from pathlib import Path
 import yaml
 
 from packwright import __version__
-from packwright.adapters import compile_to_claude_code_pack, compile_to_codex_pack, compile_to_cursor_pack
+from packwright.adapters import compile_adapter_pack
 from packwright.checker import score_mechanism
+from packwright.core.adapter_layout import supported_adapters
 from packwright.core.pack_metadata import SPEC_PATH, embed_pack_metadata, load_embedded_spec
 from packwright.core import (
     PackwrightError,
     adopt_existing,
+    apply_adoption_review,
     apply_migration,
     create_handoff,
     doctor_target,
     generate_character_source,
     generate_character_source_from_data,
     install_pack,
+    load_character_intake,
     load_mechanism,
+    normalize_mechanism,
     plan_migration,
-    refresh_emotion_engine_codex,
+    plan_adoption_review,
+    refresh_emotion_engine,
     render_interviewer_prompt,
     resolve_mechanism,
     starter_character_intake,
+    starter_character_preset,
     starter_character_preset_names,
     validate_mechanism,
     write_interviewer_prompt,
 )
-from packwright.core.emotion_engine_contract import EMOTION_ENGINE_CODEX_ARTIFACTS
+from packwright.core.emotion_engine_contract import emotion_engine_artifacts
 from packwright.core.errors import PackwrightValidationError
+from packwright.core.locale import normalize_locale
 from packwright.core.naming import normalize_slug
 from packwright.core.path_safety import resolve_destination_path, resolve_source_path
+
+
+ADAPTER_CHOICES = supported_adapters()
 
 
 def main(argv=None):
@@ -57,12 +67,16 @@ def main(argv=None):
             return _cmd_handoff_export(args)
         if args.command == "adopt":
             return _cmd_adopt(args)
-        if args.command == "refresh-emotion-engine-codex":
-            return _cmd_refresh_emotion_engine_codex(args)
+        if args.command in {"refresh-emotion-engine", "refresh-emotion-engine-codex"}:
+            return _cmd_refresh_emotion_engine(args)
         if args.command == "doctor":
             return _cmd_doctor(args)
         if args.command == "draft-character":
             return _cmd_draft_character(args)
+        if args.command == "presets":
+            return _cmd_presets(args)
+        if args.command == "new":
+            return _cmd_new(args)
         if args.command in {"init", "init-character"}:
             return _cmd_init_character(args)
         if args.command in {"build", "run"}:
@@ -82,14 +96,32 @@ def _build_parser():
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{init,draft-character,adopt,build,install,migrate,doctor,score}",
+        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
     )
+
+    new = subparsers.add_parser(
+        "new",
+        help="create, build, and install a fresh agent while preserving source and pack directories",
+    )
+    _add_new_arguments(new)
 
     init_cmd = subparsers.add_parser(
         "init",
         help="create editable agent source from your intake or a nameless starter preset",
     )
     _add_init_arguments(init_cmd)
+
+    presets = subparsers.add_parser(
+        "presets",
+        help="list or inspect the exact defaults for nameless starter presets",
+    )
+    presets.add_argument(
+        "preset",
+        nargs="?",
+        choices=starter_character_preset_names(),
+        help="optional preset to inspect in full",
+    )
+    presets.add_argument("--out", help="output preset JSON path")
 
     build = subparsers.add_parser("build", help="validate, compile, and score an adapter pack")
     _add_build_arguments(build)
@@ -104,14 +136,18 @@ def _build_parser():
 
     compile_cmd = subparsers.add_parser("compile", description="compile an adapter pack")
     compile_cmd.add_argument("mechanism")
-    compile_cmd.add_argument("--adapter", default="codex", choices=["codex", "claude-code", "cursor"])
+    compile_cmd.add_argument("--adapter", default="codex", choices=ADAPTER_CHOICES)
     compile_cmd.add_argument("--set", action="append", default=[], dest="sets", help="parameter override as key=value")
     compile_cmd.add_argument("--out-dir", default="build/codex", help="adapter pack output directory")
     compile_cmd.add_argument("--force", action="store_true", help="overwrite existing pack artifacts")
 
     install = subparsers.add_parser("install", help="install an adapter pack into a local runtime directory")
     install.add_argument("pack_dir_positional", nargs="?", metavar="PACK_DIR", help="adapter pack directory")
-    install.add_argument("--adapter", default="codex", choices=["codex", "claude-code", "cursor"])
+    install.add_argument(
+        "--adapter",
+        choices=ADAPTER_CHOICES,
+        help="optional assertion; defaults to the adapter declared by the pack manifest",
+    )
     install.add_argument(
         "--pack-dir",
         dest="pack_dir_option",
@@ -132,14 +168,24 @@ def _build_parser():
         help="overwrite managed target artifacts while preserving portable state",
     )
     install.add_argument(
+        "--include-emotion-engine",
+        action="store_true",
+        default=None,
+        help="include the optional adapter-native Emotion Engine v1.0.0 runtime and project MCP configuration",
+    )
+    install.add_argument(
+        "--emotion-engine-source",
+        help="Emotion Engine v1.0.0 repository root or integration directory",
+    )
+    install.add_argument(
         "--include-emotion-engine-codex",
         action="store_true",
         default=None,
-        help="include the optional Emotion Engine Codex sidecar; requires --emotion-engine-codex-source or PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR",
+        help=argparse.SUPPRESS,
     )
     install.add_argument(
         "--emotion-engine-codex-source",
-        help="source directory for the emotion-engine-codex sidecar skill",
+        help=argparse.SUPPRESS,
     )
     install.add_argument(
         "--emotion-style",
@@ -149,7 +195,7 @@ def _build_parser():
         "--emotion-engine-mode",
         default=None,
         choices=["light", "always", "paused"],
-        help="override the pack's recommended Emotion Engine runtime mode for Codex installs",
+        help="override the pack's recommended Emotion Engine runtime mode",
     )
     install.add_argument("--out", help="output install JSON path")
 
@@ -183,32 +229,25 @@ def _build_parser():
         help="inventory an existing agent for reviewable adoption",
         description="inventory an existing local agent/workspace for reviewable Packwright adoption",
     )
-    adopt.add_argument("--from", required=True, dest="source_dir", help="existing local instance directory")
+    adopt_source = adopt.add_mutually_exclusive_group(required=True)
+    adopt_source.add_argument("--from", dest="source_dir", help="existing local instance directory")
+    adopt_source.add_argument("--review", help="reviewed adoption-review.yaml to plan or apply")
     adopt.add_argument("--target-dir", help="directory where adoption report and scaffold should be written")
-    adopt.add_argument("--dry-run", action="store_true", help="only print inventory and review queues")
+    adopt.add_argument("--dry-run", action="store_true", help="only print inventory, queue, or reviewed action plan")
+    adopt.add_argument("--yes", action="store_true", help="apply approved review decisions without an interactive prompt")
     adopt.add_argument("--force", action="store_true", help="overwrite existing adoption report files")
     adopt.add_argument("--out", help="output adopt JSON path")
 
     refresh_emotion = subparsers.add_parser(
+        "refresh-emotion-engine",
+        description="refresh an installed Emotion Engine runtime without resetting live state",
+    )
+    _add_refresh_emotion_arguments(refresh_emotion)
+    refresh_emotion_legacy = subparsers.add_parser(
         "refresh-emotion-engine-codex",
-        description="refresh an installed Codex Emotion Engine sidecar without resetting runtime state",
+        description="deprecated alias for refresh-emotion-engine",
     )
-    refresh_emotion.add_argument("--target-dir", required=True, help="installed Codex target directory")
-    refresh_emotion.add_argument(
-        "--emotion-engine-codex-source",
-        help="source directory for the emotion-engine-codex sidecar skill",
-    )
-    refresh_emotion.add_argument(
-        "--emotion-style",
-        help="style description used only if the target state file must be initialized",
-    )
-    refresh_emotion.add_argument(
-        "--emotion-engine-mode",
-        default=None,
-        choices=["light", "always", "paused"],
-        help="override the target manifest's Emotion Engine runtime mode",
-    )
-    refresh_emotion.add_argument("--out", help="output refresh JSON path")
+    _add_refresh_emotion_arguments(refresh_emotion_legacy)
 
     doctor = subparsers.add_parser("doctor", help="inspect and optionally repair an installed target")
     doctor.add_argument("target_dir_positional", nargs="?", metavar="TARGET", help="installed target directory")
@@ -221,8 +260,12 @@ def _build_parser():
     )
     doctor.add_argument("--fix", action="store_true", help="apply deterministic repairs for detected drift")
     doctor.add_argument(
+        "--emotion-engine-source",
+        help="Emotion Engine v1.0.0 repository root or integration directory, required to refresh runtime drift",
+    )
+    doctor.add_argument(
         "--emotion-engine-codex-source",
-        help="source directory for the emotion-engine-codex sidecar skill",
+        help=argparse.SUPPRESS,
     )
     doctor.add_argument(
         "--emotion-style",
@@ -238,7 +281,7 @@ def _build_parser():
 
     score = subparsers.add_parser("score", help="score a resolved mechanism and adapter pack")
     score.add_argument("mechanism", help="mechanism source, pack, or installed target")
-    score.add_argument("--adapter", default="codex", choices=["codex", "claude-code", "cursor"])
+    score.add_argument("--adapter", default="codex", choices=ADAPTER_CHOICES)
     score.add_argument("--pack-dir", help="existing adapter pack directory; compiles in memory when omitted")
     score.add_argument("--threshold", type=int, help="score threshold override")
     score.add_argument("--set", action="append", default=[], dest="sets", help="parameter override as key=value")
@@ -262,6 +305,29 @@ def _build_parser():
     _add_build_arguments(run)
 
     return parser
+
+
+def _add_refresh_emotion_arguments(parser):
+    parser.add_argument("--target-dir", required=True, help="installed target directory")
+    parser.add_argument(
+        "--emotion-engine-source",
+        help="Emotion Engine v1.0.0 repository root or integration directory",
+    )
+    parser.add_argument(
+        "--emotion-engine-codex-source",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--emotion-style",
+        help="style description used only if the target state file must be initialized",
+    )
+    parser.add_argument(
+        "--emotion-engine-mode",
+        default=None,
+        choices=["light", "always", "paused"],
+        help="override the target manifest's Emotion Engine runtime mode",
+    )
+    parser.add_argument("--out", help="output refresh JSON path")
 
 
 def _add_migrate_arguments(parser):
@@ -290,7 +356,7 @@ def _add_migrate_arguments(parser):
         "--to-adapter",
         required=True,
         dest="to_adapter",
-        choices=["codex", "claude-code", "cursor"],
+        choices=ADAPTER_CHOICES,
     )
     parser.add_argument("--mechanism", help="source mechanism path; defaults to source manifest source_mechanism")
     parser.add_argument("--set", action="append", default=[], dest="sets", help="parameter override as key=value")
@@ -319,21 +385,25 @@ def _add_migrate_arguments(parser):
         "--no-emotion-state",
         action="store_false",
         dest="include_emotion_state",
-        help="do not copy .emotion-engine/codex-state.json as a migration snapshot",
+        help="do not carry any canonical or legacy Emotion Engine state snapshot",
+    )
+    parser.add_argument(
+        "--emotion-engine-source",
+        help="Emotion Engine v1.0.0 source used to activate the carried state in the destination adapter",
     )
     parser.add_argument(
         "--emotion-engine-codex-source",
-        help="source directory for the emotion-engine-codex sidecar skill when migrating to Codex",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--emotion-style",
-        help="style description used only if a Codex target state file must be initialized",
+        help="style description used only if a destination state file must be initialized",
     )
     parser.add_argument(
         "--emotion-engine-mode",
         default=None,
         choices=["light", "always", "paused"],
-        help="override the destination Codex target Emotion Engine runtime mode",
+        help="override the destination Emotion Engine runtime mode",
     )
     parser.add_argument("--out", help="output migration JSON path")
 
@@ -353,6 +423,10 @@ def _add_init_arguments(parser):
     parser.add_argument("--name", help="character name chosen by the user; required with --template")
     parser.add_argument("--user-name", help="how the character should refer to the user in generated files")
     parser.add_argument("--slug", help="explicit lowercase ASCII character slug, useful for non-Latin names")
+    parser.add_argument(
+        "--locale",
+        help="compiler boilerplate locale for --template or --interactive; en and zh-CN are supported, others fall back to en",
+    )
     parser.add_argument("--save-intake", help="write the generated or answered intake YAML to this path")
     parser.add_argument(
         "-o",
@@ -364,9 +438,31 @@ def _add_init_arguments(parser):
     parser.add_argument("--out", help="output generation JSON path")
 
 
+def _add_new_arguments(parser):
+    parser.add_argument("intake", nargs="?", help="confirmed CharacterIntake YAML; omit with --template or --interactive")
+    parser.add_argument("--interactive", action="store_true", help="basic confirmed terminal fallback")
+    parser.add_argument("--template", choices=starter_character_preset_names(), help="nameless starter preset")
+    parser.add_argument("--accept-preset", action="store_true", help="confirm the selected preset defaults were reviewed before this one-shot build")
+    parser.add_argument("--name", help="user-chosen character name; required with --template")
+    parser.add_argument("--user-name", help="how the character should refer to the user")
+    parser.add_argument("--slug", help="explicit lowercase ASCII character slug")
+    parser.add_argument("--locale", help="compiler locale; en and zh-CN are supported, others fall back to en")
+    parser.add_argument("--save-intake", help="write generated or interactive intake YAML to this path")
+    parser.add_argument("--adapter", default="codex", choices=ADAPTER_CHOICES)
+    parser.add_argument("--work-dir", help="editable source directory; defaults to work/<slug>")
+    parser.add_argument("--pack-dir", help="built adapter pack directory; defaults to pack/<slug>-<adapter>")
+    parser.add_argument("--target-dir", "--target", required=True, dest="target_dir", help="fresh installed target directory")
+    parser.add_argument("--threshold", type=int, help="score threshold override")
+    parser.add_argument("--include-emotion-engine", action="store_true", help="install Emotion Engine v1.0.0 and project MCP configuration")
+    parser.add_argument("--emotion-engine-source", help="Emotion Engine v1.0.0 repository or integration directory")
+    parser.add_argument("--emotion-style", help="style description for initialized Emotion Engine state")
+    parser.add_argument("--emotion-engine-mode", choices=["light", "always", "paused"], help="override the recommended Emotion Engine mode")
+    parser.add_argument("--out", help="output orchestration JSON path")
+
+
 def _add_build_arguments(parser):
     parser.add_argument("mechanism")
-    parser.add_argument("--adapter", default="codex", choices=["codex", "claude-code", "cursor"])
+    parser.add_argument("--adapter", default="codex", choices=ADAPTER_CHOICES)
     parser.add_argument("--set", action="append", default=[], dest="sets", help="parameter override as key=value")
     parser.add_argument(
         "-o",
@@ -434,7 +530,7 @@ def _cmd_score(args):
             params = _pack_resolved_parameters(pack)
     else:
         pack = None
-    resolved = data if is_embedded and not params else resolve_mechanism(data, params)
+    resolved = normalize_mechanism(data) if is_embedded and not params else resolve_mechanism(data, params)
     if pack is None:
         pack = _compile_pack(args.adapter, resolved, {"source_mechanism": args.mechanism})
     result = score_mechanism(resolved, pack, adapter=args.adapter, threshold=args.threshold)
@@ -454,6 +550,8 @@ def _cmd_install(args):
         args.target_dir,
         adapter=args.adapter,
         force=args.force,
+        include_emotion_engine=args.include_emotion_engine,
+        emotion_engine_source=args.emotion_engine_source,
         include_emotion_engine_codex=args.include_emotion_engine_codex,
         emotion_engine_codex_source=args.emotion_engine_codex_source,
         emotion_style=args.emotion_style,
@@ -481,6 +579,7 @@ def _cmd_migrate_target(args):
         include_emotion_state=args.include_emotion_state,
         slug=args.slug,
         upgrade_adapter_support=args.upgrade_adapter_support,
+        emotion_engine_source=args.emotion_engine_source,
         emotion_engine_codex_source=args.emotion_engine_codex_source,
         emotion_style=args.emotion_style,
         emotion_engine_mode=args.emotion_engine_mode,
@@ -531,6 +630,27 @@ def _cmd_handoff_export(args):
 
 
 def _cmd_adopt(args):
+    if args.review:
+        if args.force:
+            raise PackwrightError("adopt review apply never overwrites destinations; --force is not supported")
+        if not args.target_dir:
+            raise PackwrightError("--target-dir is required with --review")
+        plan = plan_adoption_review(args.review, args.target_dir)
+        if args.dry_run:
+            _write_json_or_print(plan, args.out)
+            return 0 if plan["ready"] else 1
+        if not plan["ready"]:
+            _write_json_or_print(plan, args.out)
+            return 1
+        if not args.yes and not (sys.stdin.isatty() and _confirm_adoption_apply(plan)):
+            plan["status"] = "confirmation_required"
+            _write_json_or_print(plan, args.out)
+            return 2
+        result = apply_adoption_review(args.review, args.target_dir)
+        _write_json_or_print(result, args.out)
+        return 0
+    if args.yes:
+        raise PackwrightError("--yes is only accepted with --review")
     dry_run = args.dry_run or not args.target_dir
     result = adopt_existing(
         args.source_dir,
@@ -542,10 +662,16 @@ def _cmd_adopt(args):
     return 0
 
 
-def _cmd_refresh_emotion_engine_codex(args):
-    result = refresh_emotion_engine_codex(
+def _confirm_adoption_apply(plan):
+    answer = input(f"Apply {plan['approved']} reviewed adoption decisions? [y/N] ").strip().lower()
+    return answer in {"y", "yes"}
+
+
+def _cmd_refresh_emotion_engine(args):
+    source = args.emotion_engine_source or args.emotion_engine_codex_source
+    result = refresh_emotion_engine(
         args.target_dir,
-        emotion_engine_codex_source=args.emotion_engine_codex_source,
+        emotion_engine_source=source,
         emotion_style=args.emotion_style,
         emotion_engine_mode=args.emotion_engine_mode,
     )
@@ -563,6 +689,7 @@ def _cmd_doctor(args):
     result = doctor_target(
         target_dir,
         fix=args.fix,
+        emotion_engine_source=args.emotion_engine_source,
         emotion_engine_codex_source=args.emotion_engine_codex_source,
         emotion_style=args.emotion_style,
         emotion_engine_mode=args.emotion_engine_mode,
@@ -580,6 +707,152 @@ def _cmd_draft_character(args):
     return 0
 
 
+def _cmd_presets(args):
+    if args.preset:
+        result = starter_character_preset(args.preset)
+    else:
+        result = {
+            "kind": "StarterCharacterPresetCatalog",
+            "presets": [
+                starter_character_preset(name)
+                for name in starter_character_preset_names()
+            ],
+        }
+    _write_json_or_print(result, args.out)
+    return 0
+
+
+def _cmd_new(args):
+    selected = sum(bool(item) for item in (args.intake, args.template, args.interactive))
+    if selected != 1:
+        raise PackwrightError("new requires exactly one confirmed intake path, --template, or --interactive")
+    if args.template:
+        if not args.name:
+            raise PackwrightError("starter presets are nameless; provide the character name with --name")
+        if not args.accept_preset:
+            raise PackwrightError(
+                "one-shot preset creation requires --accept-preset after reviewing `packwright presets <name>`"
+            )
+        intake = starter_character_intake(
+            args.template,
+            name=args.name,
+            user_name=args.user_name,
+            slug=args.slug,
+            locale=args.locale,
+        )
+        creation_mode = "accepted_preset"
+    elif args.interactive:
+        if args.name or args.accept_preset:
+            raise PackwrightError("--name and --accept-preset are only accepted with --template")
+        print(
+            "warning: --interactive is a basic fallback and does not semantically normalize answers; "
+            "prefer `packwright draft-character` with an LLM-produced intake YAML.",
+            file=sys.stderr,
+        )
+        intake = _prompt_character_intake(args.user_name, slug=args.slug, locale=args.locale)
+        print("\nCanonical CharacterIntake preview:\n")
+        print(yaml.safe_dump(intake, sort_keys=False, allow_unicode=True), end="")
+        if not _confirm_character_intake():
+            print("Character creation cancelled. No files written.")
+            return 1
+        creation_mode = "interactive_confirmed"
+    else:
+        if args.name or args.user_name or args.slug or args.locale or args.accept_preset:
+            raise PackwrightError(
+                "name, user-name, slug, locale, and preset acceptance belong in the confirmed intake YAML"
+            )
+        if args.save_intake:
+            raise PackwrightError("--save-intake is only used with --template or --interactive")
+        intake = load_character_intake(args.intake)
+        creation_mode = "confirmed_intake"
+
+    slug = normalize_slug(intake["character"].get("slug") or intake["character"]["name"])
+    work_dir = Path(args.work_dir) if args.work_dir else Path("work") / slug
+    pack_dir = Path(args.pack_dir) if args.pack_dir else Path("pack") / f"{slug}-{args.adapter}"
+    target_dir = Path(args.target_dir)
+    _assert_fresh_new_paths(work_dir, pack_dir, target_dir, args.save_intake)
+
+    if args.save_intake:
+        _write_yaml(intake, Path(args.save_intake))
+    source = generate_character_source_from_data(intake, out_dir=work_dir)
+    mechanism_path = Path(source["mechanism"])
+    resolved = resolve_mechanism(load_mechanism(mechanism_path))
+    resolved_path = pack_dir / "resolved.json"
+    score_path = pack_dir / "score.json"
+    pack = _compile_pack(
+        args.adapter,
+        resolved,
+        {
+            "source_mechanism": str(mechanism_path),
+            "resolved_mechanism": str(resolved_path),
+            "checker_score": str(score_path),
+        },
+    )
+    score = score_mechanism(resolved, pack, adapter=args.adapter, threshold=args.threshold)
+    pack = embed_pack_metadata(pack, resolved, score)
+    outputs = dict(pack)
+    outputs["resolved.json"] = pack[SPEC_PATH]
+    outputs["score.json"] = json.dumps(score, indent=2, sort_keys=True) + "\n"
+    _write_pack(outputs, pack_dir)
+
+    report = {
+        "kind": "FreshAgentCreation",
+        "status": "built" if not score["passed"] else "ready_to_install",
+        "creation_mode": creation_mode,
+        "adapter": args.adapter,
+        "source": source,
+        "build": {
+            "adapter_pack": str(pack_dir),
+            "checker_score": str(score_path),
+            "passed": score["passed"],
+            "score": score["score"],
+        },
+    }
+    if not score["passed"]:
+        report["next_actions"] = [
+            {"action": "review_score", "path": str(score_path)},
+            {"action": "fix_source", "path": str(work_dir)},
+        ]
+        _write_json_or_print(report, args.out)
+        return 1
+
+    installed = install_pack(
+        pack_dir,
+        target_dir,
+        adapter=args.adapter,
+        include_emotion_engine=args.include_emotion_engine or None,
+        emotion_engine_source=args.emotion_engine_source,
+        emotion_style=args.emotion_style,
+        emotion_engine_mode=args.emotion_engine_mode,
+    )
+    report.update(
+        {
+            "status": "installed",
+            "install": installed,
+            "next_actions": [
+                {"action": "doctor", "command": f"packwright doctor {target_dir}"},
+                {"action": "score", "command": f"packwright score {target_dir}"},
+            ],
+        }
+    )
+    _write_json_or_print(report, args.out)
+    return 0
+
+
+def _assert_fresh_new_paths(work_dir, pack_dir, target_dir, save_intake):
+    named_paths = {"work": work_dir, "pack": pack_dir, "target": target_dir}
+    for label, path in named_paths.items():
+        if path.exists():
+            raise PackwrightError(f"new requires a fresh {label} path; already exists: {path}")
+    resolved = {label: path.resolve(strict=False) for label, path in named_paths.items()}
+    pairs = (("work", "pack"), ("work", "target"), ("pack", "target"))
+    for left, right in pairs:
+        if resolved[left] == resolved[right] or resolved[left] in resolved[right].parents or resolved[right] in resolved[left].parents:
+            raise PackwrightError(f"new work, pack, and target paths must not overlap: {left} and {right}")
+    if save_intake and Path(save_intake).exists():
+        raise PackwrightError(f"new will not overwrite an existing intake: {save_intake}")
+
+
 def _cmd_init_character(args):
     if args.template:
         if args.intake:
@@ -593,11 +866,36 @@ def _cmd_init_character(args):
             name=args.name,
             user_name=args.user_name,
             slug=args.slug,
+            locale=args.locale,
         )
         if args.save_intake:
             _write_yaml(intake, Path(args.save_intake))
         result = generate_character_source_from_data(intake, out_dir=args.out_dir, force=args.force)
         result["intake"] = args.save_intake or f"template:{args.template}"
+        result["creation_mode"] = "preset"
+        result["preset"] = args.template
+        result["review"] = {
+            "required_before": "build",
+            "message": "Review and confirm the preset-derived character summary before building an adapter pack.",
+            "editable_files": [
+                "mechanism.yaml",
+                "identity/persona.md",
+                "identity/relationship.md",
+                "identity/voice.md",
+                "operating/boundaries.md",
+            ],
+        }
+        result["next_actions"] = [
+            {
+                "action": "review_character",
+                "required": True,
+                "source": "character_summary",
+            },
+            {
+                "action": "build",
+                "run_after": "the user confirms or edits the preset-derived character",
+            },
+        ]
     elif args.interactive:
         if args.name:
             raise PackwrightError("--name is only accepted with --template; interactive mode asks for a name")
@@ -606,16 +904,25 @@ def _cmd_init_character(args):
             "prefer `packwright draft-character` with an LLM-produced intake YAML.",
             file=sys.stderr,
         )
-        intake = _prompt_character_intake(args.user_name, slug=args.slug)
+        intake = _prompt_character_intake(args.user_name, slug=args.slug, locale=args.locale)
+        print("\nCanonical CharacterIntake preview:\n")
+        print(yaml.safe_dump(intake, sort_keys=False, allow_unicode=True), end="")
+        if not _confirm_character_intake():
+            print("Character creation cancelled. No files written.")
+            return 1
         if args.save_intake:
             _write_yaml(intake, Path(args.save_intake))
         result = generate_character_source_from_data(intake, out_dir=args.out_dir, force=args.force)
         result["intake"] = args.save_intake or "interactive"
+        result["creation_mode"] = "interactive"
+        result["intake_confirmed"] = True
     else:
         if args.name:
             raise PackwrightError("--name is only accepted with --template; intake files already contain a name")
         if not args.intake:
             raise PackwrightError("init requires an intake path unless --template or --interactive is used")
+        if args.locale:
+            raise PackwrightError("put locale in the intake YAML when initializing from a file")
         result = generate_character_source(args.intake, out_dir=args.out_dir, force=args.force)
     _write_json_or_print(result, args.out)
     return 0
@@ -681,7 +988,7 @@ def _required_path_argument(positional, option, label, usage):
     return value
 
 
-def _prompt_character_intake(user_name, slug=None):
+def _prompt_character_intake(user_name, slug=None, locale=None):
     print("Packwright character intake")
     print("Basic fallback mode: fixed questions, no LLM normalization.")
     name = _prompt_required("1. What should the character be called?")
@@ -706,6 +1013,7 @@ def _prompt_character_intake(user_name, slug=None):
     return {
         "version": "0.1",
         "kind": "CharacterIntake",
+        "locale": normalize_locale(locale),
         "character": {
             "name": name,
             "slug": resolved_slug or normalize_slug(name),
@@ -817,13 +1125,10 @@ def _traits_from_voice(voice):
 
 
 def _compile_pack(adapter, resolved, references):
-    if adapter == "codex":
-        return compile_to_codex_pack(resolved, references=references)
-    if adapter == "claude-code":
-        return compile_to_claude_code_pack(resolved, references=references)
-    if adapter == "cursor":
-        return compile_to_cursor_pack(resolved, references=references)
-    raise PackwrightError(f"unsupported adapter: {adapter}")
+    try:
+        return compile_adapter_pack(adapter, resolved, references=references)
+    except ValueError as exc:
+        raise PackwrightError(str(exc)) from exc
 
 
 def _read_pack(pack_dir):
@@ -857,7 +1162,10 @@ def _load_pack_manifest(pack_dir):
 
 
 def _optional_installed_artifacts():
-    return EMOTION_ENGINE_CODEX_ARTIFACTS
+    artifacts = set()
+    for adapter in ADAPTER_CHOICES:
+        artifacts.update(emotion_engine_artifacts(adapter))
+    return tuple(sorted(artifacts))
 
 
 def _pack_resolved_parameters(pack):
@@ -949,6 +1257,14 @@ def _migration_conflict_summary(conflicts):
 def _confirm_migration():
     try:
         answer = input("Apply this migration? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def _confirm_character_intake():
+    try:
+        answer = input("Create source from this CharacterIntake? [y/N] ").strip().lower()
     except EOFError:
         return False
     return answer in {"y", "yes"}
