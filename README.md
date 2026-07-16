@@ -75,7 +75,7 @@ Already have an agent or workspace? Inventory it before importing anything:
 packwright adopt --from existing-agent --dry-run
 ```
 
-To create review materials, add `--target <target-dir>`. Packwright writes an `adoption-review.yaml` queue with every decision set to `pending`; it does not apply the queue or merge content automatically.
+To create review materials, add `--target <target-dir>`. Packwright writes an `adoption-review.yaml` queue with every decision set to `pending`. Review items individually, preview with `packwright adopt --review <queue> --target-dir <target> --dry-run`, then replace `--dry-run` with `--yes`. Approved safe copies and source registrations can be applied; memory merge and knowledge promotion remain manual.
 
 Without a coding agent, `packwright init --interactive` offers a fixed-question fallback. It shows the completed canonical YAML and waits for confirmation before writing.
 
@@ -91,12 +91,29 @@ Three presets cover common starting points. Customize responsibilities, capabili
 
 Inspect the exact defaults, choose a preset, and supply the character name yourself. Preset-based init returns the full character summary for review before build.
 
+If you already have a confirmed intake, `packwright new` can run init, build,
+and install together without discarding the intermediate source or pack:
+
+```bash
+packwright new work/nova-intake.yaml --adapter claude-code \
+  --work-dir work/nova --pack-dir pack/nova-claude \
+  --target project/nova-claude
+```
+
+It is fresh-path only: work, pack, and target must not already exist or overlap.
+Preset use requires an explicit `--accept-preset` assertion after review.
+
 ```bash
 packwright presets code
 packwright init --template code --name Nova --user-name Morgan -o work/nova
 packwright build work/nova --adapter claude-code -o pack/nova-claude
 packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
 ```
+
+Compiler-owned boilerplate supports English and Simplified Chinese. Put
+`locale: zh-CN` in a `CharacterIntake`, or pass `--locale zh-CN` with a preset.
+English is the deterministic fallback for missing or unsupported values;
+Packwright leaves user-authored prose unchanged.
 
 `Nova` is only an example of a user-chosen name. Edit the generated name, relationship, voice, and boundaries whenever you need.
 
@@ -176,7 +193,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Use Packwright with your coding agent](docs/USE_WITH_YOUR_AGENT.md)
 - [Character drafting](docs/CHARACTER_DRAFTING.md)
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
-- [Optional Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
+- [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [0.1.0 release notes](docs/releases/0.1.0.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

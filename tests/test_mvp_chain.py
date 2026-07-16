@@ -17,6 +17,7 @@ from packwright.checker import score_mechanism
 from packwright.core import (
     PackwrightValidationError,
     adopt_existing,
+    apply_adoption_review,
     apply_migration,
     create_handoff,
     doctor_target,
@@ -28,6 +29,8 @@ from packwright.core import (
     load_mechanism,
     migrate_target,
     plan_migration,
+    plan_adoption_review,
+    refresh_emotion_engine,
     refresh_emotion_engine_codex,
     resolve_mechanism,
     starter_character_intake,
@@ -41,6 +44,13 @@ from packwright.core.handoff import (
     HANDOFF_HELPER_PATH,
     HANDOFF_SCHEMA,
     HANDOFF_WRAPPER_PATH,
+)
+from packwright.core.adapter_layout import (
+    ADAPTER_LAYOUTS,
+    adapter_entry,
+    adapter_reference_root,
+    adapter_skill_root,
+    projected_skill_artifact,
 )
 from packwright.core.install import _update_existing_emotion_state
 from packwright.core.naming import character_user_name, slugify
@@ -73,6 +83,111 @@ class MvpChainTest(unittest.TestCase):
         self.assertEqual(resolved["run"]["objective"], "Build a Codex adapter pack.")
         self.assertEqual(resolved["run"]["scope"], "Keep other runtimes reserved.")
         self.assertEqual(resolved["resolved_parameters"]["task"], "Build a Codex adapter pack.")
+
+    def test_legacy_mechanism_normalizes_to_runtime_neutral_contract(self):
+        legacy = load_mechanism(MECHANISM_PATH)
+        self.assertEqual(str(legacy["version"]), "0.5")
+        self.assertIn("targets", legacy)
+        self.assertIn("outputs", legacy)
+        legacy["targets"]["supported"] = ["codex", "claude-code"]
+        legacy["emotion"]["projection"].pop("cursor", None)
+        legacy["outputs"].pop("cursor", None)
+
+        resolved = resolve_mechanism(legacy)
+
+        self.assertEqual(resolved["version"], "0.7")
+        for key in ("targets", "outputs", "projection", "implementation_scope", "reserved_specs"):
+            self.assertNotIn(key, resolved)
+        self.assertNotIn("projection", resolved["emotion"])
+        self.assertEqual(resolved["session_start"]["event"], "session_start")
+        self.assertNotIn("hook", resolved["session_start"])
+
+        for adapter, compiler in (
+            ("codex", compile_to_codex_pack),
+            ("claude-code", compile_to_claude_code_pack),
+            ("cursor", compile_to_cursor_pack),
+        ):
+            pack = compiler(resolved)
+            receipt = score_mechanism(resolved, pack, adapter=adapter)
+            self.assertTrue(receipt["passed"], receipt)
+
+    def test_new_character_contract_has_no_runtime_names_and_registry_extends_independently(self):
+        intake = {
+            "version": "0.1",
+            "kind": "CharacterIntake",
+            "character": {
+                "name": "Nova",
+                "slug": "nova",
+                "user_name": "Morgan",
+                "relationship": "work partner",
+                "role": "Morgan's practical work partner.",
+                "voice": "direct and steady",
+                "avoid": ["empty reassurance"],
+                "primary_work": ["plan work", "review decisions"],
+                "relationship_continuity": "warm_selective",
+                "traits": ["direct", "steady"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            generate_character_source_from_data(intake, source_dir)
+            mechanism_text = (source_dir / "mechanism.yaml").read_text(encoding="utf-8")
+            mechanism = load_mechanism(source_dir)
+
+            self.assertEqual(mechanism["version"], "0.7")
+            for runtime_name in ("codex", "claude-code", "cursor"):
+                self.assertNotIn(runtime_name, mechanism_text.lower())
+
+            ADAPTER_LAYOUTS["test-runtime"] = {
+                "display_name": "Test Runtime",
+                "entry": "AGENT.md",
+                "pack_kind": "TestAdapterPack",
+                "skill_root": ".test/skills",
+                "skill_artifact": "{slug}-{skill_id}/GUIDE.md",
+                "legacy_skill_roots": (),
+                "reference_root": ".test/<slug>/references",
+                "lifecycle": "project_guidance",
+                "capabilities": ("local-files", "skills"),
+                "guidance_kind": "skill",
+                "emotion_engine_runtime": "unsupported",
+            }
+            try:
+                self.assertEqual(adapter_entry("test-runtime", "nova"), "AGENT.md")
+                self.assertEqual(adapter_skill_root("test-runtime"), ".test/skills")
+                self.assertEqual(
+                    projected_skill_artifact("test-runtime", "nova", "research-brief"),
+                    ".test/skills/nova-research-brief/GUIDE.md",
+                )
+                self.assertEqual(adapter_reference_root("test-runtime", "nova"), ".test/nova/references")
+                validate_mechanism(mechanism)
+            finally:
+                ADAPTER_LAYOUTS.pop("test-runtime", None)
+
+    def test_migration_normalizes_embedded_legacy_spec_without_rewriting_source(self):
+        legacy = load_mechanism(MECHANISM_PATH)
+        resolved = resolve_mechanism(legacy)
+        compiled = compile_to_codex_pack(resolved)
+        receipt = score_mechanism(resolved, compiled, adapter="codex")
+        pack = embed_pack_metadata(compiled, legacy, receipt)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            source_target = root / "source-target"
+            destination = root / "destination"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, source_target)
+
+            result = migrate_target(source_target, destination, to_adapter="claude-code")
+
+            changes = {item["id"] for item in result["mechanism_changes"]}
+            self.assertIn("legacy_contract_normalized", changes)
+            self.assertTrue((destination / "CLAUDE.md").exists())
+            embedded = json.loads((destination / ".packwright" / "spec.json").read_text(encoding="utf-8"))
+            self.assertEqual(embedded["version"], "0.7")
+            self.assertNotIn("targets", embedded)
+            self.assertNotIn("outputs", embedded)
+            self.assertEqual(str(legacy["version"]), "0.5")
 
     def test_compile_to_codex_pack_has_architecture_layers(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
@@ -198,6 +313,106 @@ character:
             result = score_mechanism(resolved, pack, adapter="codex")
             self.assertTrue(result["passed"], result)
             self.assertEqual(result["score"], 100.0)
+
+    def test_en_and_zh_locales_build_score_install_and_migrate_for_every_adapter(self):
+        compilers = {
+            "codex": compile_to_codex_pack,
+            "claude-code": compile_to_claude_code_pack,
+            "cursor": compile_to_cursor_pack,
+        }
+        entry_paths = {
+            "codex": "AGENTS.md",
+            "claude-code": "CLAUDE.md",
+            "cursor": ".cursor/rules/lin.mdc",
+        }
+        locale_cases = {
+            "en": {
+                "name": "Lin",
+                "role": "Morgan's research partner with a 用户原文 marker.",
+                "voice_heading": "## Voice",
+                "on_demand": {"codex": "## Use When Needed", "claude-code": "## Load When Needed", "cursor": "## Use When Needed"},
+            },
+            "zh-CN": {
+                "name": "林",
+                "role": "Morgan 的研究搭档，保留 exact-user-prose 标记。",
+                "voice_heading": "## 表达方式",
+                "on_demand": {"codex": "## 按需使用", "claude-code": "## 按需加载", "cursor": "## 按需使用"},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for locale, case in locale_cases.items():
+                intake = {
+                    "version": "0.1",
+                    "kind": "CharacterIntake",
+                    "locale": locale,
+                    "character": {
+                        "name": case["name"],
+                        "slug": "lin",
+                        "user_name": "Morgan",
+                        "relationship": "research partner" if locale == "en" else "研究搭档",
+                        "role": case["role"],
+                        "voice": "direct, calm, and evidence-minded" if locale == "en" else "直接、沉稳、重证据",
+                        "avoid": ["empty reassurance" if locale == "en" else "空洞安慰"],
+                        "primary_work": ["research decisions" if locale == "en" else "研究决策"],
+                        "traits": ["steady" if locale == "en" else "稳健"],
+                        "relationship_continuity": "warm_selective",
+                    },
+                }
+                source_dir = root / locale / "source"
+                generated = generate_character_source_from_data(intake, source_dir)
+                self.assertEqual(generated["locale"], locale)
+                resolved = resolve_mechanism(load_mechanism(source_dir / "mechanism.yaml"))
+                self.assertEqual(resolved["metadata"]["locale"], locale)
+
+                installed = {}
+                for adapter, compiler in compilers.items():
+                    pack = compiler(resolved, references={"source_mechanism": str(source_dir / "mechanism.yaml")})
+                    entry = pack[entry_paths[adapter]]
+                    self.assertIn(case["voice_heading"], entry)
+                    self.assertIn(case["on_demand"][adapter], entry)
+                    self.assertIn(case["role"], entry)
+                    if locale == "zh-CN":
+                        self.assertNotIn("## Voice", entry)
+                        self.assertIn("## 操作步骤", pack[{"codex": ".agents/skills/lin-save-context/SKILL.md", "claude-code": ".claude/skills/lin-save-context/SKILL.md", "cursor": ".cursor/rules/lin-save-context.mdc"}[adapter]])
+                    manifest = json.loads(pack["manifest.json"])
+                    self.assertEqual(manifest["features"]["locale"]["resolved"], locale)
+                    score = score_mechanism(resolved, pack, adapter=adapter)
+                    self.assertEqual(score["score"], 100.0, (locale, adapter, score))
+
+                    pack_dir = root / locale / f"{adapter}-pack"
+                    target_dir = root / locale / f"{adapter}-target"
+                    _write_pack(pack, pack_dir)
+                    installed_result = install_pack(pack_dir, target_dir)
+                    self.assertEqual(installed_result["adapter"], adapter)
+                    self.assertTrue((target_dir / entry_paths[adapter]).is_file())
+                    installed[adapter] = target_dir
+
+                adapters = list(compilers)
+                for index, from_adapter in enumerate(adapters):
+                    to_adapter = adapters[(index + 1) % len(adapters)]
+                    target = root / locale / f"{from_adapter}-to-{to_adapter}"
+                    migrated = migrate_target(installed[from_adapter], target, to_adapter=to_adapter)
+                    self.assertTrue(migrated["ok"], (locale, from_adapter, to_adapter, migrated))
+                    self.assertEqual(migrated["score"]["planned"]["score"], 100.0)
+                    self.assertEqual(migrated["score"]["installed"]["score"], 100.0)
+                    target_manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+                    self.assertEqual(target_manifest["features"]["locale"]["resolved"], locale)
+
+            fallback = starter_character_intake(
+                "work",
+                name="Fallback",
+                user_name="Morgan",
+                slug="fallback",
+                locale="fr-FR",
+            )
+            self.assertEqual(fallback["locale"], "en")
+            fallback_dir = root / "fallback"
+            generate_character_source_from_data(fallback, fallback_dir)
+            fallback_pack = compile_to_codex_pack(resolve_mechanism(load_mechanism(fallback_dir / "mechanism.yaml")))
+            self.assertIn("## Voice", fallback_pack["AGENTS.md"])
+            self.assertNotIn("## 表达方式", fallback_pack["AGENTS.md"])
 
     def test_starter_presets_are_nameless_and_use_user_chosen_identity(self):
         self.assertEqual(starter_character_preset_names(), ["code", "companion", "work"])
@@ -330,7 +545,7 @@ character:
             out_dir = root / "lumen-work"
             pack_dir = root / "pack"
             target_dir = root / "target"
-            sidecar_source = root / "emotion-engine-codex"
+            sidecar_source = root / "emotion-engine"
             intake_path.write_text(
                 """version: "0.1"
 kind: CharacterIntake
@@ -383,10 +598,10 @@ character:
                 pack_dir,
                 target_dir,
                 adapter="codex",
-                include_emotion_engine_codex=True,
-                emotion_engine_codex_source=sidecar_source,
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
             )
-            state = json.loads((target_dir / ".emotion-engine" / "codex-state.json").read_text(encoding="utf-8"))
+            state = json.loads((target_dir / ".emotion-engine" / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["runtime_mode"], "always")
             self.assertEqual(state["volatility_profile"], "expressive")
             self.assertGreater(state["personality_baseline"]["pleasure"], 0.3)
@@ -428,7 +643,9 @@ character:
             self.assertIn("name: Alice", prompt)
             self.assertIn("slug: alice", prompt)
             self.assertIn("user_name: Morgan", prompt)
-            self.assertIn("关系连续性", prompt)
+            self.assertIn("Ask every question in the user's language", prompt)
+            self.assertNotIn("A. 只做事", prompt)
+            self.assertIn("locale: en", prompt)
             self.assertIn("relationship_continuity", prompt)
 
     def test_public_cli_contract_supports_core_commands_and_short_paths(self):
@@ -452,9 +669,10 @@ character:
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
         self.assertIn(
-            "{init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
+            "{new,init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
             help_result.stdout,
         )
+        self.assertIn("new", help_result.stdout)
         self.assertIn("draft-character", help_result.stdout)
         self.assertIn("presets", help_result.stdout)
         self.assertIn("adopt", help_result.stdout)
@@ -566,6 +784,125 @@ character:
             )
             self.assertEqual(scored.returncode, 0, scored.stderr + scored.stdout)
             self.assertEqual(json.loads(scored.stdout)["score"], 100.0)
+
+    def test_cli_new_preserves_intermediate_dirs_and_requires_explicit_preset_acceptance(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+
+        def run_cli(*args):
+            return subprocess.run(
+                [sys.executable, "-m", "packwright", *args],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            intake = root / "intake.yaml"
+            intake.write_text(
+                """version: "0.1"
+kind: CharacterIntake
+locale: zh-CN
+character:
+  name: 小北
+  slug: xiaobei
+  user_name: 老登
+  relationship: 工作搭档
+  role: 老登的工作搭档。
+  voice: 直接、务实、重证据
+  avoid: [空话]
+  primary_work: [规划任务, 检查结果]
+  traits: [稳健]
+  relationship_continuity: warm_selective
+""",
+                encoding="utf-8",
+            )
+            work = root / "work"
+            pack = root / "pack"
+            target = root / "target"
+            created = run_cli(
+                "new",
+                str(intake),
+                "--adapter",
+                "claude-code",
+                "--work-dir",
+                str(work),
+                "--pack-dir",
+                str(pack),
+                "--target",
+                str(target),
+            )
+            self.assertEqual(created.returncode, 0, created.stderr + created.stdout)
+            receipt = json.loads(created.stdout)
+            self.assertEqual(receipt["status"], "installed")
+            self.assertEqual(receipt["creation_mode"], "confirmed_intake")
+            self.assertEqual(receipt["build"]["score"], 100.0)
+            self.assertTrue((work / "mechanism.yaml").is_file())
+            self.assertTrue((pack / "CLAUDE.md").is_file())
+            self.assertTrue((pack / "score.json").is_file())
+            self.assertTrue((target / "CLAUDE.md").is_file())
+            self.assertIn("## 表达方式", (target / "CLAUDE.md").read_text(encoding="utf-8"))
+            self.assertTrue(doctor_target(target)["ok"])
+
+            refused_work = root / "refused-work"
+            refused_pack = root / "refused-pack"
+            refused_target = root / "refused-target"
+            refused = run_cli(
+                "new",
+                "--template",
+                "code",
+                "--name",
+                "Nova",
+                "--work-dir",
+                str(refused_work),
+                "--pack-dir",
+                str(refused_pack),
+                "--target",
+                str(refused_target),
+            )
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("--accept-preset", refused.stderr)
+            self.assertFalse(refused_work.exists())
+            self.assertFalse(refused_pack.exists())
+            self.assertFalse(refused_target.exists())
+
+            accepted = run_cli(
+                "new",
+                "--template",
+                "code",
+                "--name",
+                "Nova",
+                "--accept-preset",
+                "--work-dir",
+                str(refused_work),
+                "--pack-dir",
+                str(refused_pack),
+                "--target",
+                str(refused_target),
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
+            self.assertEqual(json.loads(accepted.stdout)["creation_mode"], "accepted_preset")
+            self.assertTrue((refused_target / "AGENTS.md").is_file())
+
+            repeated = run_cli(
+                "new",
+                "--template",
+                "code",
+                "--name",
+                "Nova",
+                "--accept-preset",
+                "--work-dir",
+                str(refused_work),
+                "--pack-dir",
+                str(root / "other-pack"),
+                "--target",
+                str(root / "other-target"),
+            )
+            self.assertEqual(repeated.returncode, 1)
+            self.assertIn("fresh work path", repeated.stderr)
 
     def test_installed_target_is_self_contained_after_source_pack_removal_and_relocation(self):
         env = os.environ.copy()
@@ -822,7 +1159,7 @@ character:
 
     def test_invalid_existing_emotion_state_emits_warning(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            state_file = Path(tmpdir) / "codex-state.json"
+            state_file = Path(tmpdir) / "state.json"
             state_file.write_text("{bad json", encoding="utf-8")
             with self.assertWarnsRegex(RuntimeWarning, "could not update existing Emotion Engine state"):
                 _update_existing_emotion_state(
@@ -969,6 +1306,26 @@ character:
             for rel_path, content in preserved.items():
                 self.assertEqual((target_dir / rel_path).read_text(encoding="utf-8"), content)
 
+    def test_install_infers_adapter_from_manifest_and_asserts_override(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        pack = compile_to_claude_code_pack(resolved)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            for rel_path, content in pack.items():
+                path = pack_dir / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+            result = install_pack(pack_dir, target_dir)
+            self.assertEqual(result["adapter"], "claude-code")
+            self.assertTrue((target_dir / "CLAUDE.md").exists())
+
+            with self.assertRaisesRegex(PackwrightValidationError, "pack adapter is 'claude-code'"):
+                install_pack(pack_dir, root / "wrong-target", adapter="codex")
+
     def test_install_rejects_destination_symlink_escape(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
@@ -994,7 +1351,7 @@ character:
         with self.assertRaises(PackwrightValidationError):
             resolve_mechanism(data)
 
-    def test_install_pack_can_explicitly_include_light_emotion_engine_codex_sidecar(self):
+    def test_install_pack_can_explicitly_include_light_emotion_engine_for_codex(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
 
@@ -1002,7 +1359,7 @@ character:
             root = Path(tmpdir)
             pack_dir = root / "pack"
             target_dir = root / "target"
-            sidecar_source = root / "emotion-engine-codex"
+            sidecar_source = root / "emotion-engine"
             _write_pack(pack, pack_dir)
             _write_fake_emotion_engine_sidecar(sidecar_source)
 
@@ -1010,34 +1367,37 @@ character:
                 pack_dir,
                 target_dir,
                 adapter="codex",
-                include_emotion_engine_codex=True,
-                emotion_engine_codex_source=sidecar_source,
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
                 emotion_style="warm through precision, calm, direct, not over-compliant",
             )
 
-            sidecar = result["sidecars"]["emotion-engine-codex"]
-            wrapper = target_dir / "scripts" / "codex_emotion.sh"
+            sidecar = result["sidecars"]["emotion-engine"]
+            wrapper = target_dir / "scripts" / "emotion_engine.sh"
             self.assertTrue(wrapper.exists())
             self.assertTrue(os.access(wrapper, os.X_OK))
             self.assertIn(
-                ".agents/skills/emotion-engine-codex/scripts/codex_emotion.sh",
+                ".packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py",
                 wrapper.read_text(encoding="utf-8"),
             )
-            self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine-codex" / "SKILL.md").exists())
+            self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine" / "SKILL.md").exists())
             self.assertTrue(
-                (target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_utils.py").exists()
+                (target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py").exists()
             )
             self.assertTrue(
-                (target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_mcp.py").exists()
+                (target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_mcp.py").exists()
             )
             self.assertTrue(
-                (target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "register_mcp_client.py").exists()
+                (target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "register_mcp_client.py").exists()
             )
-            self.assertTrue((target_dir / ".emotion-engine" / "codex-state.json").exists())
+            self.assertTrue((target_dir / ".emotion-engine" / "state.json").exists())
             self.assertTrue(sidecar["state_created"])
-            self.assertTrue(sidecar["agents_section_added"])
+            self.assertTrue(sidecar["entry_updated"])
+            self.assertEqual(sidecar["version"], "1.0.0")
+            self.assertEqual(sidecar["mcp_config"], ".codex/config.toml")
+            self.assertTrue((target_dir / ".codex" / "config.toml").is_file())
 
-            state = json.loads((target_dir / ".emotion-engine" / "codex-state.json").read_text(encoding="utf-8"))
+            state = json.loads((target_dir / ".emotion-engine" / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["_schema"], "emotion-engine-state/v2")
             self.assertEqual(state["runtime_mode"], "light")
             self.assertEqual(state["volatility_profile"], "steady")
@@ -1049,31 +1409,196 @@ character:
             target_manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(target_manifest["features"]["emotion_engine"]["installed"])
             self.assertEqual(target_manifest["features"]["emotion_engine"]["mode"], "light")
-            self.assertEqual(target_manifest["boundaries"]["emotion_engine_runtime"], "adapter_sidecar")
-            self.assertIn("scripts/codex_emotion.sh", target_manifest["artifacts"])
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/register_mcp_client.py", target_manifest["artifacts"])
+            self.assertEqual(target_manifest["boundaries"]["emotion_engine_runtime"], "project_mcp_sidecar")
+            self.assertIn("scripts/emotion_engine.sh", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/register_mcp_client.py", target_manifest["artifacts"])
 
             installed_pack = _read_pack_from_dir(target_dir)
 
             scored = score_mechanism(resolved, installed_pack, adapter="codex")
             self.assertTrue(scored["passed"], scored)
-            optional = {check["id"] for check in scored["checks"] if check["id"].startswith("emotion_engine_codex")}
+            optional = {
+                check["id"]
+                for check in scored["checks"]
+                if check["id"].startswith("emotion_engine_") and check["id"] != "emotion_engine_default_light"
+            }
             self.assertEqual(
                 optional,
                 {
-                    "emotion_engine_codex_skill_present",
-                    "emotion_engine_codex_state_present",
-                    "emotion_engine_codex_settle_trust_present",
-                    "emotion_engine_codex_record_policy_present",
-                    "emotion_engine_codex_mcp_present",
-                    "emotion_engine_codex_project_wrapper_present",
-                    "emotion_engine_codex_entry_internal",
-                    "emotion_engine_codex_manifest_consistent",
+                    "emotion_engine_skill_present",
+                    "emotion_engine_state_present",
+                    "emotion_engine_settle_trust_present",
+                    "emotion_engine_record_policy_present",
+                    "emotion_engine_mcp_present",
+                    "emotion_engine_project_wrappers_present",
+                    "emotion_engine_entry_internal",
+                    "emotion_engine_manifest_consistent",
                 },
             )
 
-    def test_install_pack_requires_source_for_explicit_emotion_engine_codex_sidecar(self):
+    def test_every_semantic_skill_projects_natively_without_adapter_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            shutil.copytree(MECHANISM_PATH.parent, source_dir)
+            mechanism_path = source_dir / "mechanism.yaml"
+            mechanism = yaml.safe_load(mechanism_path.read_text(encoding="utf-8"))
+            mechanism["skills"].append(
+                {
+                    "id": "research-brief",
+                    "path": "skills/research-brief/SKILL.md",
+                    "layer": "task_workflow",
+                    "trigger": "Use when a claim needs a compact evidence brief.",
+                    "capabilities": ["local-files", "mcp"],
+                }
+            )
+            mechanism_path.write_text(yaml.safe_dump(mechanism, sort_keys=False), encoding="utf-8")
+            skill_source = source_dir / "skills" / "research-brief" / "SKILL.md"
+            skill_source.parent.mkdir(parents=True, exist_ok=True)
+            skill_source.write_text(
+                "# Research Brief\n\n"
+                "Use the smallest relevant sources. Separate evidence, inference, and open questions.\n\n"
+                "## Procedure\n\n1. Collect evidence.\n2. Cite uncertainty.\n",
+                encoding="utf-8",
+            )
+            resolved = resolve_mechanism(load_mechanism(mechanism_path))
+
+            for adapter, compiler in (
+                ("codex", compile_to_codex_pack),
+                ("claude-code", compile_to_claude_code_pack),
+                ("cursor", compile_to_cursor_pack),
+            ):
+                with self.subTest(adapter=adapter):
+                    pack = compiler(resolved)
+                    path = projected_skill_artifact(adapter, "atlas", "research-brief")
+                    self.assertIn(path, pack)
+                    self.assertIn("# Research Brief", pack[path])
+                    self.assertIn(path, pack[adapter_entry(adapter, "atlas")])
+                    self.assertFalse(any("/source-skills/" in item for item in pack))
+                    manifest = json.loads(pack["manifest.json"])
+                    record = next(
+                        item
+                        for item in manifest["features"]["skills"]["items"]
+                        if item["id"] == "research-brief"
+                    )
+                    self.assertEqual(record["status"], "projected")
+                    self.assertEqual(record["required_capabilities"], ["local-files", "mcp"])
+                    receipt = score_mechanism(resolved, pack, adapter=adapter)
+                    self.assertTrue(receipt["passed"], receipt)
+
+    def test_skill_capabilities_degrade_explicitly_without_an_adapters_field(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            shutil.copytree(MECHANISM_PATH.parent, source_dir)
+            mechanism_path = source_dir / "mechanism.yaml"
+            mechanism = yaml.safe_load(mechanism_path.read_text(encoding="utf-8"))
+            mechanism["skills"].append(
+                {
+                    "id": "session-hook-audit",
+                    "path": "skills/session-hook-audit/SKILL.md",
+                    "layer": "task_workflow",
+                    "trigger": "Use when session-start hook behavior needs review.",
+                    "capabilities": ["hooks"],
+                }
+            )
+            mechanism_path.write_text(yaml.safe_dump(mechanism, sort_keys=False), encoding="utf-8")
+            skill_source = source_dir / "skills" / "session-hook-audit" / "SKILL.md"
+            skill_source.parent.mkdir(parents=True, exist_ok=True)
+            skill_source.write_text(
+                "# Session Hook Audit\n\nInspect declared lifecycle facts without inventing a hook.\n",
+                encoding="utf-8",
+            )
+            resolved = resolve_mechanism(load_mechanism(mechanism_path))
+
+            for adapter, compiler, expected_status in (
+                ("codex", compile_to_codex_pack, "unavailable_missing_capabilities"),
+                ("claude-code", compile_to_claude_code_pack, "projected"),
+                ("cursor", compile_to_cursor_pack, "unavailable_missing_capabilities"),
+            ):
+                with self.subTest(adapter=adapter):
+                    pack = compiler(resolved)
+                    path = projected_skill_artifact(adapter, "atlas", "session-hook-audit")
+                    manifest = json.loads(pack["manifest.json"])
+                    record = next(
+                        item
+                        for item in manifest["features"]["skills"]["items"]
+                        if item["id"] == "session-hook-audit"
+                    )
+                    self.assertEqual(record["status"], expected_status)
+                    self.assertEqual(path in pack, expected_status == "projected")
+                    self.assertEqual(path in pack[adapter_entry(adapter, "atlas")], expected_status == "projected")
+                    self.assertTrue(score_mechanism(resolved, pack, adapter=adapter)["passed"])
+
+            mechanism["skills"][-1]["adapters"] = ["claude-code"]
+            mechanism_path.write_text(yaml.safe_dump(mechanism, sort_keys=False), encoding="utf-8")
+            with self.assertRaises(PackwrightValidationError) as raised:
+                resolve_mechanism(load_mechanism(mechanism_path))
+            self.assertIn("adapters is not allowed", str(raised.exception))
+
+    def test_migration_distinguishes_unmanaged_root_skills_from_projected_skills(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            source_target = root / "source-target"
+            target = root / "cursor-target"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            install_pack(pack_dir, source_target)
+            unmanaged = source_target / "skills" / "local-helper" / "SKILL.md"
+            unmanaged.parent.mkdir(parents=True, exist_ok=True)
+            unmanaged.write_text("# Local Helper\n\nUser-managed and carried as-is.\n", encoding="utf-8")
+
+            receipt = migrate_target(source_target, target, to_adapter="cursor")
+
+            self.assertIn("skills", receipt["portable_state"])
+            self.assertEqual(receipt["unmanaged_skills"], ["skills/local-helper/SKILL.md"])
+            carried = next(
+                item
+                for item in receipt["changes"]["carried"]
+                if item["path"] == "skills/local-helper/SKILL.md"
+            )
+            self.assertIn("unmanaged root skill", carried["reason"])
+            self.assertEqual((target / "skills" / "local-helper" / "SKILL.md").read_text(encoding="utf-8"), unmanaged.read_text(encoding="utf-8"))
+            self.assertTrue((target / ".cursor" / "rules" / "atlas-save-context.mdc").is_file())
+
+    def test_doctor_repairs_a_drifted_managed_multi_skill_projection(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_dir = root / "source"
+            shutil.copytree(MECHANISM_PATH.parent, source_dir)
+            mechanism_path = source_dir / "mechanism.yaml"
+            mechanism = yaml.safe_load(mechanism_path.read_text(encoding="utf-8"))
+            mechanism["skills"].append(
+                {
+                    "id": "decision-review",
+                    "path": "skills/decision-review/SKILL.md",
+                    "layer": "task_workflow",
+                    "trigger": "Use when a decision needs assumptions and tradeoffs reviewed.",
+                }
+            )
+            mechanism_path.write_text(yaml.safe_dump(mechanism, sort_keys=False), encoding="utf-8")
+            skill_source = source_dir / "skills" / "decision-review" / "SKILL.md"
+            skill_source.parent.mkdir(parents=True, exist_ok=True)
+            skill_source.write_text("# Decision Review\n\nCheck assumptions, tradeoffs, and reversibility.\n", encoding="utf-8")
+            resolved = resolve_mechanism(load_mechanism(mechanism_path))
+            pack = compile_to_codex_pack(resolved, references={"source_mechanism": str(mechanism_path)})
+            pack = embed_pack_metadata(pack, resolved, score_mechanism(resolved, pack, adapter="codex"))
+            pack_dir = root / "pack"
+            target = root / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+
+            projected = target / ".agents" / "skills" / "atlas-decision-review" / "SKILL.md"
+            expected = projected.read_text(encoding="utf-8")
+            projected.write_text("# drift\n", encoding="utf-8")
+            diagnosed = doctor_target(target)
+            self.assertIn("managed_artifact_drift", {issue["id"] for issue in diagnosed["issues"]})
+
+            fixed = doctor_target(target, fix=True)
+            self.assertTrue(fixed["ok"], fixed)
+            self.assertEqual(projected.read_text(encoding="utf-8"), expected)
+
+    def test_install_pack_requires_source_for_explicit_emotion_engine(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
 
@@ -1088,9 +1613,206 @@ character:
                     pack_dir,
                     target_dir,
                     adapter="codex",
-                    include_emotion_engine_codex=True,
+                    include_emotion_engine=True,
                 )
-            self.assertIn("PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR", str(raised.exception))
+            self.assertIn("PACKWRIGHT_EMOTION_ENGINE_DIR", str(raised.exception))
+
+    def test_emotion_engine_installs_for_every_adapter_and_preserves_config_and_legacy_state(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        compilers = {
+            "codex": compile_to_codex_pack,
+            "claude-code": compile_to_claude_code_pack,
+            "cursor": compile_to_cursor_pack,
+        }
+        skill_paths = {
+            "codex": ".agents/skills/emotion-engine/SKILL.md",
+            "claude-code": ".claude/skills/emotion-engine/SKILL.md",
+            "cursor": ".cursor/rules/emotion-engine.mdc",
+        }
+        config_paths = {
+            "codex": ".codex/config.toml",
+            "claude-code": ".mcp.json",
+            "cursor": ".cursor/mcp.json",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "emotion-engine"
+            _write_fake_emotion_engine_sidecar(source)
+            legacy_state = b'{"_schema":"emotion-engine-state/v2","session_count":9}\n'
+
+            for adapter, compiler in compilers.items():
+                with self.subTest(adapter=adapter):
+                    pack_dir = root / f"{adapter}-pack"
+                    target_dir = root / f"{adapter}-target"
+                    _write_pack(compiler(resolved), pack_dir)
+                    legacy_path = target_dir / ".emotion-engine" / "emotion-state.json"
+                    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+                    legacy_path.write_bytes(legacy_state)
+
+                    config_path = target_dir / config_paths[adapter]
+                    config_path.parent.mkdir(parents=True, exist_ok=True)
+                    if adapter == "codex":
+                        config_path.write_text(
+                            '[mcp_servers.keep]\ncommand = "keep"\n',
+                            encoding="utf-8",
+                        )
+                    else:
+                        config_path.write_text(
+                            json.dumps({"mcpServers": {"keep": {"command": "keep"}}}) + "\n",
+                            encoding="utf-8",
+                        )
+
+                    result = install_pack(
+                        pack_dir,
+                        target_dir,
+                        include_emotion_engine=True,
+                        emotion_engine_source=source,
+                    )
+
+                    self.assertEqual(result["adapter"], adapter)
+                    self.assertTrue((target_dir / skill_paths[adapter]).is_file())
+                    self.assertEqual((target_dir / ".emotion-engine" / "state.json").read_bytes(), legacy_state)
+                    self.assertEqual(legacy_path.read_bytes(), legacy_state)
+                    config_text = config_path.read_text(encoding="utf-8")
+                    self.assertIn("keep", config_text)
+                    self.assertIn("emotion-engine", config_text)
+                    self.assertTrue((target_dir / "scripts" / "emotion_engine.sh").is_file())
+                    self.assertTrue((target_dir / "scripts" / "emotion_engine_mcp.sh").is_file())
+
+                    shell_status = subprocess.run(
+                        [str(target_dir / "scripts" / "emotion_engine.sh"), "status"],
+                        cwd=str(target_dir),
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(shell_status.returncode, 0, shell_status.stderr)
+                    self.assertEqual(json.loads(shell_status.stdout)["command"], "status")
+                    mcp_status = subprocess.run(
+                        ["sh", str(target_dir / "scripts" / "emotion_engine_mcp.sh")],
+                        cwd=str(target_dir),
+                        input='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n',
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(mcp_status.returncode, 0, mcp_status.stderr)
+                    self.assertEqual(
+                        json.loads(mcp_status.stdout)["result"]["serverInfo"]["version"],
+                        "1.0.0",
+                    )
+
+                    installed_pack = _read_pack_from_dir(target_dir)
+                    scored = score_mechanism(resolved, installed_pack, adapter=adapter)
+                    self.assertTrue(scored["passed"], scored)
+                    diagnosed = doctor_target(target_dir)
+                    self.assertTrue(diagnosed["ok"], diagnosed)
+
+    def test_emotion_engine_refuses_ambiguous_live_state_before_writing_target(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            first = target_dir / ".emotion-engine" / "codex-state.json"
+            second = target_dir / ".emotion-engine" / "emotion-state.json"
+            first.parent.mkdir(parents=True, exist_ok=True)
+            first.write_text('{"_schema":"emotion-engine-state/v2","session_count":1}\n', encoding="utf-8")
+            second.write_text('{"_schema":"emotion-engine-state/v2","session_count":2}\n', encoding="utf-8")
+
+            with self.assertRaises(PackwrightValidationError) as raised:
+                install_pack(
+                    pack_dir,
+                    target_dir,
+                    include_emotion_engine=True,
+                    emotion_engine_source=source,
+                )
+
+            self.assertIn("multiple Emotion Engine state candidates", str(raised.exception))
+            self.assertFalse((target_dir / "AGENTS.md").exists())
+
+    def test_force_upgrade_never_removes_a_legacy_emotion_state_artifact(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(pack_dir, target_dir)
+
+            legacy_path = target_dir / ".emotion-engine" / "codex-state.json"
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_state = b'{"_schema":"emotion-engine-state/v2","session_count":23}\n'
+            legacy_path.write_bytes(legacy_state)
+            manifest_path = target_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["artifacts"].append(".emotion-engine/codex-state.json")
+            manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            result = install_pack(
+                pack_dir,
+                target_dir,
+                force=True,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+
+            self.assertEqual(legacy_path.read_bytes(), legacy_state)
+            self.assertEqual((target_dir / ".emotion-engine" / "state.json").read_bytes(), legacy_state)
+            self.assertNotIn(".emotion-engine/codex-state.json", result.get("stale_removed", []))
+
+    def test_emotion_state_survives_codex_claude_cursor_codex_round_trip(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "emotion-engine"
+            source_pack = root / "codex-pack"
+            source_target = root / "codex-target"
+            _write_fake_emotion_engine_sidecar(source)
+            _write_pack(compile_to_codex_pack(resolved), source_pack)
+            install_pack(
+                source_pack,
+                source_target,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            state_path = source_target / ".emotion-engine" / "state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["session_count"] = 17
+            state["emotion_log"] = [{"event_type": "milestone", "situation": "preserve me"}]
+            state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            expected_state = state_path.read_bytes()
+
+            current_target = source_target
+            for step, (adapter, skill_path, config_path) in enumerate((
+                ("claude-code", ".claude/skills/emotion-engine/SKILL.md", ".mcp.json"),
+                ("cursor", ".cursor/rules/emotion-engine.mdc", ".cursor/mcp.json"),
+                ("codex", ".agents/skills/emotion-engine/SKILL.md", ".codex/config.toml"),
+            ), start=1):
+                with self.subTest(adapter=adapter):
+                    target = root / f"round-trip-{step}-{adapter}"
+                    receipt = migrate_target(
+                        current_target,
+                        target,
+                        to_adapter=adapter,
+                        emotion_engine_source=source,
+                    )
+                    self.assertTrue(receipt["ok"], receipt)
+                    self.assertEqual(receipt["emotion_engine_state"]["status"], "active")
+                    self.assertEqual((target / ".emotion-engine" / "state.json").read_bytes(), expected_state)
+                    self.assertTrue((target / skill_path).is_file())
+                    self.assertIn("emotion-engine", (target / config_path).read_text(encoding="utf-8"))
+                    manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
+                    self.assertTrue(manifest["features"]["emotion_engine"]["installed"])
+                    self.assertEqual(manifest["features"]["emotion_engine"]["adapter"], adapter)
+                    self.assertTrue(doctor_target(target)["ok"])
+                    current_target = target
 
     def test_migrate_target_to_cursor_preserves_portable_state_and_rewrites_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1103,7 +1825,7 @@ character:
             cursor_target_dir = root / "cursor-target"
             back_codex_pack_dir = root / "back-codex-pack"
             back_codex_target_dir = root / "back-codex-target"
-            sidecar_source = root / "emotion-engine-codex"
+            sidecar_source = root / "emotion-engine"
             intake_path.write_text(
                 """version: "0.1"
 kind: CharacterIntake
@@ -1131,8 +1853,8 @@ character:
                 source_pack_dir,
                 source_target_dir,
                 adapter="codex",
-                include_emotion_engine_codex=True,
-                emotion_engine_codex_source=sidecar_source,
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
             )
 
             (source_target_dir / "memory" / "projects").mkdir(parents=True, exist_ok=True)
@@ -1145,7 +1867,7 @@ character:
                 "live workspace draft\n",
                 encoding="utf-8",
             )
-            state_path = source_target_dir / ".emotion-engine" / "codex-state.json"
+            state_path = source_target_dir / ".emotion-engine" / "state.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state["session_count"] = 5
             state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1154,20 +1876,17 @@ character:
                 "## Runtime Sources\n\n"
                 "- Current Codex entry -> `AGENTS.md`\n"
                 "- Current save-context skill -> `.agents/skills/system-save-context/SKILL.md`\n"
-                "- Current Codex sidecar skill -> `.agents/skills/emotion-engine-codex/SKILL.md`\n"
-                "- Current Codex sidecar helper -> `.agents/skills/emotion-engine-codex/scripts/emotion_engine_utils.py`\n"
-                "- Project-local Emotion Engine runtime state -> `.emotion-engine/codex-state.json`\n"
+                "- Current Codex sidecar skill -> `.agents/skills/emotion-engine/SKILL.md`\n"
+                "- Current Emotion Engine helper -> `.packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py`\n"
+                "- Project-local Emotion Engine runtime state -> `.emotion-engine/state.json`\n"
                 "- Emotion update policy reference -> `.codex/system/references/emotion/update-policy.yaml`\n",
                 encoding="utf-8",
             )
 
-            old_mechanism = yaml.safe_load(mechanism_path.read_text(encoding="utf-8"))
-            old_mechanism["identity"].pop("slug", None)
-            old_mechanism["metadata"].pop("slug", None)
-            old_mechanism["targets"]["supported"] = ["codex", "claude-code"]
-            old_mechanism["emotion"]["projection"].pop("cursor", None)
-            old_mechanism["outputs"].pop("cursor", None)
-            mechanism_path.write_text(yaml.safe_dump(old_mechanism, sort_keys=False, allow_unicode=True), encoding="utf-8")
+            mechanism = yaml.safe_load(mechanism_path.read_text(encoding="utf-8"))
+            mechanism["identity"].pop("slug", None)
+            mechanism["metadata"].pop("slug", None)
+            mechanism_path.write_text(yaml.safe_dump(mechanism, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
             result = migrate_target(
                 source_target_dir,
@@ -1185,15 +1904,15 @@ character:
             self.assertIn("knowledge", result["portable_state"])
             self.assertIn("sources", result["portable_state"])
             self.assertIn("memory/index.md", result["memory_projection"])
-            self.assertIn(".emotion-engine/codex-state.json", result["state_snapshots"])
-            self.assertIn("outputs_added", {change["id"] for change in result["mechanism_changes"]})
-            self.assertIn("codex_runtime_sidecar_excluded", {item["id"] for item in result["runtime_exclusions"]})
+            self.assertIn(".emotion-engine/state.json", result["state_snapshots"])
+            self.assertNotIn("outputs_added", {change["id"] for change in result["mechanism_changes"]})
+            self.assertEqual(result["emotion_engine_state"]["status"], "snapshot_inert")
 
             self.assertTrue((cursor_target_dir / ".cursor" / "rules" / "system.mdc").exists())
             self.assertTrue((cursor_target_dir / ".cursor" / "rules" / "system-memory.mdc").exists())
             self.assertTrue((cursor_target_dir / ".cursor" / "rules" / "system-save-context.mdc").exists())
             self.assertFalse((cursor_target_dir / "AGENTS.md").exists())
-            self.assertFalse((cursor_target_dir / ".agents" / "skills" / "emotion-engine-codex").exists())
+            self.assertFalse((cursor_target_dir / ".agents" / "skills" / "emotion-engine").exists())
             self.assertIn(
                 "Live migrated project state",
                 (cursor_target_dir / "memory" / "projects" / "packwright.md").read_text(encoding="utf-8"),
@@ -1209,7 +1928,7 @@ character:
                 (cursor_target_dir / "memory" / "index.md").read_text(encoding="utf-8"),
             )
             migrated_state = json.loads(
-                (cursor_target_dir / ".emotion-engine" / "codex-state.json").read_text(encoding="utf-8")
+                (cursor_target_dir / ".emotion-engine" / "state.json").read_text(encoding="utf-8")
             )
             self.assertEqual(migrated_state["session_count"], 5)
             cursor_manifest = json.loads((cursor_target_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -1226,10 +1945,11 @@ character:
                 to_adapter="codex",
                 pack_dir=back_codex_pack_dir,
                 slug="system",
-                emotion_engine_codex_source=sidecar_source,
+                emotion_engine_source=sidecar_source,
             )
             self.assertEqual(back_result["from_adapter"], "cursor")
             self.assertEqual(back_result["to_adapter"], "codex")
+            self.assertEqual(back_result["emotion_engine_state"]["status"], "active")
             self.assertIn(
                 {
                     "id": "source_runtime_entry_replaced",
@@ -1240,7 +1960,7 @@ character:
             )
             self.assertTrue((back_codex_target_dir / "AGENTS.md").exists())
             self.assertTrue((back_codex_target_dir / ".agents" / "skills" / "system-save-context" / "SKILL.md").exists())
-            self.assertTrue((back_codex_target_dir / ".agents" / "skills" / "emotion-engine-codex" / "SKILL.md").exists())
+            self.assertTrue((back_codex_target_dir / ".agents" / "skills" / "emotion-engine" / "SKILL.md").exists())
             self.assertIn(
                 "default work rules -> `AGENTS.md`",
                 (back_codex_target_dir / "memory" / "index.md").read_text(encoding="utf-8"),
@@ -1253,7 +1973,7 @@ character:
             self.assertIn("Current Codex entry -> `AGENTS.md`", back_source_map)
             self.assertIn("Current save-context skill -> `.agents/skills/system-save-context/SKILL.md`", back_source_map)
             self.assertIn(
-                "Current Codex sidecar skill -> `.agents/skills/emotion-engine-codex/SKILL.md`",
+                "Current Emotion Engine guidance -> `.agents/skills/emotion-engine/SKILL.md`",
                 back_source_map,
             )
             self.assertIn(
@@ -1562,7 +2282,7 @@ character:
             root = Path(tmpdir)
             pack_dir = root / "pack"
             target_dir = root / "target"
-            sidecar_source = root / "emotion-engine-codex"
+            sidecar_source = root / "emotion-engine"
             _write_pack(pack, pack_dir)
             _write_fake_emotion_engine_sidecar(sidecar_source)
             install_pack(
@@ -1575,15 +2295,15 @@ character:
 
             manifest_path = target_dir / "manifest.json"
             target_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            target_manifest["artifacts"].remove("scripts/codex_emotion.sh")
+            target_manifest["artifacts"].remove("scripts/emotion_engine.sh")
             manifest_path.write_text(json.dumps(target_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
             scored = score_mechanism(resolved, _read_pack_from_dir(target_dir), adapter="codex")
             manifest_check = next(
-                check for check in scored["checks"] if check["id"] == "emotion_engine_codex_manifest_consistent"
+                check for check in scored["checks"] if check["id"] == "emotion_engine_manifest_consistent"
             )
             self.assertFalse(manifest_check["passed"])
-            self.assertIn("manifest artifacts missing scripts/codex_emotion.sh", manifest_check["message"])
+            self.assertIn("manifest artifacts missing scripts/emotion_engine.sh", manifest_check["message"])
 
             diagnosed = doctor_target(
                 target_dir,
@@ -1596,13 +2316,13 @@ character:
             }
             self.assertIn(
                 (
-                    "emotion_engine_codex_manifest_missing_artifact",
-                    "manifest artifacts missing scripts/codex_emotion.sh",
+                    "emotion_engine_manifest_missing_artifact",
+                    "manifest artifacts missing scripts/emotion_engine.sh",
                 ),
                 manifest_issues,
             )
 
-    def test_install_pack_preserves_existing_emotion_baseline_when_adding_new_fields(self):
+    def test_install_pack_preserves_existing_emotion_state_byte_for_byte(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
 
@@ -1610,8 +2330,8 @@ character:
             root = Path(tmpdir)
             pack_dir = root / "pack"
             target_dir = root / "target"
-            sidecar_source = root / "emotion-engine-codex"
-            state_file = target_dir / ".emotion-engine" / "codex-state.json"
+            sidecar_source = root / "emotion-engine"
+            state_file = target_dir / ".emotion-engine" / "state.json"
             pack_with_stale_agents = dict(pack)
             pack_with_stale_agents["AGENTS.md"] = (
                 pack["AGENTS.md"].rstrip()
@@ -1650,6 +2370,7 @@ character:
                 + "\n",
                 encoding="utf-8",
             )
+            state_before = state_file.read_bytes()
 
             install_pack(
                 pack_dir,
@@ -1661,16 +2382,15 @@ character:
             )
 
             state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state_file.read_bytes(), state_before)
             self.assertEqual(state["personality_baseline"], {"pleasure": 0.0, "arousal": 0.3, "dominance": 0.5})
             self.assertEqual(state["character_profile"]["description"], "old installed default")
-            self.assertEqual(state["volatility_profile"], "steady")
-            self.assertEqual(state["affective_pulse"]["intensity"], 0.0)
             agents = (target_dir / "AGENTS.md").read_text(encoding="utf-8")
-            self.assertIn("scripts/codex_emotion.sh", agents)
+            self.assertIn("scripts/emotion_engine.sh", agents)
             self.assertIn("low-value duplicate compaction", agents)
             self.assertNotIn("stale section", agents)
 
-    def test_refresh_emotion_engine_codex_updates_sidecar_without_resetting_state(self):
+    def test_refresh_emotion_engine_updates_runtime_without_resetting_state(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
 
@@ -1678,7 +2398,7 @@ character:
             root = Path(tmpdir)
             pack_dir = root / "pack"
             target_dir = root / "target"
-            sidecar_source = root / "emotion-engine-codex"
+            sidecar_source = root / "emotion-engine"
             _write_pack(pack, pack_dir)
             _write_fake_emotion_engine_sidecar(sidecar_source)
 
@@ -1686,21 +2406,22 @@ character:
                 pack_dir,
                 target_dir,
                 adapter="codex",
-                include_emotion_engine_codex=True,
-                emotion_engine_codex_source=sidecar_source,
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "codex-state.json"
+            state_file = target_dir / ".emotion-engine" / "state.json"
             state = json.loads(state_file.read_text(encoding="utf-8"))
             state["session_count"] = 7
             state["character_profile"]["description"] = "preserve this installed profile"
             state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-            target_helper = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_utils.py"
-            unmanaged_note = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "local-note.txt"
+            target_helper = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py"
+            unmanaged_note = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "local-note.txt"
             unmanaged_note.write_text("preserve local sidecar note\n", encoding="utf-8")
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
             source_helper_text = (
+                "STATE_SCHEMA = 'emotion-engine-state/v2'\n\n"
                 "def state_file_lock(path):\n    return path\n\n"
                 "def write_json_file_atomic(path, value):\n    return None\n\n"
                 "def recover_state_from_backup(path, error):\n    return {}\n\n"
@@ -1711,22 +2432,24 @@ character:
             )
             (sidecar_source / "scripts" / "emotion_engine_utils.py").write_text(source_helper_text, encoding="utf-8")
 
-            result = refresh_emotion_engine_codex(
+            state_before = state_file.read_bytes()
+            result = refresh_emotion_engine(
                 target_dir,
-                emotion_engine_codex_source=sidecar_source,
+                emotion_engine_source=sidecar_source,
             )
 
-            self.assertFalse(result["sidecars"]["emotion-engine-codex"]["state_created"])
+            self.assertFalse(result["sidecars"]["emotion-engine"]["state_created"])
             self.assertIn("state_file_lock", target_helper.read_text(encoding="utf-8"))
             self.assertEqual(unmanaged_note.read_text(encoding="utf-8"), "preserve local sidecar note\n")
             refreshed_state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertEqual(state_file.read_bytes(), state_before)
             self.assertEqual(refreshed_state["session_count"], 7)
             self.assertEqual(refreshed_state["character_profile"]["description"], "preserve this installed profile")
             target_manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(target_manifest["features"]["emotion_engine"]["installed"])
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/emotion_engine_utils.py", target_manifest["artifacts"])
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/register_mcp_client.py", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/register_mcp_client.py", target_manifest["artifacts"])
 
             installed_pack = _read_pack_from_dir(target_dir)
             scored = score_mechanism(resolved, installed_pack, adapter="codex")
@@ -1740,46 +2463,46 @@ character:
             root = Path(tmpdir)
             pack_dir = root / "pack"
             target_dir = root / "target"
-            sidecar_source = root / "emotion-engine-codex"
+            sidecar_source = root / "emotion-engine"
             _write_pack(pack, pack_dir)
             _write_fake_emotion_engine_sidecar(sidecar_source)
             install_pack(
                 pack_dir,
                 target_dir,
                 adapter="codex",
-                include_emotion_engine_codex=True,
-                emotion_engine_codex_source=sidecar_source,
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "codex-state.json"
+            state_file = target_dir / ".emotion-engine" / "state.json"
             state = json.loads(state_file.read_text(encoding="utf-8"))
             state["session_count"] = 11
             state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            target_helper = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_utils.py"
-            target_mcp = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_mcp.py"
-            target_register = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "register_mcp_client.py"
+            target_helper = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py"
+            target_mcp = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_mcp.py"
+            target_register = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "register_mcp_client.py"
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
             target_mcp.unlink()
             target_register.unlink()
 
             diagnosed = doctor_target(
                 target_dir,
-                emotion_engine_codex_source=sidecar_source,
+                emotion_engine_source=sidecar_source,
             )
 
             self.assertFalse(diagnosed["ok"])
-            self.assertIn("emotion_engine_codex_file_drift", {issue["id"] for issue in diagnosed["issues"]})
-            self.assertIn("emotion_engine_codex_missing_file", {issue["id"] for issue in diagnosed["issues"]})
+            self.assertIn("emotion_engine_file_drift", {issue["id"] for issue in diagnosed["issues"]})
+            self.assertIn("emotion_engine_missing_file", {issue["id"] for issue in diagnosed["issues"]})
 
             fixed = doctor_target(
                 target_dir,
                 fix=True,
-                emotion_engine_codex_source=sidecar_source,
+                emotion_engine_source=sidecar_source,
             )
 
             self.assertTrue(fixed["ok"], fixed)
             self.assertEqual(fixed["after_issues"], [])
-            self.assertEqual(fixed["fixes"][0]["id"], "emotion_engine_codex_refreshed")
+            self.assertEqual(fixed["fixes"][0]["id"], "emotion_engine_refreshed")
             self.assertNotIn("stale installed helper", target_helper.read_text(encoding="utf-8"))
             self.assertTrue(target_mcp.exists())
             self.assertTrue(target_register.exists())
@@ -2002,7 +2725,7 @@ character:
             self.assertTrue(review_path.exists())
             review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
             self.assertEqual(review["schema"], "packwright-adoption-review/v1")
-            self.assertFalse(review["policy"]["apply_supported"])
+            self.assertTrue(review["policy"]["apply_supported"])
             self.assertFalse(review["policy"]["automatic_memory_merge"])
             self.assertIn("manual_memory_merge", review["allowed_decisions"])
             self.assertEqual(len(review["items"]), 3)
@@ -2016,7 +2739,84 @@ character:
             self.assertIn("Existing instances are source material", report)
             self.assertIn("memory_candidate", report)
             self.assertIn("adoption-review.yaml", report)
-            self.assertIn("does not apply the queue automatically", report)
+            self.assertIn("pending items are never applied", report)
+
+    def test_adoption_review_apply_is_per_item_hash_checked_and_never_merges_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "old-agent"
+            target = root / "new-target"
+            files = {
+                ".cursor/rules/agent.mdc": b"old runtime rule\n",
+                "memory/todos.md": b"# Old todos\n\n- private old state\n",
+                "docs/playbook.md": b"# Playbook\n\nreviewed method\n",
+                "notes/source.txt": b"source evidence\n",
+                "helper/SKILL.md": b"# Legacy helper\n",
+                "notes/pending.txt": b"not reviewed yet\n",
+            }
+            for rel_path, content in files.items():
+                path = source / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+
+            adopted = adopt_existing(source, target_dir=target, dry_run=False)
+            review_path = Path(adopted["review_queue_yaml"])
+            review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+            choices = {
+                ".cursor/rules/agent.mdc": ("exclude", None, "runtime intent must be rewritten in the mechanism"),
+                "memory/todos.md": ("manual_memory_merge", "memory/todos.md", "merge only current confirmed todos by hand"),
+                "docs/playbook.md": ("copy_to_workspace", "workspace/shared/artifacts/adoption/playbook.md", "keep a review copy"),
+                "notes/source.txt": ("register_source", None, "preserve provenance without copying content"),
+                "helper/SKILL.md": ("carry_verbatim", "skills/legacy-helper/SKILL.md", "approved unmanaged legacy skill"),
+            }
+            for item in review["items"]:
+                if item["source"] not in choices:
+                    continue
+                item["decision"], item["destination"], item["rationale"] = choices[item["source"]]
+            review_path.write_text(yaml.safe_dump(review, sort_keys=False), encoding="utf-8")
+            (source / "notes" / "pending.txt").unlink()
+
+            plan = plan_adoption_review(review_path, target)
+            self.assertTrue(plan["ready"], plan)
+            self.assertTrue(plan["dry_run"])
+            self.assertEqual(plan["approved"], 5)
+            self.assertEqual(plan["counts"]["pending_unavailable"], 1)
+            self.assertFalse((target / "workspace/shared/artifacts/adoption/playbook.md").exists())
+            self.assertFalse((target / "skills/legacy-helper/SKILL.md").exists())
+            self.assertFalse((target / "memory/todos.md").exists())
+
+            receipt = apply_adoption_review(review_path, target)
+            self.assertEqual(receipt["status"], "applied")
+            self.assertEqual(
+                (target / "workspace/shared/artifacts/adoption/playbook.md").read_bytes(),
+                files["docs/playbook.md"],
+            )
+            self.assertEqual((target / "skills/legacy-helper/SKILL.md").read_bytes(), files["helper/SKILL.md"])
+            self.assertFalse((target / "memory/todos.md").exists())
+            self.assertFalse((target / "notes/pending.txt").exists())
+            local_sources = json.loads((target / "sources/local/manifest.json").read_text(encoding="utf-8"))
+            registered = list(local_sources["sources"].values())
+            self.assertEqual(len(registered), 1)
+            self.assertEqual(registered[0]["source_path"], "notes/source.txt")
+            self.assertEqual(registered[0]["sha256"], next(item["sha256"] for item in review["items"] if item["source"] == "notes/source.txt"))
+            self.assertTrue(Path(receipt["receipt"]).is_file())
+
+            repeated = apply_adoption_review(review_path, target)
+            self.assertEqual(repeated["counts"]["already_present"], 2)
+            self.assertFalse((target / "memory/todos.md").exists())
+
+            (source / "docs/playbook.md").write_text("changed after review\n", encoding="utf-8")
+            stale = plan_adoption_review(review_path, target)
+            self.assertFalse(stale["ready"])
+            self.assertTrue(any("SHA-256 changed" in item["message"] for item in stale["conflicts"]))
+
+            review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+            helper = next(item for item in review["items"] if item["source"] == "helper/SKILL.md")
+            helper["destination"] = "../escape.md"
+            review_path.write_text(yaml.safe_dump(review, sort_keys=False), encoding="utf-8")
+            unsafe = plan_adoption_review(review_path, target)
+            self.assertFalse(unsafe["ready"])
+            self.assertTrue(any("destination must stay" in item["message"] for item in unsafe["conflicts"]))
 
     def test_cli_run_writes_cursor_pack(self):
         env = os.environ.copy()
@@ -2145,7 +2945,7 @@ character:
         with tempfile.TemporaryDirectory() as tmpdir:
             pack_dir = Path(tmpdir) / "pack"
             target_dir = Path(tmpdir) / "codex-project"
-            sidecar_source = Path(tmpdir) / "emotion-engine-codex"
+            sidecar_source = Path(tmpdir) / "emotion-engine"
             _write_fake_emotion_engine_sidecar(sidecar_source)
 
             run_completed = subprocess.run(
@@ -2174,14 +2974,12 @@ character:
                     "-m",
                     "packwright",
                     "install",
-                    "--adapter",
-                    "codex",
                     "--pack-dir",
                     str(pack_dir),
                     "--target-dir",
                     str(target_dir),
-                    "--include-emotion-engine-codex",
-                    "--emotion-engine-codex-source",
+                    "--include-emotion-engine",
+                    "--emotion-engine-source",
                     str(sidecar_source),
                 ],
                 cwd=str(PROJECT_ROOT),
@@ -2195,15 +2993,15 @@ character:
             self.assertEqual(manifest["target_dir"], str(target_dir))
             self.assertTrue((target_dir / "AGENTS.md").exists())
             self.assertTrue((target_dir / ".codex" / "atlas" / "references" / "mechanism" / "session-guards.yaml").exists())
-            self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine-codex" / "SKILL.md").exists())
-            self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_mcp.py").exists())
-            self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "register_mcp_client.py").exists())
-            self.assertTrue((target_dir / ".emotion-engine" / "codex-state.json").exists())
+            self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine" / "SKILL.md").exists())
+            self.assertTrue((target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_mcp.py").exists())
+            self.assertTrue((target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "register_mcp_client.py").exists())
+            self.assertTrue((target_dir / ".emotion-engine" / "state.json").exists())
             target_manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(target_manifest["features"]["emotion_engine"]["installed"])
             self.assertEqual(target_manifest["features"]["emotion_engine"]["mode"], "light")
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
-            self.assertIn(".agents/skills/emotion-engine-codex/scripts/register_mcp_client.py", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
+            self.assertIn(".packwright/runtime/emotion-engine/scripts/register_mcp_client.py", target_manifest["artifacts"])
 
             refused = subprocess.run(
                 [
@@ -2227,9 +3025,10 @@ character:
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("would be overwritten", refused.stderr)
 
-            target_helper = target_dir / ".agents" / "skills" / "emotion-engine-codex" / "scripts" / "emotion_engine_utils.py"
+            target_helper = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py"
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
             (sidecar_source / "scripts" / "emotion_engine_utils.py").write_text(
+                "STATE_SCHEMA = 'emotion-engine-state/v2'\n\n"
                 "def state_file_lock(path):\n    return path\n\n"
                 "def settle_trust(state):\n    return state, {}\n\n"
                 "def parse_record_policy_args(args):\n    return {}\n\n"
@@ -2242,10 +3041,10 @@ character:
                     sys.executable,
                     "-m",
                     "packwright",
-                    "refresh-emotion-engine-codex",
+                    "refresh-emotion-engine",
                     "--target-dir",
                     str(target_dir),
-                    "--emotion-engine-codex-source",
+                    "--emotion-engine-source",
                     str(sidecar_source),
                 ],
                 cwd=str(PROJECT_ROOT),
@@ -2268,7 +3067,7 @@ character:
                     "doctor",
                     "--target-dir",
                     str(target_dir),
-                    "--emotion-engine-codex-source",
+                    "--emotion-engine-source",
                     str(sidecar_source),
                 ],
                 cwd=str(PROJECT_ROOT),
@@ -2289,7 +3088,7 @@ character:
                     "doctor",
                     "--target-dir",
                     str(target_dir),
-                    "--emotion-engine-codex-source",
+                    "--emotion-engine-source",
                     str(sidecar_source),
                     "--fix",
                 ],
@@ -2444,6 +3243,84 @@ character:
             self.assertTrue((target / "knowledge" / "index.md").exists())
             self.assertFalse((target / "memory" / "todos.md").exists())
 
+            review_path = target / "workspace/shared/artifacts/migrations/adoption-review.yaml"
+            review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+            for item in review["items"]:
+                if item["source"] == ".cursor/rules/agent.mdc":
+                    item.update(decision="exclude", rationale="rewrite runtime intent manually")
+                elif item["source"] == "memory/todos.md":
+                    item.update(
+                        decision="manual_memory_merge",
+                        destination="memory/todos.md",
+                        rationale="merge only confirmed current todos by hand",
+                    )
+            review_path.write_text(yaml.safe_dump(review, sort_keys=False), encoding="utf-8")
+
+            preview = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "packwright",
+                    "adopt",
+                    "--review",
+                    str(review_path),
+                    "--target-dir",
+                    str(target),
+                    "--dry-run",
+                ],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(preview.returncode, 0, preview.stderr + preview.stdout)
+            self.assertTrue(json.loads(preview.stdout)["ready"])
+            self.assertFalse((target / "workspace/shared/artifacts/migrations/adoption-apply-receipt.json").exists())
+
+            unconfirmed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "packwright",
+                    "adopt",
+                    "--review",
+                    str(review_path),
+                    "--target-dir",
+                    str(target),
+                ],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(unconfirmed.returncode, 2, unconfirmed.stderr + unconfirmed.stdout)
+            self.assertEqual(json.loads(unconfirmed.stdout)["status"], "confirmation_required")
+
+            confirmed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "packwright",
+                    "adopt",
+                    "--review",
+                    str(review_path),
+                    "--target-dir",
+                    str(target),
+                    "--yes",
+                ],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(confirmed.returncode, 0, confirmed.stderr + confirmed.stdout)
+            self.assertEqual(json.loads(confirmed.stdout)["status"], "applied")
+            self.assertTrue((target / "workspace/shared/artifacts/migrations/adoption-apply-receipt.json").is_file())
+            self.assertFalse((target / "memory/todos.md").exists())
+
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
@@ -2538,11 +3415,30 @@ def _write_fake_emotion_engine_sidecar(source_dir):
     )
     (source_dir / "scripts" / "pulse_demo.py").write_text("# demo\n", encoding="utf-8")
     (source_dir / "scripts" / "emotion_engine_utils.py").write_text(
-        "def settle_trust(state):\n    return state, {}\n\ndef parse_record_policy_args(args):\n    return {}\n\ndef record_policy(state, message, mode=None, contexts=None):\n    return {\"decision\": \"respond_only\", \"reply_bias\": [], \"reason\": \"generic_praise_habituated\"}\n",
+        "import json\n"
+        "import sys\n\n"
+        "STATE_SCHEMA = 'emotion-engine-state/v2'\n\n"
+        "def settle_trust(state):\n    return state, {}\n\n"
+        "def parse_record_policy_args(args):\n    return {}\n\n"
+        "def record_policy(state, message, mode=None, contexts=None):\n"
+        "    return {\"decision\": \"respond_only\", \"reply_bias\": [], \"reason\": \"generic_praise_habituated\"}\n\n"
+        "if __name__ == '__main__':\n"
+        "    print(json.dumps({\"ok\": True, \"command\": sys.argv[1], \"state_file\": sys.argv[2]}))\n",
         encoding="utf-8",
     )
     (source_dir / "scripts" / "emotion_engine_mcp.py").write_text(
-        "#!/usr/bin/env python3\n# tools/list exposes emotion_engine_record_policy and no Packwright repair tools.\n",
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import sys\n"
+        "SERVER_VERSION = \"1.0.0\"\n"
+        "# tools/list exposes emotion_engine_record_policy and no Packwright repair tools.\n"
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request.get('method') == 'initialize':\n"
+        "        result = {\"protocolVersion\": \"2024-11-05\", \"serverInfo\": {\"name\": \"emotion-engine\", \"version\": SERVER_VERSION}, \"capabilities\": {\"tools\": {}}}\n"
+        "    else:\n"
+        "        result = {\"tools\": [{\"name\": \"emotion_engine_record_policy\"}]}\n"
+        "    print(json.dumps({\"jsonrpc\": \"2.0\", \"id\": request.get('id'), \"result\": result}), flush=True)\n",
         encoding="utf-8",
     )
     (source_dir / "scripts" / "register_mcp_client.py").write_text(

@@ -8,6 +8,7 @@ the default help screen.
 
 | Command | Purpose |
 |---|---|
+| `packwright new` | Create source, build a pack, and install a fresh target while preserving all three directories. |
 | `packwright init` | Create editable agent source from your intake or a nameless starter preset. |
 | `packwright draft-character` | Print the interviewer contract used by a coding agent to draft a custom intake. |
 | `packwright presets` | List or inspect the exact defaults for nameless starter presets. |
@@ -22,6 +23,22 @@ Check the installed version with `packwright --version`.
 
 ## Canonical syntax
 
+For a confirmed intake and fresh paths, the one-command form preserves the
+same source and pack artifacts as the three-command flow:
+
+```bash
+packwright new work/nova-intake.yaml \
+  --adapter claude-code \
+  --work-dir work/nova \
+  --pack-dir pack/nova-claude \
+  --target project/nova-claude
+```
+
+`new` never overwrites or nests its work, pack, and target directories. A
+preset can be used only with `--accept-preset`, which asserts that its exact
+defaults were already reviewed. Existing targets still use `migrate`, not
+`new`.
+
 ```bash
 packwright draft-character --user-name Morgan --prompt-out work/character-interviewer.md
 packwright init work/nova-intake.yaml -o work/nova
@@ -32,6 +49,9 @@ packwright init --interactive --user-name Morgan -o work/nova
 # Shortcut: choose a nameless capability preset, then supply the name yourself.
 packwright presets code
 packwright init --template code --name Nova --user-name Morgan -o work/nova
+
+# Simplified Chinese compiler boilerplate; unknown locale values fall back to English.
+packwright init --template work --name 小北 --slug xiaobei --user-name 老登 --locale zh-CN -o work/xiaobei
 
 packwright build work/nova --adapter claude-code -o pack/nova-claude
 packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
@@ -46,13 +66,33 @@ packwright adopt --from existing-agent --dry-run
 packwright adopt --from existing-agent --target project/nova
 ```
 
+`install` reads the adapter from the pack manifest. `--adapter` is optional and
+acts as an assertion: when supplied, it must match the manifest. Keeping it in
+an automated command is useful for making the expected runtime explicit.
+
 The three public starter presets are `code`, `work`, and `companion`. They contain capability, voice, boundary, memory, and continuity defaults, but no character name. Run `packwright presets` to list all exact defaults or `packwright presets <name>` to inspect one. `--name` is required with `--template`; the generated source remains fully editable.
 
 Preset-based `init` output includes the complete `character_summary`, the source files most relevant for editing it, and an explicit review step before `build`. Show that summary to the user instead of reporting only the generated file list.
 
 `init --interactive` is a deterministic terminal fallback, not an LLM interviewer. It prints the completed canonical `CharacterIntake` YAML and requires confirmation before writing the intake or source directory. Rejecting the preview writes nothing.
 
-`adopt --dry-run` only returns the inventory and review summary. With an explicit target, adopt writes `inventory.json`, a Markdown report, and `adoption-review.yaml` under `workspace/shared/artifacts/migrations/`. The `packwright-adoption-review/v1` queue records path, category, size, SHA-256, a `pending` decision, optional destination, and rationale for every candidate. Packwright 0.1 does not apply this queue or merge content automatically.
+For intake-file creation, put `locale: en` or `locale: zh-CN` at the document
+root. `--locale` applies to `--template` and `--interactive`. Locale changes
+only compiler-owned text; Packwright never translates user-authored prose.
+
+`adopt --dry-run` only returns the inventory and review summary. With an explicit target, adopt writes `inventory.json`, a Markdown report, and `adoption-review.yaml` under `workspace/shared/artifacts/migrations/`. The `packwright-adoption-review/v1` queue records path, category, size, SHA-256, a `pending` decision, optional destination, and rationale for every candidate.
+
+After reviewing individual items, preview the action plan and then apply it:
+
+```bash
+packwright adopt --review <adoption-review.yaml> --target-dir <target> --dry-run
+packwright adopt --review <adoption-review.yaml> --target-dir <target> --yes
+```
+
+Approved copies are limited to explicit `workspace/*` or unmanaged `skills/*`
+destinations, never overwrite different content, and are rechecked against the
+inventoried SHA-256. `manual_memory_merge` records the intended `memory/*`
+owner but never writes it; knowledge promotion also remains manual.
 
 `init` and `build` accept `-o` as the short form of `--out-dir`. `install`,
 `migrate`, and `doctor` accept `--target` as the short form of `--target-dir`.
@@ -75,8 +115,8 @@ machine's absolute source path.
 Portable state and live Emotion Engine state are intentionally excluded from
 managed hash repair.
 
-See [Emotion Engine sidecar](EMOTION_ENGINE.md) for the explicit Codex install,
-mode, refresh, and migration boundaries.
+See [Emotion Engine runtime](EMOTION_ENGINE.md) for the explicit multi-adapter
+install, MCP configuration, state-safety, refresh, and migration boundaries.
 
 ## Adapter layout contract
 
@@ -117,4 +157,5 @@ and `memory/source-map.md`; every actual rewrite is disclosed.
 
 The following commands remain callable but are not part of the default 0.1
 help surface: `init-character`, `run`, `migrate-target`, `validate`, `resolve`,
-`compile`, `handoff-export`, and `refresh-emotion-engine-codex`.
+`compile` and `handoff-export`. `refresh-emotion-engine-codex` remains a
+deprecated alias for the public `refresh-emotion-engine` command.

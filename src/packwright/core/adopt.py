@@ -6,11 +6,13 @@ from pathlib import Path
 import yaml
 
 from .errors import PackwrightValidationError
-from .knowledge_contract import knowledge_files
+from .knowledge_contract import empty_source_manifest, knowledge_files
+from .path_safety import resolve_destination_path, resolve_source_path, validate_relative_path
 
 
 MIGRATION_DIR = "workspace/shared/artifacts/migrations"
 ADOPTION_REVIEW_SCHEMA = "packwright-adoption-review/v1"
+ADOPTION_APPLY_SCHEMA = "packwright-adoption-apply/v1"
 ADOPTION_REVIEW_DECISIONS = (
     "pending",
     "exclude",
@@ -168,7 +170,7 @@ def _review_queue(source_dir, inventory):
             "all_items_require_review": True,
             "automatic_memory_merge": False,
             "automatic_knowledge_promotion": False,
-            "apply_supported": False,
+            "apply_supported": True,
         },
         "allowed_decisions": list(ADOPTION_REVIEW_DECISIONS),
         "items": [
@@ -184,6 +186,265 @@ def _review_queue(source_dir, inventory):
             for item in inventory
         ],
     }
+
+
+def plan_adoption_review(review_path, target_dir):
+    """Validate a reviewed adoption queue and return a zero-write action plan."""
+    review_path = Path(review_path)
+    target_dir = Path(target_dir)
+    review = _load_review(review_path)
+    if not target_dir.is_dir():
+        raise PackwrightValidationError([f"adoption target directory does not exist: {target_dir}"])
+    source_dir = Path(review.get("source_dir", ""))
+    if not source_dir.is_dir():
+        raise PackwrightValidationError([f"adoption source directory does not exist: {source_dir}"])
+
+    actions = []
+    conflicts = []
+    destination_sources = {}
+    items = review.get("items")
+    if not isinstance(items, list):
+        raise PackwrightValidationError(["adoption review items must be a list"])
+    for index, item in enumerate(items):
+        action, item_conflicts = _plan_review_item(
+            item,
+            index=index,
+            source_dir=source_dir,
+            target_dir=target_dir,
+        )
+        actions.append(action)
+        conflicts.extend(item_conflicts)
+        destination = action.get("destination")
+        if action.get("operation") == "copy" and destination:
+            previous = destination_sources.get(destination)
+            if previous and previous != action["sha256"]:
+                conflicts.append({
+                    "item": index,
+                    "source": action["source"],
+                    "destination": destination,
+                    "message": "multiple approved items select the same destination with different content",
+                })
+            destination_sources[destination] = action["sha256"]
+
+    counts = {}
+    for action in actions:
+        counts[action["status"]] = counts.get(action["status"], 0) + 1
+    approved = sum(action["decision"] != "pending" for action in actions)
+    if not approved:
+        conflicts.append({"item": None, "source": None, "message": "no review decisions have been approved"})
+    return {
+        "schema": ADOPTION_APPLY_SCHEMA,
+        "status": "planned" if not conflicts else "blocked",
+        "dry_run": True,
+        "ready": not conflicts,
+        "review": str(review_path),
+        "source_dir": str(source_dir),
+        "target_dir": str(target_dir),
+        "items": len(actions),
+        "approved": approved,
+        "counts": counts,
+        "actions": actions,
+        "conflicts": conflicts,
+        "policy": {
+            "pending_items_are_not_applied": True,
+            "memory_merge_is_never_automatic": True,
+            "knowledge_promotion_is_never_automatic": True,
+            "existing_destination_content_is_never_overwritten": True,
+        },
+    }
+
+
+def apply_adoption_review(review_path, target_dir):
+    """Apply only explicit, safe queue decisions and write a path-level receipt."""
+    plan = plan_adoption_review(review_path, target_dir)
+    if not plan["ready"]:
+        raise PackwrightValidationError([
+            "adoption review is not ready to apply",
+            *[conflict["message"] for conflict in plan["conflicts"]],
+        ])
+    source_dir = Path(plan["source_dir"])
+    target_dir = Path(plan["target_dir"])
+    applied = []
+    registrations = []
+    for action in plan["actions"]:
+        if action["operation"] == "copy" and action["status"] == "approved_copy":
+            source = resolve_source_path(source_dir, action["source"], "adoption source")
+            if _sha256(source) != action["sha256"]:
+                raise PackwrightValidationError([f"adoption source changed after review: {action['source']}"])
+            destination = resolve_destination_path(target_dir, action["destination"], "adoption destination")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+            applied.append({**action, "status": "copied"})
+        elif action["operation"] == "register_source":
+            registrations.append(action)
+            applied.append({**action, "status": "registered"})
+        else:
+            applied.append(action)
+    if registrations:
+        _apply_source_registrations(target_dir, source_dir, registrations)
+
+    receipt = {
+        **plan,
+        "status": "applied",
+        "dry_run": False,
+        "actions": applied,
+        "conflicts": [],
+    }
+    receipt_path = resolve_destination_path(
+        target_dir,
+        f"{MIGRATION_DIR}/adoption-apply-receipt.json",
+        "adoption receipt",
+    )
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt["receipt"] = str(receipt_path)
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return receipt
+
+
+def _load_review(review_path):
+    try:
+        review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise PackwrightValidationError([f"cannot read adoption review {review_path}: {exc}"])
+    except yaml.YAMLError as exc:
+        raise PackwrightValidationError([f"invalid adoption review YAML {review_path}: {exc}"])
+    if not isinstance(review, dict) or review.get("schema") != ADOPTION_REVIEW_SCHEMA:
+        raise PackwrightValidationError([f"adoption review schema must be {ADOPTION_REVIEW_SCHEMA}"])
+    return review
+
+
+def _plan_review_item(item, index, source_dir, target_dir):
+    conflicts = []
+    if not isinstance(item, dict):
+        return ({"item": index, "decision": None, "status": "invalid", "operation": "none"}, [{
+            "item": index, "source": None, "message": "review item must be a mapping"
+        }])
+    source_value = item.get("source")
+    decision = item.get("decision")
+    action = {
+        "item": index,
+        "source": source_value,
+        "category": item.get("category"),
+        "decision": decision,
+        "destination": item.get("destination"),
+        "sha256": item.get("sha256"),
+        "size": item.get("size"),
+        "rationale": item.get("rationale"),
+        "operation": "none",
+        "status": "pending" if decision == "pending" else "approved",
+    }
+    if decision not in ADOPTION_REVIEW_DECISIONS:
+        conflicts.append(_review_conflict(index, source_value, "decision is not allowed"))
+        action["status"] = "invalid"
+        return action, conflicts
+    if decision == "pending":
+        try:
+            source = resolve_source_path(source_dir, source_value, "pending adoption review source")
+            if action["sha256"] != _sha256(source) or action["size"] != source.stat().st_size:
+                action["status"] = "pending_changed"
+        except PackwrightValidationError:
+            action["status"] = "pending_unavailable"
+        return action, conflicts
+    if not isinstance(action["rationale"], str) or not action["rationale"].strip():
+        conflicts.append(_review_conflict(index, source_value, "approved decision requires a rationale"))
+    if decision == "exclude":
+        action["status"] = "excluded"
+        if action["destination"] is not None:
+            conflicts.append(_review_conflict(index, source_value, "exclude must not set a destination"))
+        return action, conflicts
+    try:
+        source = resolve_source_path(source_dir, source_value, "adoption review source")
+    except PackwrightValidationError as exc:
+        conflicts.extend(_review_conflict(index, source_value, issue) for issue in exc.issues)
+        action["status"] = "invalid"
+        return action, conflicts
+    actual_sha = _sha256(source)
+    if action["sha256"] != actual_sha or action["size"] != source.stat().st_size:
+        conflicts.append(_review_conflict(index, source_value, "source size or SHA-256 changed after inventory"))
+    if decision == "register_source":
+        action["operation"] = "register_source"
+        action["status"] = "approved_registration"
+        if action["destination"] is not None:
+            conflicts.append(_review_conflict(index, source_value, "register_source must not set a destination"))
+        return action, conflicts
+    if decision == "manual_memory_merge":
+        action["status"] = "manual_merge_required"
+        if action["category"] != "memory_candidate":
+            conflicts.append(_review_conflict(index, source_value, "manual_memory_merge is only valid for memory candidates"))
+        if not _destination_under(action["destination"], ("memory",)):
+            conflicts.append(_review_conflict(index, source_value, "manual_memory_merge must name the intended memory/* owner file"))
+        return action, conflicts
+
+    prefixes = ("workspace",) if decision == "copy_to_workspace" else ("workspace", "skills")
+    if not _destination_under(action["destination"], prefixes):
+        allowed = " or ".join(f"{prefix}/*" for prefix in prefixes)
+        conflicts.append(_review_conflict(index, source_value, f"{decision} destination must stay under {allowed}"))
+        action["status"] = "invalid"
+        return action, conflicts
+    try:
+        destination = resolve_destination_path(target_dir, action["destination"], "adoption destination")
+    except PackwrightValidationError as exc:
+        conflicts.extend(_review_conflict(index, source_value, issue) for issue in exc.issues)
+        action["status"] = "invalid"
+        return action, conflicts
+    action["operation"] = "copy"
+    if destination.exists():
+        if destination.is_file() and _sha256(destination) == actual_sha:
+            action["status"] = "already_present"
+        else:
+            action["status"] = "conflict"
+            conflicts.append(_review_conflict(index, source_value, "approved destination already exists with different content", action["destination"]))
+    else:
+        action["status"] = "approved_copy"
+    return action, conflicts
+
+
+def _destination_under(value, prefixes):
+    try:
+        path = validate_relative_path(value, "adoption destination")
+    except PackwrightValidationError:
+        return False
+    return bool(path.parts and path.parts[0] in prefixes and len(path.parts) > 1)
+
+
+def _review_conflict(index, source, message, destination=None):
+    result = {"item": index, "source": source, "message": message}
+    if destination is not None:
+        result["destination"] = destination
+    return result
+
+
+def _apply_source_registrations(target_dir, source_dir, registrations):
+    manifest_path = resolve_destination_path(
+        target_dir,
+        "sources/local/manifest.json",
+        "local source manifest",
+    )
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise PackwrightValidationError([f"invalid local source manifest: {exc}"])
+    else:
+        manifest = empty_source_manifest("local")
+    sources = manifest.setdefault("sources", {})
+    for action in registrations:
+        source_id = f"adopt-{action['sha256'][:12]}"
+        entry = {
+            "kind": "local_file",
+            "path": str((source_dir / action["source"]).resolve()),
+            "source_path": action["source"],
+            "sha256": action["sha256"],
+            "size": action["size"],
+            "rationale": action["rationale"],
+        }
+        existing = sources.get(source_id)
+        if existing is not None and existing != entry:
+            raise PackwrightValidationError([f"local source registration conflicts with existing entry: {source_id}"])
+        sources[source_id] = entry
+    manifest["updated"] = date.today().isoformat()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _sha256(path):
@@ -245,11 +506,11 @@ def _render_report(source_dir, inventory, categories):
             "## Next Steps",
             "",
             "1. Open `adoption-review.yaml` and choose a decision for each item.",
-            "2. Leave uncertain items as `pending`; this release does not apply the queue automatically.",
-            "3. Review runtime instructions and decide which intent belongs in a Packwright mechanism.",
-            "4. Promote only current, confirmed state into `memory/*` owner files.",
-            "5. Promote only stable reusable models into `knowledge/**/*.md` with source refs.",
-            "6. Keep original files registered as sources when provenance matters.",
+            "2. Leave uncertain items as `pending`; pending items are never applied.",
+            "3. Preview approved actions with `packwright adopt --review <queue> --target-dir <target> --dry-run`.",
+            "4. Apply reviewed safe-copy and source-registration decisions by replacing `--dry-run` with `--yes`.",
+            "5. `manual_memory_merge` records the intended owner file but never writes memory automatically.",
+            "6. Promote reusable knowledge manually after reviewing its content and provenance.",
         ]
     )
     return "\n".join(lines) + "\n"

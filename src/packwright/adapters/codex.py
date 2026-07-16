@@ -2,14 +2,22 @@ import json
 
 import yaml
 
-from packwright.core.emotion_engine_contract import (
-    EMOTION_ENGINE_AVAILABLE_RUNTIME,
-    EMOTION_ENGINE_MODES,
-    emotion_engine_feature,
+from packwright.core.adapter_layout import (
+    adapter_emotion_engine_runtime,
+    adapter_lifecycle,
+    adapter_pack_kind,
+    render_adapter_capabilities,
+    render_ownership_contract,
 )
-from packwright.core.errors import PackwrightValidationError
+from packwright.core.emotion_engine_contract import EMOTION_ENGINE_MODES, emotion_engine_feature
 from packwright.core.knowledge_contract import knowledge_feature, knowledge_files
+from packwright.core.locale import (
+    locale_feature,
+    localize_entry_markdown,
+    localize_save_context_markdown,
+)
 from packwright.core.memory_projection import project_memory_file
+from packwright.core.mechanism_contract import normalize_mechanism
 from packwright.core.naming import (
     character_mission,
     character_name,
@@ -21,6 +29,13 @@ from packwright.core.naming import (
     save_context_skill_path,
 )
 from packwright.core.path_safety import resolve_mechanism_file
+from packwright.core.skill_projection import (
+    projected_generic_skill_files,
+    render_skill_projection,
+    skill_projection_feature,
+    skill_projection_records,
+    skill_spec,
+)
 from packwright.core.validation import validate_mechanism
 from packwright.core.workspace_contract import workspace_feature, workspace_files
 
@@ -31,15 +46,22 @@ ADAPTER_NAME = "codex"
 def compile_to_codex_pack(mechanism, references=None):
     """Compile a resolved character mechanism into a Codex adapter pack."""
     validate_mechanism(mechanism)
-    if ADAPTER_NAME not in mechanism["targets"].get("supported", []):
-        raise PackwrightValidationError(["Codex adapter is not listed in targets.supported"])
+    mechanism = normalize_mechanism(mechanism)
+    validate_mechanism(mechanism)
 
     references = references or {}
     skill_path = save_context_skill_path(mechanism, ADAPTER_NAME)
+    save_context = skill_spec(mechanism, "save-context")
     pack = {
         "AGENTS.md": _render_agents_md(mechanism),
-        skill_path: _render_save_context_skill(mechanism, references),
+        skill_path: render_skill_projection(
+            mechanism,
+            ADAPTER_NAME,
+            save_context,
+            body=_render_save_context_skill(mechanism, references),
+        ),
     }
+    pack.update(projected_generic_skill_files(mechanism, ADAPTER_NAME))
     pack.update(_reference_files(mechanism))
     pack.update(_memory_skeleton_files(mechanism))
     pack.update(_knowledge_files())
@@ -54,6 +76,11 @@ def _render_agents_md(mechanism):
     user_name = character_user_name(mechanism)
     skill_path = save_context_skill_path(mechanism, ADAPTER_NAME)
     voice_summary = _sentence(character_voice_summary(mechanism))
+    extra_skill_lines = [
+        f"- Read `{record['path']}` when {skill_spec(mechanism, record['id'])['trigger']}"
+        for record in skill_projection_records(mechanism, ADAPTER_NAME)
+        if record["id"] != "save-context" and record["status"] == "projected"
+    ]
     lines = [
         f"# {name}",
         "",
@@ -106,7 +133,9 @@ def _render_agents_md(mechanism):
             "",
         ]
     )
-    return "\n".join(lines)
+    use_when_index = lines.index("- Read `memory/index.md` first when prior context may matter; it is the memory router, not a project state source.")
+    lines[use_when_index:use_when_index] = extra_skill_lines
+    return localize_entry_markdown("\n".join(lines), mechanism, ADAPTER_NAME)
 
 
 def _render_save_context_skill(mechanism, references):
@@ -152,12 +181,12 @@ def _render_save_context_skill(mechanism, references):
             "- `knowledge/index.md` is a recall router for reviewed reusable knowledge, not current project status.",
             "- `sources/*/manifest.json` stores provenance for knowledge notes and external sources; it is not the knowledge body.",
             "- `workspace/<domain>/` stores drafts, deliverables, and archives; important outputs should be indexed in `memory/source-map.md`.",
-            "- `.emotion-engine/codex-state.json` stores dynamic emotion state; do not mirror it into memory files.",
+            "- `.emotion-engine/state.json` stores dynamic emotion state; do not mirror it into memory files.",
             "- Fact assertion gates are session guards, not a skill.",
             "",
         ]
     )
-    return "\n".join(lines)
+    return localize_save_context_markdown("\n".join(lines), mechanism)
 
 
 def _reference_files(mechanism):
@@ -171,11 +200,11 @@ def _reference_files(mechanism):
         f"{prefix}/mechanism/context-loading.yaml": _read_text_ref(mechanism, mechanism["mechanism"]["context_loading_path"]),
         f"{prefix}/mechanism/session-guards.yaml": _read_text_ref(mechanism, mechanism["mechanism"]["session_guards_path"]),
         f"{prefix}/mechanism/memory-policy.yaml": _read_text_ref(mechanism, mechanism["mechanism"]["memory_policy_path"]),
-        f"{prefix}/projection/platform-capabilities.yaml": _read_text_ref(
-            mechanism, mechanism["projection"]["platform_capabilities_path"]
+        f"{prefix}/projection/platform-capabilities.yaml": render_adapter_capabilities(
+            ADAPTER_NAME, character_slug(mechanism)
         ),
-        f"{prefix}/projection/ownership-contract.yaml": _read_text_ref(
-            mechanism, mechanism["projection"]["ownership_contract_path"]
+        f"{prefix}/projection/ownership-contract.yaml": render_ownership_contract(
+            ADAPTER_NAME, durable_memory_source(mechanism)
         ),
         f"{prefix}/emotion/model.yaml": _read_text_ref(mechanism, mechanism["emotion"]["model_path"]),
         f"{prefix}/emotion/state-schema.yaml": _read_text_ref(mechanism, mechanism["emotion"]["state_schema_path"]),
@@ -185,8 +214,6 @@ def _reference_files(mechanism):
         ),
         f"{prefix}/emotion/memory-events.yaml": _read_text_ref(mechanism, mechanism["emotion"]["memory_events_path"]),
     }
-    for skill in mechanism["skills"]:
-        refs[f"{prefix}/source-skills/{skill['id']}/SKILL.md"] = _read_text_ref(mechanism, skill["path"])
     return refs
 
 
@@ -210,7 +237,7 @@ def _render_manifest(mechanism, references, artifacts):
     slug = character_slug(mechanism)
     emotion_mode = _recommended_emotion_mode(mechanism)
     manifest = {
-        "kind": "CodexAdapterPack",
+        "kind": adapter_pack_kind(ADAPTER_NAME),
         "adapter": ADAPTER_NAME,
         "source_mechanism": references.get("source_mechanism", mechanism.get("source", {}).get("path")),
         "character": {
@@ -226,7 +253,9 @@ def _render_manifest(mechanism, references, artifacts):
             "emotion_style": character_voice_summary(mechanism),
         },
         "features": {
+            "locale": locale_feature(mechanism, ADAPTER_NAME),
             "emotion_engine": emotion_engine_feature("codex", installed=False, mode=emotion_mode),
+            "skills": skill_projection_feature(mechanism, ADAPTER_NAME),
             "memory": _memory_feature(),
             "knowledge": knowledge_feature(),
             "workspace": workspace_feature(),
@@ -240,13 +269,13 @@ def _render_manifest(mechanism, references, artifacts):
             "thread_state": "codex",
             "tools": "codex",
             "durable_memory_source_of_truth": durable_memory_source(mechanism),
-            "hooks": "project_config_or_plugin_dependent",
+            "hooks": adapter_lifecycle(ADAPTER_NAME),
         },
         "boundaries": {
             "is_runtime_executor": False,
             "implements_cloud": False,
             "implemented_runtime": ADAPTER_NAME,
-            "emotion_engine_runtime": EMOTION_ENGINE_AVAILABLE_RUNTIME,
+            "emotion_engine_runtime": adapter_emotion_engine_runtime(ADAPTER_NAME),
             "emotion_engine_mode": emotion_mode,
             "emotion_engine_status": mechanism.get("emotion", {}).get("status"),
             "reserved_runtimes": sorted(mechanism.get("targets", {}).get("reserved", {}).keys()),

@@ -4,12 +4,11 @@ from pathlib import Path
 import yaml
 
 from .errors import PackwrightValidationError
-from .handoff import HANDOFF_ARTIFACTS
-from .knowledge_contract import knowledge_artifacts, knowledge_files
+from .knowledge_contract import knowledge_files
+from .locale import localize_save_context_markdown, normalize_locale
 from .naming import is_valid_slug, normalize_slug
 from .workspace_contract import (
     WORKSPACE_SHARED_DIR,
-    workspace_artifacts,
     workspace_files,
     workspace_readme,
     workspace_spec,
@@ -270,7 +269,7 @@ def starter_character_preset(template):
     }
 
 
-def starter_character_intake(template, name=None, user_name=None, slug=None):
+def starter_character_intake(template, name=None, user_name=None, slug=None, locale=None):
     if template not in STARTER_CHARACTER_PRESETS:
         raise PackwrightValidationError([f"unknown starter preset: {template}"])
     if not _non_empty_string(name):
@@ -294,6 +293,7 @@ def starter_character_intake(template, name=None, user_name=None, slug=None):
     intake = {
         "version": INTAKE_VERSION,
         "kind": INTAKE_KIND,
+        "locale": normalize_locale(locale),
         "character": character,
     }
     validate_character_intake(intake)
@@ -303,6 +303,7 @@ def starter_character_intake(template, name=None, user_name=None, slug=None):
 def generate_character_source_from_data(intake, out_dir=None, force=False):
     validate_character_intake(intake)
     character = dict(intake["character"])
+    character["locale"] = normalize_locale(intake.get("locale") or character.get("locale"))
     character.setdefault("archetype", DEFAULT_ARCHETYPE)
     _normalize_relationship_continuity(character)
     slug = normalize_slug(character.get("slug") or character["name"])
@@ -337,6 +338,7 @@ def generate_character_source_from_data(intake, out_dir=None, force=False):
         "relationship_continuity": character["relationship_continuity"],
         "direct_emotional_interaction": character["direct_emotional_interaction"],
         "recommended_emotion_engine_mode": _recommended_emotion_engine_mode(character),
+        "locale": character["locale"],
         "files": written,
     }
 
@@ -355,6 +357,7 @@ def _character_summary(character):
         "traits",
         "relationship_continuity",
         "direct_emotional_interaction",
+        "locale",
     )
     return {
         field: copy.deepcopy(character[field])
@@ -391,18 +394,17 @@ def _recommended_emotion_engine_mode(character):
 
 def _character_files(character, slug):
     name = character["name"]
+    is_zh = normalize_locale(character.get("locale")) == "zh-CN"
     files = {
         "mechanism.yaml": _mechanism_yaml(character, slug),
         "identity/persona.md": _persona_md(character),
         "identity/voice.md": _voice_md(character),
         "identity/relationship.md": _relationship_md(character),
-        "operating/principles.md": _principles_md(name),
-        "operating/boundaries.md": _boundaries_md(name),
+        "operating/principles.md": _principles_md_zh(name) if is_zh else _principles_md(name),
+        "operating/boundaries.md": _boundaries_md_zh(name) if is_zh else _boundaries_md(name),
         "mechanism/context-loading.yaml": _context_loading_yaml(name),
         "mechanism/session-guards.yaml": _session_guards_yaml(name),
         "mechanism/memory-policy.yaml": _memory_policy_yaml(name),
-        "projection/platform-capabilities.yaml": _platform_capabilities_yaml(name),
-        "projection/ownership-contract.yaml": _ownership_contract_yaml(name),
         "emotion/model.yaml": _emotion_model_yaml(character),
         "emotion/state-schema.yaml": _emotion_state_schema_yaml(name),
         "emotion/update-policy.yaml": _emotion_update_policy_yaml(name),
@@ -432,16 +434,10 @@ def _character_files(character, slug):
 def _mechanism_yaml(character, slug):
     name = character["name"]
     archetype_id = _character_archetype(character)
-    from .adapter_layout import save_context_artifact
-
-    codex_skill = save_context_artifact("codex", slug)
-    claude_skill = save_context_artifact("claude-code", slug)
-    cursor_skill = save_context_artifact("cursor", slug)
-    codex_prefix = f".codex/{slug}/references"
-    claude_prefix = f".claude/{slug}/references"
-    cursor_prefix = f".cursor/{slug}/references"
+    locale = normalize_locale(character.get("locale"))
+    is_zh = locale == "zh-CN"
     data = {
-        "version": "0.6",
+        "version": "0.7",
         "kind": "CharacterMechanismSpec",
         "metadata": {
             "name": f"{slug}-work",
@@ -449,72 +445,53 @@ def _mechanism_yaml(character, slug):
             "title": f"{name} Work Mechanism",
             "description": f"Platform-neutral mechanism spec for projecting {name} into agent runtimes.",
             "archetype": archetype_id,
+            "locale": locale,
         },
         "parameters": {
             "task": {
-                "description": "Current user-visible work objective for this run.",
+                "description": "本次运行中用户可见的当前工作目标。" if is_zh else "Current user-visible work objective for this run.",
                 "required": True,
-                "default": f"Review {name}'s mechanism projection.",
+                "default": f"审阅 {name} 的机制投影。" if is_zh else f"Review {name}'s mechanism projection.",
             },
             "scope": {
-                "description": "Current run boundary. This is run state, not character identity.",
+                "description": "本次运行的边界。这是运行状态，不是角色身份。" if is_zh else "Current run boundary. This is run state, not character identity.",
                 "required": True,
-                "default": "Local mechanism spec, adapter projection, checker, and CLI only.",
+                "default": "仅限本地机制规范、runtime 投影、checker 和 CLI。" if is_zh else "Local mechanism spec, adapter projection, checker, and CLI only.",
             },
         },
         "run": {"objective": "{{ task }}", "scope": "{{ scope }}", "source": "user_prompt"},
         "archetype": _archetype_spec(archetype_id),
-        "targets": {
-            "mvp_adapter": "codex",
-            "supported": ["codex", "claude-code", "cursor"],
-            "reserved": {
-                "hermes": {
-                    "status": "reserved",
-                    "reason": "Projectable later; not implemented in the local MVP.",
-                },
-                "openclaw": {
-                    "status": "reserved",
-                    "reason": "Projectable later; not implemented as executor.",
-                },
-            },
-        },
-        "implementation_scope": {
-            "applies_to": "packwright-build",
-            "boundaries": [
-                {"id": "no_ui", "text": "Do not build UI for the Packwright MVP."},
-                {
-                    "id": "no_cloud_service",
-                    "text": "Do not build or depend on a cloud service for the Packwright MVP.",
-                },
-                {
-                    "id": "adapter_scope",
-                    "text": "Implement Codex as the primary adapter pack; keep Claude Code as a secondary projection.",
-                },
-                {
-                    "id": "reserved_future_runtimes",
-                    "text": "Pulse, Emotion Engine runtime, Hermes, and OpenClaw remain reserved or projected surfaces.",
-                },
-            ],
-        },
         "identity": {
             "name": name,
             "slug": slug,
             "user_name": character["user_name"],
             "role": character["role"],
-            "positioning": f"Person-like {character['relationship']} projected through agent runtimes.",
+            "positioning": (
+                f"通过 agent runtime 投影的拟人化{character['relationship']}。"
+                if is_zh
+                else f"Person-like {character['relationship']} projected through agent runtimes."
+            ),
             "persona_path": "identity/persona.md",
             "voice_path": "identity/voice.md",
             "relationship_path": "identity/relationship.md",
             "voice_summary": character["voice"],
-            "mission": f"{name} helps {character['user_name']} preserve intent, notice stale assumptions, and turn messy work into concrete next steps.",
+            "mission": (
+                f"{name} 帮助 {character['user_name']} 保持原始意图、发现过时假设，并把杂乱工作变成具体下一步。"
+                if is_zh
+                else f"{name} helps {character['user_name']} preserve intent, notice stale assumptions, and turn messy work into concrete next steps."
+            ),
             "work_focus": character["primary_work"],
-            "stable_traits": character.get("traits") or ["steady", "practical", "scope-preserving"],
+            "stable_traits": character.get("traits") or (["稳健", "务实", "尊重范围"] if is_zh else ["steady", "practical", "scope-preserving"]),
             "personality": character.get("personality")
-            or [
-                "attentive to context and user intent",
-                "comfortable challenging weak assumptions when it improves the work",
-                "direct without becoming cold or performative",
-            ],
+            or (
+                ["关注上下文和用户意图", "为了改进工作，敢于质疑薄弱假设", "直接，但不冷漠也不做作"]
+                if is_zh
+                else [
+                    "attentive to context and user intent",
+                    "comfortable challenging weak assumptions when it improves the work",
+                    "direct without becoming cold or performative",
+                ]
+            ),
         },
         "operating": {
             "principles_path": "operating/principles.md",
@@ -530,10 +507,6 @@ def _mechanism_yaml(character, slug):
             "context_loading_path": "mechanism/context-loading.yaml",
             "session_guards_path": "mechanism/session-guards.yaml",
             "memory_policy_path": "mechanism/memory-policy.yaml",
-        },
-        "projection": {
-            "platform_capabilities_path": "projection/platform-capabilities.yaml",
-            "ownership_contract_path": "projection/ownership-contract.yaml",
         },
         "emotion": {
             "status": "structured_reserved",
@@ -554,18 +527,9 @@ def _mechanism_yaml(character, slug):
             "update_policy_path": "emotion/update-policy.yaml",
             "voice_modulation_path": "emotion/voice-modulation.yaml",
             "memory_events_path": "emotion/memory-events.yaml",
-            "projection": {
-                "codex": "optional_sidecar_when_explicitly_enabled",
-                "claude-code": "spec_guided_behavior_only",
-                "cursor": "spec_guided_behavior_only",
-            },
-            "reserved_activation": {
-                "hermes": "reserved_contract",
-                "openclaw": "reserved_contract",
-            },
         },
         "session_start": {
-            "hook": "SessionStart",
+            "event": "session_start",
             "injects_facts_only": True,
             "facts": [
                 {
@@ -633,23 +597,9 @@ def _mechanism_yaml(character, slug):
                 "id": "save-context",
                 "path": "skills/save-context/SKILL.md",
                 "layer": "heavy_memory_track",
-                "trigger": "Milestone handoff, session close, or explicit save request.",
+                "trigger": "里程碑交接、会话结束或明确的保存请求。" if is_zh else "Milestone handoff, session close, or explicit save request.",
             }
         ],
-        "outputs": {
-            "codex": {
-                "kind": "adapter_pack",
-                "artifacts": _output_artifacts(codex_skill, codex_prefix, "codex"),
-            },
-            "claude-code": {
-                "kind": "adapter_pack",
-                "artifacts": _output_artifacts(claude_skill, claude_prefix, "claude-code"),
-            },
-            "cursor": {
-                "kind": "adapter_pack",
-                "artifacts": _output_artifacts(cursor_skill, cursor_prefix, "cursor"),
-            },
-        },
         "checker": {
             "threshold": 85,
             "required_checks": [
@@ -672,74 +622,8 @@ def _mechanism_yaml(character, slug):
             ],
         },
         "coverage": _coverage(),
-        "reserved_specs": {
-            "pulse": {
-                "status": "reserved",
-                "runtime": "not_implemented",
-                "spec_path": "specs/reserved/runtime-surface.yaml",
-            },
-            "emotion_engine": {
-                "status": "structured_reserved",
-                "runtime": "not_implemented",
-                "spec_path": "specs/reserved/emotion-engine.yaml",
-            },
-        },
     }
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
-
-
-def _output_artifacts(skill_path, prefix, adapter):
-    slug = prefix.split("/", 2)[1] if prefix.startswith(".cursor/") else None
-    entry_file = "AGENTS.md" if adapter == "codex" else "CLAUDE.md"
-    if adapter == "cursor":
-        entry_file = f".cursor/rules/{slug}.mdc"
-    artifacts = [
-        entry_file,
-        skill_path,
-        f"{prefix}/identity/persona.md",
-        f"{prefix}/identity/voice.md",
-        f"{prefix}/identity/relationship.md",
-        f"{prefix}/operating/principles.md",
-        f"{prefix}/operating/boundaries.md",
-        f"{prefix}/mechanism/context-loading.yaml",
-        f"{prefix}/mechanism/session-guards.yaml",
-        f"{prefix}/mechanism/memory-policy.yaml",
-        f"{prefix}/projection/platform-capabilities.yaml",
-        f"{prefix}/projection/ownership-contract.yaml",
-        f"{prefix}/emotion/model.yaml",
-        f"{prefix}/emotion/state-schema.yaml",
-        f"{prefix}/emotion/update-policy.yaml",
-        f"{prefix}/emotion/voice-modulation.yaml",
-        f"{prefix}/emotion/memory-events.yaml",
-        f"{prefix}/source-skills/save-context/SKILL.md",
-    ]
-    if adapter == "claude-code":
-        artifacts.append(".claude/settings.local.json.example")
-    if adapter == "cursor":
-        artifacts.append(f".cursor/rules/{slug}-memory.mdc")
-        artifacts.extend(HANDOFF_ARTIFACTS)
-    artifacts.extend(
-        [
-            "memory/index.md",
-            "memory/profile.md",
-            "memory/session-index.md",
-            "memory/source-map.md",
-            "memory/collaboration.md",
-            "memory/recent-activity.md",
-            "memory/pinned.md",
-            "memory/workstreams.md",
-            "memory/workstreams/_template.md",
-            "memory/projects/_template.md",
-            "memory/todos.md",
-            "memory/knowledge_map.md",
-            "memory/relationship-state.md",
-            "memory/emotion-state.json.example",
-            *knowledge_artifacts(),
-            *workspace_artifacts(),
-            "manifest.json",
-        ]
-    )
-    return artifacts
 
 
 def _character_archetype(character):
@@ -796,12 +680,7 @@ def _coverage():
             "skill_modularity",
             "local_file_memory",
             "scratch_boundary",
-            "adapter_projection",
-            "platform_capabilities",
-            "ownership_contract",
             "checker_contract",
-            "implementation_scope_boundary",
-            "reserved_runtime_boundary",
         ],
         "implemented_by": {
             "agent_archetype": ["archetype", "metadata.archetype"],
@@ -828,18 +707,20 @@ def _coverage():
             "skill_modularity": ["skills"],
             "local_file_memory": ["memory"],
             "scratch_boundary": ["memory.scratch_dir"],
-            "adapter_projection": ["outputs.codex", "outputs.claude-code"],
-            "platform_capabilities": ["projection.platform_capabilities_path"],
-            "ownership_contract": ["projection.ownership_contract_path"],
             "checker_contract": ["checker"],
-            "implementation_scope_boundary": ["implementation_scope"],
-            "reserved_runtime_boundary": ["targets.reserved", "reserved_specs", "emotion.status"],
         },
     }
 
 
 def _persona_md(character):
     name = character["name"]
+    if normalize_locale(character.get("locale")) == "zh-CN":
+        lines = [f"# {name} 人设", "", f"{name} 的角色是：{character['role']}", "", "## 主要工作"]
+        lines.extend(f"- {item}" for item in character["primary_work"])
+        lines.extend(["", "## 稳定特质"])
+        lines.extend(f"- {item}" for item in character.get("traits") or ["稳健", "务实", "尊重范围"])
+        lines.append("")
+        return "\n".join(lines)
     lines = [
         f"# {name} Persona",
         "",
@@ -856,8 +737,9 @@ def _persona_md(character):
 
 def _voice_md(character):
     name = character["name"]
-    lines = [f"# {name} Voice", "", character["voice"], "", "## Avoid"]
-    avoid = character.get("avoid") or ["mechanical audit-log style", "over-compliance", "decorative warmth"]
+    is_zh = normalize_locale(character.get("locale")) == "zh-CN"
+    lines = [f"# {name} 表达方式" if is_zh else f"# {name} Voice", "", character["voice"], "", "## 避免" if is_zh else "## Avoid"]
+    avoid = character.get("avoid") or (["机械的审计日志风格", "过度顺从", "装饰性的温暖"] if is_zh else ["mechanical audit-log style", "over-compliance", "decorative warmth"])
     lines.extend(f"- {item}" for item in avoid)
     lines.append("")
     return "\n".join(lines)
@@ -865,6 +747,20 @@ def _voice_md(character):
 
 def _relationship_md(character):
     name = character["name"]
+    if normalize_locale(character.get("locale")) == "zh-CN":
+        direct = {
+            "task_only": "保持稳定、务实的关系。角色应专注做事；除非用户明确要求，否则不要维护情绪关系。",
+            "warm_selective": "角色可以表达温度、关心、提醒和轻度调侃，但只记录重要偏好或有意义的关系反馈。",
+            "close_continuous": "角色可以维持更强的长期关系连续性，更主动地记住互动偏好，并在保持清晰边界的同时维持亲近感。",
+        }[character["relationship_continuity"]]
+        return (
+            f"# {name} 关系模型\n\n"
+            f"对 {character['user_name']} 而言，{name} 是{character['relationship']}。\n\n"
+            "## 关系连续性\n\n"
+            f"{direct}\n\n"
+            "## 边界\n\n"
+            "持久的协作校准写入 `memory/collaboration.md`；启用 Emotion Engine 后，其机器可读的情绪运行状态只写入 `.emotion-engine/state.json`。\n"
+        )
     direct = {
         "task_only": "Keep the relationship stable and practical. The character should focus on doing the work and avoid maintaining an emotional relationship unless the user explicitly asks.",
         "warm_selective": "The character may show warmth, care, reminders, and light teasing, while recording only important preferences or meaningful relationship feedback.",
@@ -876,7 +772,7 @@ def _relationship_md(character):
         "## Relationship Continuity\n\n"
         f"{direct}\n\n"
         "## Boundary\n\n"
-        "Durable collaboration calibrations belong in `memory/collaboration.md`; machine-readable emotion runtime state belongs in `.emotion-engine/codex-state.json` only when enabled.\n"
+        "Durable collaboration calibrations belong in `memory/collaboration.md`; machine-readable emotion runtime state belongs in `.emotion-engine/state.json` only when enabled.\n"
     )
 
 
@@ -889,12 +785,30 @@ def _principles_md(name):
     )
 
 
+def _principles_md_zh(name):
+    return (
+        f"# {name} 运行原则\n\n"
+        "## 记忆保存在文件中\n\n长期状态属于结构化文件。提示词上下文只是缓存，不是事实源。\n\n"
+        "## 人设稳定，状态外置\n\n身份和表达方式可以保持热加载；当前工作状态、任务参数和实现细节应放在 manifest、记忆文件或 skill 中。\n\n"
+        "## 重要修改前确认\n\n角色可以分析、建议和准备；改变方向、范围、共享状态或外部系统的决定由用户作出。\n"
+    )
+
+
 def _boundaries_md(name):
     return (
         f"# {name} Operating Boundaries\n\n"
         "## Preserve Intent\n\nDo not widen the user's goal. If a better path requires widening scope, ask first.\n\n"
         "## Verify Before Claiming\n\nDo not assert absence, completion, ownership, stale state, or date-sensitive status from partial snippets or memory alone.\n\n"
         "## Keep Runtime Boundaries Honest\n\nDo not describe reserved projections as implemented runtimes. Projection guidance is not execution capability.\n"
+    )
+
+
+def _boundaries_md_zh(name):
+    return (
+        f"# {name} 运行边界\n\n"
+        "## 保持意图\n\n不要扩大用户的目标。如果更好的路径需要扩大范围，先询问。\n\n"
+        "## 判断前验证\n\n不要只凭片段或记忆断言缺失、完成、归属、过时状态或时效性信息。\n\n"
+        "## 如实描述 runtime 边界\n\n不要把预留投影描述成已实现的 runtime。投影指引不等于执行能力。\n"
     )
 
 
@@ -1056,7 +970,7 @@ def _memory_policy_yaml(name):
                 "emotion": {
                     "id": "emotion-state",
                     "file": "memory/emotion-state.json.example",
-                    "purpose": "Reserve state shape; live state belongs in .emotion-engine/codex-state.json only when enabled.",
+                    "purpose": "Reserve state shape; live state belongs in .emotion-engine/state.json only when enabled.",
                 },
                 "workspace": {
                     "id": "workspace",
@@ -1078,101 +992,6 @@ def _memory_policy_yaml(name):
                 "Pinned memory remains a compatibility layer in the MVP.",
                 f"{name}'s optional Emotion Engine runtime must stay separate from durable memory files.",
                 "Scratch work should stay under _scratch and should not be loaded by default.",
-            ],
-        },
-        sort_keys=False,
-    )
-
-
-def _platform_capabilities_yaml(name):
-    return yaml.safe_dump(
-        {
-            "version": "0.6",
-            "kind": "CharacterPlatformCapabilities",
-            "platforms": {
-                "codex": {
-                    "status": "primary",
-                    "entry_file": "AGENTS.md",
-                    "skill_dir": ".agents/skills",
-                    "file_import_syntax": "plain_path_guidance",
-                    "hooks": "project_config_or_plugin_dependent",
-                    "memory_projection": "local_files",
-                    "emotion_projection": "optional_sidecar_when_explicitly_enabled",
-                    "notes": [f"Skills carry repeatable {name} procedures."],
-                },
-                "claude-code": {
-                    "status": "supported",
-                    "entry_file": "CLAUDE.md",
-                    "skill_dir": ".claude/skills",
-                    "file_import_syntax": "at_path",
-                    "hooks": "SessionStart",
-                    "memory_projection": "local_files_with_hook_fact_injection",
-                    "emotion_projection": "spec_guided_behavior_only",
-                },
-                "cursor": {
-                    "status": "supported",
-                    "entry_file": ".cursor/rules/<slug>.mdc",
-                    "skill_dir": ".cursor/rules",
-                    "file_import_syntax": "project_rule_paths",
-                    "hooks": "project_rules",
-                    "memory_projection": "local_files_with_project_rules",
-                    "emotion_projection": "spec_guided_behavior_only",
-                },
-            },
-        },
-        sort_keys=False,
-    )
-
-
-def _ownership_contract_yaml(name):
-    return yaml.safe_dump(
-        {
-            "version": "0.6",
-            "kind": "CharacterOwnershipContract",
-            "core_owns": ["identity", "voice", "operating_boundaries", "memory_policy", "skill_semantics"],
-            "adapter_owns": ["file_layout", "platform_entry_rendering", "platform_skill_rendering", "platform_manifest"],
-            "runtime_owns": {
-                "codex": {
-                    "model_loop": True,
-                    "thread_state": True,
-                    "tools": True,
-                    "hooks": "project_config_or_plugin_dependent",
-                    "durable_memory_source_of_truth": False,
-                },
-                "claude-code": {
-                    "model_loop": True,
-                    "thread_state": True,
-                    "tools": True,
-                    "hooks": "SessionStart",
-                    "durable_memory_source_of_truth": False,
-                },
-                "cursor": {
-                    "model_loop": True,
-                    "thread_state": True,
-                    "tools": True,
-                    "hooks": "project_rules",
-                    "durable_memory_source_of_truth": False,
-                },
-            },
-            "memory_source_of_truth": {
-                "durable_state": f"{name} local memory files unless a future adapter explicitly declares a different source.",
-                "memory_index": "memory/index.md",
-                "profile": "memory/profile.md",
-                "workstream_router": "memory/workstreams.md",
-                "workstream_details": "memory/workstreams/*.md",
-                "project_memory": "memory/projects/*.md",
-                "session_index": "memory/session-index.md",
-                "source_map": "memory/source-map.md",
-                "todos": "memory/todos.md",
-                "collaboration": "memory/collaboration.md",
-                "workspace_outputs": "workspace/",
-                "emotion_state": ".emotion-engine/codex-state.json only when enabled",
-            },
-            "rules": [
-                "Adapters may project character semantics but must not change them.",
-                "Platform entry files must not contain run state or implementation-scope details.",
-                "Memory owner boundaries are part of the character contract, not optional style guidance.",
-                "Emotion Engine stays optional and separate from durable memory.",
             ],
         },
         sort_keys=False,
@@ -1214,7 +1033,7 @@ def _emotion_state_schema_yaml(name):
             "status": "structured_reserved",
             "runtime": "not_implemented",
             "schema": {
-                "runtime_state": ".emotion-engine/codex-state.json when enabled",
+                "runtime_state": ".emotion-engine/state.json when enabled",
                 "durable_collaboration_notes": "memory/collaboration.md",
                 "boundary": f"Do not mix {name}'s live PAD/trust runtime state into durable memory notes.",
             },
@@ -1362,7 +1181,7 @@ def _memory_index_md():
         "- Drafts, durable artifacts, and archived outputs -> `workspace/`\n"
         "- Action queue -> `memory/todos.md`\n"
         "- Collaboration calibration notes -> `memory/collaboration.md`\n"
-        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json` when enabled\n\n"
+        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/state.json` when enabled\n\n"
         "## Compatibility Files\n\n"
         "- `memory/pinned.md` is compatibility-only in the MVP; avoid using it as a normal memory layer.\n"
         "- `memory/recent-activity.md` is an old name for session recall; prefer `memory/session-index.md`.\n"
@@ -1644,7 +1463,7 @@ def _relationship_state_md():
 def _emotion_state_example_json():
     return (
         '{\n'
-        '  "_note": "Reserved example only. Live Emotion Engine state belongs in .emotion-engine/codex-state.json when enabled.",\n'
+        '  "_note": "Reserved example only. Live Emotion Engine state belongs in .emotion-engine/state.json when enabled.",\n'
         '  "status": "example_not_live",\n'
         '  "runtime": "not_implemented"\n'
         '}\n'
@@ -1654,7 +1473,7 @@ def _emotion_state_example_json():
 def _save_context_skill_md(character):
     name = character["name"]
     user_name = character["user_name"]
-    return (
+    text = (
         "# Save Context\n\n"
         f"Use this skill at milestone handoff, session close, or when {user_name} asks {name} to preserve state.\n\n"
         "## Procedure\n\n"
@@ -1677,6 +1496,11 @@ def _save_context_skill_md(character):
         "- Keep profile facts explicit and user-confirmed.\n"
         "- Do not store live Emotion Engine runtime JSON in durable memory files.\n"
     )
+    mechanism = {
+        "metadata": {"locale": character.get("locale")},
+        "identity": {"name": name, "user_name": user_name},
+    }
+    return localize_save_context_markdown(text, mechanism)
 
 
 def _non_empty_string(value):

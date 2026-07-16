@@ -1,27 +1,32 @@
 import re
 
+from .adapter_layout import adapter_display_name, adapter_entry, adapter_guidance_kind
+from .emotion_engine_contract import (
+    EMOTION_ENGINE_RUNTIME_ROOT,
+    EMOTION_ENGINE_STATE_PATH,
+    emotion_engine_skill_path,
+)
 from .naming import character_slug, reference_prefix, save_context_skill_path
 
 
-def project_memory_file(mechanism, adapter, rel_path, text):
+def project_memory_file(mechanism, adapter, rel_path, text, emotion_engine_active=False):
     """Project portable memory text into adapter-specific runtime wording."""
     if rel_path == "memory/index.md":
         return _project_memory_index(mechanism, adapter, text)
     if rel_path == "memory/pinned.md":
         return _project_pinned_memory(mechanism, adapter, text)
     if rel_path == "memory/source-map.md":
-        return _project_source_map(mechanism, adapter, text)
+        return _project_source_map(
+            mechanism,
+            adapter,
+            text,
+            emotion_engine_active=emotion_engine_active,
+        )
     return text
 
 
 def adapter_entry_path(mechanism, adapter):
-    if adapter == "codex":
-        return "AGENTS.md"
-    if adapter == "claude-code":
-        return "CLAUDE.md"
-    if adapter == "cursor":
-        return f".cursor/rules/{character_slug(mechanism)}.mdc"
-    return "platform entry file"
+    return adapter_entry(adapter, character_slug(mechanism))
 
 
 def _project_memory_index(mechanism, adapter, text):
@@ -31,18 +36,11 @@ def _project_memory_index(mechanism, adapter, text):
         f"- Stable identity, voice, and default work rules -> `{entry}`",
         text,
     )
-    emotion_owner = (
-        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/codex-state.json` when enabled"
-        if adapter == "codex"
-        else "- Dynamic emotion state and compact emotion history -> adapter-specific runtime state when installed; "
-        "`memory/emotion-state.json.example` is the portable reference shape"
-    )
-    text = re.sub(
+    return re.sub(
         r"- Dynamic emotion state and compact emotion history -> .+",
-        emotion_owner,
+        f"- Dynamic emotion state and compact emotion history -> `{EMOTION_ENGINE_STATE_PATH}` when enabled",
         text,
     )
-    return text
 
 
 def _project_pinned_memory(mechanism, adapter, text):
@@ -59,11 +57,11 @@ def _project_pinned_memory(mechanism, adapter, text):
     )
 
 
-def _project_source_map(mechanism, adapter, text):
-    label = _adapter_label(adapter)
+def _project_source_map(mechanism, adapter, text, emotion_engine_active=False):
+    label = adapter_display_name(adapter)
     entry = adapter_entry_path(mechanism, adapter)
     save_context = save_context_skill_path(mechanism, adapter)
-    save_context_name = "save-context rule" if adapter == "cursor" else "save-context skill"
+    save_context_name = f"save-context {adapter_guidance_kind(adapter)}"
     update_policy = f"{reference_prefix(mechanism, adapter)}/emotion/update-policy.yaml"
 
     text = re.sub(
@@ -81,46 +79,34 @@ def _project_source_map(mechanism, adapter, text):
         f"- Emotion update policy reference -> `{update_policy}`",
         text,
     )
-    if adapter == "codex":
-        text = re.sub(
-            r"- Codex sidecar skill -> not installed in this [^\n]+ target",
-            "- Current Codex sidecar skill -> `.agents/skills/emotion-engine-codex/SKILL.md`",
-            text,
-        )
-        text = re.sub(
-            r"- Codex sidecar helper -> not installed in this [^\n]+ target",
-            "- Current Codex sidecar helper -> `.agents/skills/emotion-engine-codex/scripts/emotion_engine_utils.py`",
-            text,
-        )
-        text = re.sub(
-            r"- Project-local Emotion Engine state snapshot -> `\.emotion-engine/codex-state\.json` "
-            r"\(not active without an adapter sidecar\)",
-            "- Project-local Emotion Engine runtime state -> `.emotion-engine/codex-state.json`",
-            text,
-        )
-    else:
-        text = re.sub(
-            r"- Current Codex sidecar skill -> `\.agents/skills/emotion-engine-codex/SKILL\.md`",
-            f"- Codex sidecar skill -> not installed in this {label} target",
-            text,
-        )
-        text = re.sub(
-            r"- Current Codex sidecar helper -> `\.agents/skills/emotion-engine-codex/scripts/emotion_engine_utils\.py`",
-            f"- Codex sidecar helper -> not installed in this {label} target",
-            text,
-        )
-        text = re.sub(
-            r"- Project-local Emotion Engine runtime state -> `\.emotion-engine/codex-state\.json`",
-            "- Project-local Emotion Engine state snapshot -> `.emotion-engine/codex-state.json` "
-            "(not active without an adapter sidecar)",
-            text,
-        )
-    return text
 
-
-def _adapter_label(adapter):
-    return {
-        "codex": "Codex",
-        "claude-code": "Claude Code",
-        "cursor": "Cursor",
-    }.get(adapter, adapter)
+    guidance = (
+        f"- Current Emotion Engine guidance -> `{emotion_engine_skill_path(adapter)}`"
+        if emotion_engine_active
+        else f"- Emotion Engine guidance -> not installed in this {label} target"
+    )
+    helper = (
+        f"- Current Emotion Engine helper -> `{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py`"
+        if emotion_engine_active
+        else f"- Emotion Engine helper -> not installed in this {label} target"
+    )
+    state = (
+        f"- Project-local Emotion Engine runtime state -> `{EMOTION_ENGINE_STATE_PATH}`"
+        if emotion_engine_active
+        else f"- Project-local Emotion Engine state snapshot -> `{EMOTION_ENGINE_STATE_PATH}` (not active without the runtime)"
+    )
+    text = re.sub(
+        r"- (?:Current )?(?:Codex sidecar skill|Emotion Engine guidance) -> [^\n]+",
+        guidance,
+        text,
+    )
+    text = re.sub(
+        r"- (?:Current )?(?:Codex sidecar helper|Emotion Engine helper) -> [^\n]+",
+        helper,
+        text,
+    )
+    return re.sub(
+        r"- Project-local Emotion Engine (?:runtime state|state snapshot) -> [^\n]+",
+        state,
+        text,
+    )

@@ -11,21 +11,27 @@ from pathlib import Path
 from typing import Optional
 
 from .emotion_engine_contract import (
-    EMOTION_ENGINE_CODEX_ARTIFACTS,
-    EMOTION_ENGINE_CODEX_SCRIPT_PATH,
-    EMOTION_ENGINE_CODEX_SIDECAR,
-    EMOTION_ENGINE_CODEX_SKILL_DIR,
+    EMOTION_ENGINE_COMMON_SOURCE_FILES,
     EMOTION_ENGINE_CODEX_LEGACY_SKILL_DIR,
-    EMOTION_ENGINE_CODEX_STATE_PATH,
-    EMOTION_ENGINE_CODEX_WRAPPER_PATH,
+    EMOTION_ENGINE_LEGACY_STATE_PATHS,
+    EMOTION_ENGINE_MCP_WRAPPER_PATH,
     EMOTION_ENGINE_MODES,
     EMOTION_ENGINE_RUNTIME,
-    emotion_engine_codex_expected,
-    emotion_engine_codex_manifest_diagnostics,
-    emotion_engine_codex_sidecar_record,
+    EMOTION_ENGINE_RUNTIME_ROOT,
+    EMOTION_ENGINE_SIDECAR,
+    EMOTION_ENGINE_STATE_PATH,
+    EMOTION_ENGINE_UPSTREAM_COMMIT,
+    EMOTION_ENGINE_VERSION,
+    EMOTION_ENGINE_WRAPPER_PATH,
+    emotion_engine_artifacts,
+    emotion_engine_expected,
     emotion_engine_feature,
+    emotion_engine_manifest_diagnostics,
+    emotion_engine_mcp_config_path,
+    emotion_engine_sidecar_record,
+    emotion_engine_skill_path,
 )
-from .adapter_layout import adapter_entry
+from .adapter_layout import adapter_entry, adapter_skill_root, supported_adapters
 from .errors import PackwrightValidationError
 from .handoff import HANDOFF_ARTIFACTS, HANDOFF_EXECUTABLE_ARTIFACTS, target_handoff_artifacts
 from .knowledge_contract import (
@@ -38,26 +44,25 @@ from .knowledge_contract import (
 )
 from .loader import load_mechanism
 from .memory_projection import project_memory_file
+from .mechanism_contract import normalize_mechanism
 from .pack_metadata import LOCK_PATH, SPEC_PATH, embed_pack_metadata, load_embedded_spec
 from .path_safety import resolve_destination_path, resolve_source_path, validate_relative_path
 from .naming import (
     character_slug,
     is_valid_slug,
     normalize_slug,
-    reference_prefix,
-    save_context_skill_path,
 )
 from .resolver import resolve_mechanism
 from .workspace_contract import workspace_artifacts, workspace_readme, workspace_required_dirs
 
 
-SUPPORTED_INSTALL_ADAPTERS = {"codex", "claude-code", "cursor"}
-PORTABLE_STATE_DIRS = ("memory", "workspace", KNOWLEDGE_ROOT, SOURCES_ROOT)
+SUPPORTED_INSTALL_ADAPTERS = set(supported_adapters())
+PORTABLE_STATE_DIRS = ("memory", "workspace", KNOWLEDGE_ROOT, SOURCES_ROOT, "skills")
 MIGRATION_SCHEMA = "packwright-migration/v1"
 EMOTION_ENGINE_SECTION = """## Emotion Engine
-- Default mode: `{mode}`. The Codex sidecar is installed, but normal work should use it only according to this mode's loading policy.
-- Use `.agents/skills/emotion-engine-codex/SKILL.md` for Emotion Engine controls and `.emotion-engine/codex-state.json` for project-local runtime state.
-- Use `scripts/codex_emotion.sh` as the project-local wrapper when present; it forwards to `.agents/skills/emotion-engine-codex/scripts/codex_emotion.sh`.
+- Default mode: `{mode}`. The project-local MCP sidecar is installed; use it according to this mode's loading policy.
+- Use `{skill_path}` for runtime guidance, `{state_path}` for live project state, and `{wrapper_path}` for shell access.
+- The adapter's project MCP configuration points to the same runtime and state. Treat client approval prompts as runtime consent, not installation failure.
 - Use `record_policy` before deciding whether an interaction should be persisted; it is deterministic, side-effect free, and returns compact `reply_bias` rather than rewriting `AGENTS.md`.
 - `light` mode target: <1% global token overhead; use the sidecar only when tone continuity, emotional interaction, relationship dynamics, concrete feedback, repair, boundary pressure, or milestone settlement matter.
 - `always` mode target: ~3% global token overhead, capped at <=5%; it may track each meaningful turn, but still respects salience, habituation, low-value duplicate compaction, and compact summaries.
@@ -65,7 +70,7 @@ EMOTION_ENGINE_SECTION = """## Emotion Engine
 - Generic praise should usually affect the current reply only; repeated generic praise habituates, while concrete feedback, milestones, repair, and stable preferences may be recorded.
 - At meaningful session or milestone close, use the sidecar's `settle_trust` command to conservatively settle agent-to-user trust from recent evidence; praise alone must not directly grow trust.
 - Keep it internal: do not expose PAD/trust numbers, state JSON, or step-by-step status unless asked.
-- Do not mix Emotion Engine state into memory files; keep durable facts in `memory/*` and dynamic state in `.emotion-engine/codex-state.json`.
+- Do not mix Emotion Engine state into memory files; keep durable facts in `memory/*` and dynamic state in `{state_path}`.
 """
 
 
@@ -82,7 +87,8 @@ class MigrationPlan:
     pack_dir: Optional[Path]
     force: bool
     include_emotion_state: bool
-    emotion_engine_codex_source: object
+    emotion_engine_source: object
+    emotion_state_source: object
     emotion_style: object
     emotion_engine_mode: object
     report: dict
@@ -94,12 +100,15 @@ class MigrationPlan:
 def install_pack(
     pack_dir,
     target_dir,
-    adapter="codex",
+    adapter=None,
     force=False,
     include_emotion_engine_codex=None,
     emotion_engine_codex_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
+    include_emotion_engine=None,
+    emotion_engine_source=None,
+    emotion_state_source=None,
 ):
     """Install an adapter pack into a local agent runtime working directory."""
     pack_dir = Path(pack_dir)
@@ -107,15 +116,23 @@ def install_pack(
     manifest = _load_manifest(pack_dir)
     manifest_adapter = manifest.get("adapter")
 
-    if adapter not in SUPPORTED_INSTALL_ADAPTERS:
+    if manifest_adapter not in SUPPORTED_INSTALL_ADAPTERS:
+        raise PackwrightValidationError([f"pack manifest declares unsupported adapter: {manifest_adapter!r}"])
+    if adapter is None:
+        adapter = manifest_adapter
+    elif adapter not in SUPPORTED_INSTALL_ADAPTERS:
         raise PackwrightValidationError([f"unsupported adapter: {adapter}"])
     if manifest_adapter != adapter:
         raise PackwrightValidationError([f"pack adapter is {manifest_adapter!r}, expected {adapter!r}"])
     resolved_emotion_engine_mode = emotion_engine_mode or _manifest_emotion_engine_mode(manifest)
     if resolved_emotion_engine_mode not in EMOTION_ENGINE_MODES:
         raise PackwrightValidationError([f"emotion_engine_mode must be one of {sorted(EMOTION_ENGINE_MODES)}"])
-    if include_emotion_engine_codex is None:
-        include_emotion_engine_codex = False
+    include_emotion_engine, emotion_engine_source = _resolve_emotion_engine_arguments(
+        include_emotion_engine=include_emotion_engine,
+        emotion_engine_source=emotion_engine_source,
+        include_emotion_engine_codex=include_emotion_engine_codex,
+        emotion_engine_codex_source=emotion_engine_codex_source,
+    )
 
     artifacts = _manifest_artifacts(manifest)
     source_paths = [
@@ -136,23 +153,23 @@ def install_pack(
             ]
         )
     sidecar_plan = None
-    if include_emotion_engine_codex:
-        if adapter != "codex":
-            raise PackwrightValidationError(["--include-emotion-engine-codex is only supported for the codex adapter"])
-        sidecar_plan = _prepare_emotion_engine_codex_install(
+    if include_emotion_engine:
+        sidecar_plan = _prepare_emotion_engine_install(
             target_dir,
-            emotion_engine_codex_source,
+            emotion_engine_source,
+            adapter=adapter,
             force=force,
             emotion_style=emotion_style,
             emotion_engine_mode=resolved_emotion_engine_mode,
             manifest=manifest,
+            state_source=emotion_state_source,
         )
 
     stale_removed = []
     if force:
         next_artifacts = set(artifacts)
         if sidecar_plan:
-            next_artifacts.update(EMOTION_ENGINE_CODEX_ARTIFACTS)
+            next_artifacts.update(emotion_engine_artifacts(adapter))
         stale_removed = _remove_stale_manifest_artifacts(target_dir, next_artifacts, preserve_portable=True)
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -171,8 +188,13 @@ def install_pack(
 
     sidecars = {}
     if sidecar_plan:
-        sidecars[EMOTION_ENGINE_CODEX_SIDECAR] = _install_emotion_engine_codex(target_dir, sidecar_plan)
-        _mark_emotion_engine_codex_installed(target_dir, sidecars[EMOTION_ENGINE_CODEX_SIDECAR], resolved_emotion_engine_mode)
+        sidecars[EMOTION_ENGINE_SIDECAR] = _install_emotion_engine(target_dir, sidecar_plan)
+        _mark_emotion_engine_installed(
+            target_dir,
+            sidecars[EMOTION_ENGINE_SIDECAR],
+            adapter,
+            resolved_emotion_engine_mode,
+        )
 
     _refresh_artifact_lock(target_dir)
 
@@ -191,13 +213,13 @@ def install_pack(
     return result
 
 
-def refresh_emotion_engine_codex(
+def refresh_emotion_engine(
     target_dir,
-    emotion_engine_codex_source=None,
+    emotion_engine_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
 ):
-    """Refresh the installed Codex Emotion Engine sidecar projection.
+    """Refresh an installed Emotion Engine projection without replacing live state.
 
     This is the repair path for targets whose installed sidecar drifted from
     the canonical Emotion Engine source. It rewrites projected sidecar files,
@@ -207,33 +229,54 @@ def refresh_emotion_engine_codex(
     target_dir = Path(target_dir)
     manifest = _load_manifest(target_dir)
     manifest_adapter = manifest.get("adapter")
-    if manifest_adapter != "codex":
-        raise PackwrightValidationError([f"target adapter is {manifest_adapter!r}, expected 'codex'"])
+    if manifest_adapter not in SUPPORTED_INSTALL_ADAPTERS:
+        raise PackwrightValidationError([f"target adapter is unsupported: {manifest_adapter!r}"])
 
     resolved_emotion_engine_mode = emotion_engine_mode or _manifest_emotion_engine_mode(manifest)
     if resolved_emotion_engine_mode not in EMOTION_ENGINE_MODES:
         raise PackwrightValidationError([f"emotion_engine_mode must be one of {sorted(EMOTION_ENGINE_MODES)}"])
 
-    plan = _prepare_emotion_engine_codex_install(
+    plan = _prepare_emotion_engine_install(
         target_dir,
-        emotion_engine_codex_source,
+        emotion_engine_source,
+        adapter=manifest_adapter,
         force=True,
         emotion_style=emotion_style,
         emotion_engine_mode=resolved_emotion_engine_mode,
         manifest=manifest,
     )
-    sidecar = _install_emotion_engine_codex(target_dir, plan)
-    _mark_emotion_engine_codex_installed(target_dir, sidecar, resolved_emotion_engine_mode)
+    sidecar = _install_emotion_engine(target_dir, plan)
+    _mark_emotion_engine_installed(target_dir, sidecar, manifest_adapter, resolved_emotion_engine_mode)
     updated_lock_paths = ["manifest.json", *_existing_sidecar_artifacts(target_dir)]
-    if sidecar.get("agents_section_added"):
-        updated_lock_paths.append("AGENTS.md")
+    if sidecar.get("entry_updated"):
+        updated_lock_paths.append(adapter_entry(manifest_adapter))
     _update_artifact_lock_paths(target_dir, updated_lock_paths)
     return {
-        "adapter": "codex",
+        "adapter": manifest_adapter,
         "target_dir": str(target_dir),
         "refreshed_artifacts": _existing_sidecar_artifacts(target_dir),
-        "sidecars": {EMOTION_ENGINE_CODEX_SIDECAR: sidecar},
+        "sidecars": {EMOTION_ENGINE_SIDECAR: sidecar},
     }
+
+
+def refresh_emotion_engine_codex(
+    target_dir,
+    emotion_engine_codex_source=None,
+    emotion_style=None,
+    emotion_engine_mode=None,
+):
+    """Deprecated compatibility wrapper for :func:`refresh_emotion_engine`."""
+    warnings.warn(
+        "refresh_emotion_engine_codex is deprecated; use refresh_emotion_engine",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return refresh_emotion_engine(
+        target_dir,
+        emotion_engine_source=emotion_engine_codex_source,
+        emotion_style=emotion_style,
+        emotion_engine_mode=emotion_engine_mode,
+    )
 
 
 def doctor_target(
@@ -242,6 +285,7 @@ def doctor_target(
     emotion_engine_codex_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
+    emotion_engine_source=None,
 ):
     """Inspect and optionally repair installed target projection drift."""
     target_dir = Path(target_dir)
@@ -280,45 +324,48 @@ def doctor_target(
             lock_issues = _artifact_lock_doctor_issues(target_dir, manifest)
     result["issues"].extend(lock_issues)
 
-    if adapter != "codex":
-        result["ok"] = not result["issues"]
-        return result
-
-    if not _emotion_engine_codex_expected_in_target(manifest, target_dir):
+    source = emotion_engine_source or emotion_engine_codex_source
+    if not _emotion_engine_expected_in_target(manifest, target_dir):
         result["ok"] = not result["issues"]
         return result
 
     mode = emotion_engine_mode or _manifest_emotion_engine_mode(manifest)
-    plan = _prepare_emotion_engine_codex_install(
-        target_dir,
-        emotion_engine_codex_source,
-        force=True,
-        emotion_style=emotion_style,
-        emotion_engine_mode=mode,
-        manifest=manifest,
+    plan = (
+        _prepare_emotion_engine_install(
+            target_dir,
+            source,
+            adapter=adapter,
+            force=True,
+            emotion_style=emotion_style,
+            emotion_engine_mode=mode,
+            manifest=manifest,
+        )
+        if source
+        else _prepare_installed_emotion_engine_plan(target_dir, adapter, mode, manifest)
     )
-    issues = _emotion_engine_codex_doctor_issues(target_dir, manifest, plan)
+    issues = _emotion_engine_doctor_issues(target_dir, manifest, plan)
     result["issues"].extend(issues)
     result["ok"] = not result["issues"]
-    if issues and fix:
-        refresh_result = refresh_emotion_engine_codex(
+    if issues and fix and source:
+        refresh_result = refresh_emotion_engine(
             target_dir,
-            emotion_engine_codex_source=emotion_engine_codex_source,
+            emotion_engine_source=source,
             emotion_style=emotion_style,
             emotion_engine_mode=mode,
         )
         refreshed_manifest = _load_manifest(target_dir)
-        refreshed_plan = _prepare_emotion_engine_codex_install(
+        refreshed_plan = _prepare_emotion_engine_install(
             target_dir,
-            emotion_engine_codex_source,
+            source,
+            adapter=adapter,
             force=True,
             emotion_style=emotion_style,
             emotion_engine_mode=mode,
             manifest=refreshed_manifest,
         )
-        after_issues = _emotion_engine_codex_doctor_issues(target_dir, refreshed_manifest, refreshed_plan)
+        after_issues = _emotion_engine_doctor_issues(target_dir, refreshed_manifest, refreshed_plan)
         result["fixes"].append({
-            "id": "emotion_engine_codex_refreshed",
+            "id": "emotion_engine_refreshed",
             "result": refresh_result,
         })
         result["after_issues"] = after_issues
@@ -329,6 +376,11 @@ def doctor_target(
         )
         result["warnings"] = []
         result["ok"] = not result["issues"]
+    elif issues and fix and not source:
+        result["warnings"].append({
+            "id": "emotion_engine_source_required_for_fix",
+            "message": "diagnosis completed without upstream source; pass --emotion-engine-source to refresh managed runtime files",
+        })
     return result
 
 
@@ -346,6 +398,7 @@ def migrate_target(
     emotion_engine_codex_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
+    emotion_engine_source=None,
 ):
     """Plan and apply an installed-target migration for programmatic callers."""
     plan = plan_migration(
@@ -360,6 +413,7 @@ def migrate_target(
         slug=slug,
         upgrade_adapter_support=upgrade_adapter_support,
         emotion_engine_codex_source=emotion_engine_codex_source,
+        emotion_engine_source=emotion_engine_source,
         emotion_style=emotion_style,
         emotion_engine_mode=emotion_engine_mode,
     )
@@ -380,6 +434,7 @@ def plan_migration(
     emotion_engine_codex_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
+    emotion_engine_source=None,
 ):
     """Build a deterministic migration plan without writing files."""
     source_target_dir = Path(source_target_dir)
@@ -393,6 +448,15 @@ def plan_migration(
     from_adapter = source_manifest.get("adapter")
     if from_adapter not in SUPPORTED_INSTALL_ADAPTERS:
         raise PackwrightValidationError([f"source target adapter is unsupported: {from_adapter!r}"])
+    resolved_emotion_engine_source = _coalesce_emotion_engine_source(
+        emotion_engine_source,
+        emotion_engine_codex_source,
+    )
+    emotion_state_source = (
+        _select_emotion_state_source(source_target_dir)
+        if include_emotion_state
+        else None
+    )
 
     mechanism_file = _resolve_migration_mechanism_path(source_target_dir, source_manifest, mechanism_path)
     embedded_mechanism = mechanism_file == source_target_dir / SPEC_PATH
@@ -407,7 +471,11 @@ def plan_migration(
         upgrade_adapter_support=upgrade_adapter_support,
     )
     resolved_parameters = _migration_resolved_parameters(source_manifest, parameters)
-    resolved = mechanism if embedded_mechanism and not parameters else resolve_mechanism(mechanism, resolved_parameters)
+    resolved = (
+        normalize_mechanism(mechanism)
+        if embedded_mechanism and not parameters
+        else resolve_mechanism(mechanism, resolved_parameters)
+    )
     pack = _compile_pack_for_adapter(
         to_adapter,
         resolved,
@@ -429,7 +497,8 @@ def plan_migration(
         from_adapter,
         to_adapter,
         include_emotion_state=include_emotion_state,
-        emotion_engine_codex_source=emotion_engine_codex_source,
+        emotion_engine_source=resolved_emotion_engine_source,
+        emotion_state_source=emotion_state_source,
         emotion_style=emotion_style,
         emotion_engine_mode=emotion_engine_mode,
     )
@@ -459,6 +528,10 @@ def plan_migration(
         "summary": {name: len(items) for name, items in changes.items()},
         "conflicts": conflicts,
         "mechanism_changes": mechanism_changes,
+        "emotion_engine_state": _migration_emotion_state_report(
+            emotion_state_source,
+            runtime_active=_migrate_should_include_emotion_engine(resolved_emotion_engine_source),
+        ),
         "score": {
             "planned": planned_score,
             "installed": None,
@@ -477,7 +550,8 @@ def plan_migration(
         pack_dir=resolved_pack_dir,
         force=force,
         include_emotion_state=include_emotion_state,
-        emotion_engine_codex_source=emotion_engine_codex_source,
+        emotion_engine_source=resolved_emotion_engine_source,
+        emotion_state_source=emotion_state_source,
         emotion_style=emotion_style,
         emotion_engine_mode=emotion_engine_mode,
         report=report,
@@ -525,11 +599,9 @@ def apply_migration(plan):
             plan.target_dir,
             adapter=plan.to_adapter,
             force=plan.force,
-            include_emotion_engine_codex=_migrate_should_include_emotion_engine_codex(
-                plan.to_adapter,
-                plan.emotion_engine_codex_source,
-            ),
-            emotion_engine_codex_source=plan.emotion_engine_codex_source,
+            include_emotion_engine=_migrate_should_include_emotion_engine(plan.emotion_engine_source),
+            emotion_engine_source=plan.emotion_engine_source,
+            emotion_state_source=plan.emotion_state_source,
             emotion_style=plan.emotion_style,
             emotion_engine_mode=plan.emotion_engine_mode,
         )
@@ -538,11 +610,11 @@ def apply_migration(plan):
             plan.target_dir,
             plan.resolved,
             plan.to_adapter,
+            emotion_engine_active=_migrate_should_include_emotion_engine(plan.emotion_engine_source),
         )
         state_snapshots = _copy_emotion_state_snapshot(
-            plan.source_target_dir,
             plan.target_dir,
-            plan.include_emotion_state,
+            plan.emotion_state_source,
         )
     finally:
         if temp_pack is not None:
@@ -567,8 +639,17 @@ def apply_migration(plan):
             "installed_artifacts": install_result["installed_artifacts"],
             "stale_removed": sorted(set(pack_stale_removed + install_result.get("stale_removed", []))),
             "portable_state": portable_result["copied"],
+            "unmanaged_skills": sorted(
+                item["path"]
+                for item in plan.report["changes"]["carried"]
+                if item["path"].startswith("skills/")
+            ),
             "memory_projection": portable_result["rewritten"],
             "state_snapshots": state_snapshots,
+            "emotion_engine_state": _migration_emotion_state_report(
+                plan.emotion_state_source,
+                runtime_active=_migrate_should_include_emotion_engine(plan.emotion_engine_source),
+            ),
             "runtime_exclusions": _migration_runtime_exclusions(
                 plan.source_target_dir,
                 plan.source_manifest,
@@ -591,18 +672,26 @@ def _plan_migration_changes(
     from_adapter,
     to_adapter,
     include_emotion_state,
-    emotion_engine_codex_source,
+    emotion_engine_source,
+    emotion_state_source,
     emotion_style,
     emotion_engine_mode,
 ):
     carried = []
     rewritten = []
+    emotion_engine_active = _migrate_should_include_emotion_engine(emotion_engine_source)
     source_files = _portable_source_files(source_target_dir)
     for rel_path, source_path in source_files.items():
         source_bytes = source_path.read_bytes()
         if rel_path in {"memory/index.md", "memory/pinned.md", "memory/source-map.md"}:
             source_text = source_bytes.decode("utf-8")
-            projected = project_memory_file(resolved, to_adapter, rel_path, source_text)
+            projected = project_memory_file(
+                resolved,
+                to_adapter,
+                rel_path,
+                source_text,
+                emotion_engine_active=emotion_engine_active,
+            )
             projected_bytes = projected.encode("utf-8")
             if projected_bytes != source_bytes:
                 rewritten.append(
@@ -618,26 +707,30 @@ def _plan_migration_changes(
             {
                 "path": rel_path,
                 "sha256": _sha256_bytes(source_bytes),
-                "reason": "copied without content changes",
+                "reason": (
+                    "carried unmanaged root skill; not a Packwright-managed projection"
+                    if rel_path.startswith("skills/")
+                    else "copied without content changes"
+                ),
             }
         )
 
-    state_path = source_target_dir / EMOTION_ENGINE_CODEX_STATE_PATH
     warnings = []
-    if include_emotion_state and state_path.is_file():
+    if include_emotion_state and emotion_state_source:
         carried.append(
             {
-                "path": EMOTION_ENGINE_CODEX_STATE_PATH,
-                "sha256": _file_sha256(state_path),
+                "path": EMOTION_ENGINE_STATE_PATH,
+                "source_path": str(emotion_state_source.relative_to(source_target_dir.resolve())),
+                "sha256": _file_sha256(emotion_state_source),
                 "reason": "copied as project-local runtime state snapshot",
             }
         )
-        if to_adapter != "codex":
+        if not emotion_engine_active:
             warnings.append(
                 {
                     "id": "emotion_state_snapshot_inert",
-                    "path": EMOTION_ENGINE_CODEX_STATE_PATH,
-                    "message": f"snapshot is carried but inactive in the {to_adapter} target",
+                    "path": EMOTION_ENGINE_STATE_PATH,
+                    "message": "state is carried as a recovery snapshot because no Emotion Engine source was supplied",
                 }
             )
 
@@ -658,28 +751,29 @@ def _plan_migration_changes(
         }
         generated_by_path[rel_path] = entry
 
-    if _migrate_should_include_emotion_engine_codex(to_adapter, emotion_engine_codex_source):
-        sidecar_plan = _prepare_emotion_engine_codex_install(
+    if emotion_engine_active:
+        sidecar_plan = _prepare_emotion_engine_install(
             target_dir,
-            emotion_engine_codex_source,
+            emotion_engine_source,
+            adapter=to_adapter,
             force=True,
             emotion_style=emotion_style,
             emotion_engine_mode=emotion_engine_mode or _manifest_emotion_engine_mode(target_manifest),
             manifest=target_manifest,
         )
-        for rel_path, _, _ in _emotion_engine_codex_projection_files(sidecar_plan):
+        for rel_path in sidecar_plan["projection"]:
             generated_by_path[rel_path] = {
                 "path": rel_path,
-                "reason": "generated Codex sidecar projection",
+                "reason": "generated adapter-native Emotion Engine projection",
             }
-        generated_by_path[EMOTION_ENGINE_CODEX_WRAPPER_PATH] = {
-            "path": EMOTION_ENGINE_CODEX_WRAPPER_PATH,
-            "reason": "generated Codex sidecar wrapper",
+        generated_by_path[sidecar_plan["mcp_config"]["path"]] = {
+            "path": sidecar_plan["mcp_config"]["path"],
+            "reason": "merged project-local Emotion Engine MCP entry",
         }
-        if EMOTION_ENGINE_CODEX_STATE_PATH not in carried_paths:
-            generated_by_path[EMOTION_ENGINE_CODEX_STATE_PATH] = {
-                "path": EMOTION_ENGINE_CODEX_STATE_PATH,
-                "reason": "initialized Codex sidecar runtime state",
+        if EMOTION_ENGINE_STATE_PATH not in carried_paths:
+            generated_by_path[EMOTION_ENGINE_STATE_PATH] = {
+                "path": EMOTION_ENGINE_STATE_PATH,
+                "reason": "initialized Emotion Engine runtime state",
             }
 
     excluded = _plan_migration_exclusions(
@@ -733,7 +827,10 @@ def _plan_migration_exclusions(
 ):
     source_artifacts = set(_manifest_artifacts(source_manifest))
     source_artifacts.update(
-        artifact for artifact in EMOTION_ENGINE_CODEX_ARTIFACTS if (source_target_dir / artifact).is_file()
+        artifact for artifact in emotion_engine_artifacts(from_adapter) if (source_target_dir / artifact).is_file()
+    )
+    source_artifacts.update(
+        path for path in EMOTION_ENGINE_LEGACY_STATE_PATHS if (source_target_dir / path).is_file()
     )
     source_entry = _adapter_entry_artifact(source_manifest, from_adapter)
     excluded = []
@@ -750,15 +847,15 @@ def _plan_migration_exclusions(
                 "path": rel_path,
                 "reason": "replaced by the destination adapter manifest",
             }
-        elif rel_path == EMOTION_ENGINE_CODEX_STATE_PATH and not include_emotion_state:
+        elif rel_path in {EMOTION_ENGINE_STATE_PATH, *EMOTION_ENGINE_LEGACY_STATE_PATHS} and not include_emotion_state:
             item = {
                 "id": "emotion_state_excluded",
                 "path": rel_path,
                 "reason": "excluded by --no-emotion-state",
             }
-        elif rel_path.startswith(f"{EMOTION_ENGINE_CODEX_SKILL_DIR}/") or rel_path == EMOTION_ENGINE_CODEX_WRAPPER_PATH:
+        elif rel_path in set(emotion_engine_artifacts(from_adapter)) - {EMOTION_ENGINE_STATE_PATH}:
             item = {
-                "id": "codex_runtime_sidecar_excluded",
+                "id": "source_emotion_engine_projection_excluded",
                 "path": rel_path,
                 "reason": f"the {to_adapter} target receives its own runtime projection",
             }
@@ -813,7 +910,7 @@ def _verify_migration_source(changes, source_target_dir):
     checks = []
     issues = []
     for item in changes["carried"]:
-        path = source_target_dir / item["path"]
+        path = source_target_dir / item.get("source_path", item["path"])
         actual = _file_sha256(path) if path.is_file() else None
         passed = actual == item["sha256"]
         checks.append({"path": item["path"], "passed": passed})
@@ -923,7 +1020,7 @@ def _refresh_artifact_lock(target_dir):
     manifest = _load_manifest(target_dir)
     artifacts = {}
     for rel_path in _manifest_artifacts(manifest):
-        if rel_path == LOCK_PATH:
+        if rel_path in {LOCK_PATH, EMOTION_ENGINE_STATE_PATH}:
             continue
         path = resolve_source_path(target_dir, rel_path, "installed artifact")
         artifacts[rel_path] = _file_sha256(path)
@@ -941,7 +1038,7 @@ def _update_artifact_lock_paths(target_dir, rel_paths):
         return False
     locked = _load_artifact_lock(target_dir)
     for rel_path in rel_paths:
-        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_CODEX_STATE_PATH:
+        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_STATE_PATH:
             continue
         path = resolve_source_path(target_dir, rel_path, "managed artifact")
         locked[rel_path] = _file_sha256(path)
@@ -963,7 +1060,7 @@ def _artifact_lock_doctor_issues(target_dir, manifest):
 
     issues = []
     for rel_path, expected_hash in sorted(locked.items()):
-        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_CODEX_STATE_PATH:
+        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_STATE_PATH:
             continue
         try:
             path = resolve_source_path(target_dir, rel_path, "managed artifact")
@@ -986,8 +1083,8 @@ def _artifact_lock_doctor_issues(target_dir, manifest):
         if (
             rel_path == LOCK_PATH
             or _is_portable_path(rel_path)
-            or rel_path == EMOTION_ENGINE_CODEX_STATE_PATH
-            or rel_path in EMOTION_ENGINE_CODEX_ARTIFACTS
+            or rel_path == EMOTION_ENGINE_STATE_PATH
+            or rel_path in emotion_engine_artifacts(manifest.get("adapter"))
         ):
             continue
         if rel_path not in locked:
@@ -1083,108 +1180,15 @@ def _prepare_migration_mechanism(data, to_adapter, slug=None, upgrade_adapter_su
 
 
 def _ensure_current_adapter_contract(data, to_adapter):
-    changes = []
-    targets = data.setdefault("targets", {})
-    supported = targets.setdefault("supported", [])
-    for adapter in sorted(SUPPORTED_INSTALL_ADAPTERS):
-        if adapter not in supported:
-            supported.append(adapter)
-            changes.append({"id": "target_supported_added", "adapter": adapter})
-
-    projection = data.setdefault("emotion", {}).setdefault("projection", {})
-    for adapter in sorted(SUPPORTED_INSTALL_ADAPTERS):
-        if adapter not in projection:
-            projection[adapter] = (
-                "optional_sidecar_when_explicitly_enabled" if adapter == "codex" else "spec_guided_behavior_only"
-            )
-            changes.append({"id": "emotion_projection_added", "adapter": adapter})
-
-    outputs = data.setdefault("outputs", {})
-    for adapter in sorted(SUPPORTED_INSTALL_ADAPTERS):
-        expected = _adapter_output_artifacts(data, adapter)
-        if adapter not in outputs:
-            outputs[adapter] = {"kind": "adapter_pack", "artifacts": expected}
-            changes.append({"id": "outputs_added", "adapter": adapter})
-            continue
-        config = outputs[adapter]
-        if not isinstance(config, dict):
-            outputs[adapter] = {"kind": "adapter_pack", "artifacts": expected}
-            changes.append({"id": "outputs_replaced", "adapter": adapter})
-            continue
-        config.setdefault("kind", "adapter_pack")
-        artifacts = config.setdefault("artifacts", [])
-        if not isinstance(artifacts, list):
-            config["artifacts"] = expected
-            changes.append({"id": "outputs_artifacts_replaced", "adapter": adapter})
-            continue
-        missing = [artifact for artifact in expected if artifact not in artifacts]
-        if missing:
-            artifacts.extend(missing)
-            changes.append({"id": "outputs_artifacts_added", "adapter": adapter, "count": len(missing)})
-
-    coverage = data.setdefault("coverage", {}).setdefault("implemented_by", {})
-    adapter_projection = coverage.setdefault("adapter_projection", [])
-    output_ref = f"outputs.{to_adapter}"
-    if isinstance(adapter_projection, list) and output_ref not in adapter_projection:
-        adapter_projection.append(output_ref)
-        changes.append({"id": "coverage_adapter_projection_added", "adapter": to_adapter})
-    return changes
-
-
-def _adapter_output_artifacts(mechanism, adapter):
-    skill_path = save_context_skill_path(mechanism, adapter)
-    prefix = reference_prefix(mechanism, adapter)
-    slug = character_slug(mechanism)
-    entry_file = "AGENTS.md" if adapter == "codex" else "CLAUDE.md"
-    if adapter == "cursor":
-        entry_file = f".cursor/rules/{slug}.mdc"
-    artifacts = [
-        entry_file,
-        skill_path,
-        f"{prefix}/identity/persona.md",
-        f"{prefix}/identity/voice.md",
-        f"{prefix}/identity/relationship.md",
-        f"{prefix}/operating/principles.md",
-        f"{prefix}/operating/boundaries.md",
-        f"{prefix}/mechanism/context-loading.yaml",
-        f"{prefix}/mechanism/session-guards.yaml",
-        f"{prefix}/mechanism/memory-policy.yaml",
-        f"{prefix}/projection/platform-capabilities.yaml",
-        f"{prefix}/projection/ownership-contract.yaml",
-        f"{prefix}/emotion/model.yaml",
-        f"{prefix}/emotion/state-schema.yaml",
-        f"{prefix}/emotion/update-policy.yaml",
-        f"{prefix}/emotion/voice-modulation.yaml",
-        f"{prefix}/emotion/memory-events.yaml",
-        f"{prefix}/source-skills/save-context/SKILL.md",
-    ]
-    if adapter == "claude-code":
-        artifacts.append(".claude/settings.local.json.example")
-    if adapter == "cursor":
-        artifacts.append(f".cursor/rules/{slug}-memory.mdc")
-        artifacts.extend(HANDOFF_ARTIFACTS)
-    artifacts.extend(
-        [
-            "memory/index.md",
-            "memory/profile.md",
-            "memory/session-index.md",
-            "memory/source-map.md",
-            "memory/collaboration.md",
-            "memory/recent-activity.md",
-            "memory/pinned.md",
-            "memory/workstreams.md",
-            "memory/workstreams/_template.md",
-            "memory/projects/_template.md",
-            "memory/todos.md",
-            "memory/knowledge_map.md",
-            "memory/relationship-state.md",
-            "memory/emotion-state.json.example",
-            *knowledge_artifacts(),
-            *workspace_artifacts(),
-            "manifest.json",
-        ]
-    )
-    return artifacts
+    version = str(data.get("version"))
+    if version in {"0.5", "0.6"}:
+        return [{
+            "id": "legacy_contract_normalized",
+            "from_version": version,
+            "to_version": "0.7",
+            "adapter": to_adapter,
+        }]
+    return []
 
 
 def _migration_resolved_parameters(source_manifest, parameters):
@@ -1194,26 +1198,36 @@ def _migration_resolved_parameters(source_manifest, parameters):
     return result
 
 
-def _migrate_should_include_emotion_engine_codex(to_adapter, emotion_engine_codex_source):
-    if to_adapter != "codex":
-        return False
-    return bool(emotion_engine_codex_source or os.environ.get("PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR"))
+def _migrate_should_include_emotion_engine(emotion_engine_source):
+    return bool(
+        emotion_engine_source
+        or os.environ.get("PACKWRIGHT_EMOTION_ENGINE_DIR")
+        or os.environ.get("PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR")
+    )
+
+
+def _migration_emotion_state_report(state_source, runtime_active):
+    if runtime_active:
+        status = "active"
+    elif state_source:
+        status = "snapshot_inert"
+    else:
+        status = "not_carried"
+    return {
+        "path": EMOTION_ENGINE_STATE_PATH if runtime_active or state_source else None,
+        "status": status,
+        "source_path": str(state_source) if state_source else None,
+        "will_initialize": bool(runtime_active and not state_source),
+    }
 
 
 def _compile_pack_for_adapter(adapter, resolved, references):
-    if adapter == "codex":
-        from packwright.adapters import compile_to_codex_pack
+    from packwright.adapters import compile_adapter_pack
 
-        return compile_to_codex_pack(resolved, references=references)
-    if adapter == "claude-code":
-        from packwright.adapters import compile_to_claude_code_pack
-
-        return compile_to_claude_code_pack(resolved, references=references)
-    if adapter == "cursor":
-        from packwright.adapters import compile_to_cursor_pack
-
-        return compile_to_cursor_pack(resolved, references=references)
-    raise PackwrightValidationError([f"unsupported adapter: {adapter}"])
+    try:
+        return compile_adapter_pack(adapter, resolved, references=references)
+    except ValueError as exc:
+        raise PackwrightValidationError([str(exc)]) from exc
 
 
 def _write_pack_to_dir(pack, out_dir, force=False):
@@ -1254,6 +1268,8 @@ def _remove_stale_manifest_artifacts(root_dir, next_artifacts, preserve_portable
     removed = []
     for artifact in sorted(set(previous_artifacts) - set(next_artifacts), key=lambda item: len(Path(item).parts), reverse=True):
         if preserve_portable and _is_portable_path(artifact):
+            continue
+        if artifact in {EMOTION_ENGINE_STATE_PATH, *EMOTION_ENGINE_LEGACY_STATE_PATHS}:
             continue
         path = resolve_destination_path(root_dir, artifact, "stale artifact destination")
         if not path.exists():
@@ -1447,7 +1463,10 @@ def _append_legacy_codex_skill_issues(target_dir, manifest, issues, seen):
     pairs = []
     if slug:
         pairs.append((f".codex/skills/{slug}-save-context", f".agents/skills/{slug}-save-context"))
-    pairs.append((EMOTION_ENGINE_CODEX_LEGACY_SKILL_DIR, EMOTION_ENGINE_CODEX_SKILL_DIR))
+    pairs.append((
+        EMOTION_ENGINE_CODEX_LEGACY_SKILL_DIR,
+        emotion_engine_skill_path("codex").rsplit("/", 1)[0],
+    ))
     for legacy, canonical in pairs:
         legacy_path = target_dir / legacy
         if not legacy_path.exists():
@@ -1471,7 +1490,11 @@ def _fix_legacy_codex_skills(target_dir, issues):
         if issue.get("id") != "legacy_codex_skill_layout":
             continue
         legacy = issue["path"]
-        canonical = legacy.replace(".codex/skills/", ".agents/skills/", 1)
+        canonical = (
+            emotion_engine_skill_path("codex").rsplit("/", 1)[0]
+            if legacy == EMOTION_ENGINE_CODEX_LEGACY_SKILL_DIR
+            else legacy.replace(".codex/skills/", ".agents/skills/", 1)
+        )
         source = resolve_destination_path(target_dir, legacy, "legacy skill source")
         destination = resolve_destination_path(target_dir, canonical, "canonical skill destination")
         if not source.exists() or destination.exists():
@@ -1500,7 +1523,13 @@ def _fix_legacy_codex_skills(target_dir, issues):
     return fixed
 
 
-def _copy_migrated_portable_state(source_target_dir, target_dir, resolved, to_adapter):
+def _copy_migrated_portable_state(
+    source_target_dir,
+    target_dir,
+    resolved,
+    to_adapter,
+    emotion_engine_active=False,
+):
     _portable_source_files(source_target_dir)
     copied = []
     for rel_path in PORTABLE_STATE_DIRS:
@@ -1514,34 +1543,45 @@ def _copy_migrated_portable_state(source_target_dir, target_dir, resolved, to_ad
             shutil.rmtree(destination)
         shutil.copytree(source, destination)
         copied.append(rel_path)
-    rewritten = _rewrite_migrated_memory_files(target_dir, resolved, to_adapter)
+    rewritten = _rewrite_migrated_memory_files(
+        target_dir,
+        resolved,
+        to_adapter,
+        emotion_engine_active=emotion_engine_active,
+    )
     return {"copied": copied, "rewritten": rewritten}
 
 
-def _rewrite_migrated_memory_files(target_dir, resolved, to_adapter):
+def _rewrite_migrated_memory_files(target_dir, resolved, to_adapter, emotion_engine_active=False):
     rewritten = []
     for rel_path in ("memory/index.md", "memory/pinned.md", "memory/source-map.md"):
         path = target_dir / rel_path
         if not path.is_file():
             continue
         original = path.read_text(encoding="utf-8")
-        projected = project_memory_file(resolved, to_adapter, rel_path, original)
+        projected = project_memory_file(
+            resolved,
+            to_adapter,
+            rel_path,
+            original,
+            emotion_engine_active=emotion_engine_active,
+        )
         if projected != original:
             path.write_text(projected, encoding="utf-8")
             rewritten.append(rel_path)
     return rewritten
 
 
-def _copy_emotion_state_snapshot(source_target_dir, target_dir, include_emotion_state):
-    if not include_emotion_state:
+def _copy_emotion_state_snapshot(target_dir, source):
+    if source is None:
         return []
-    source = source_target_dir / EMOTION_ENGINE_CODEX_STATE_PATH
     if not source.is_file():
         return []
-    destination = target_dir / EMOTION_ENGINE_CODEX_STATE_PATH
+    destination = target_dir / EMOTION_ENGINE_STATE_PATH
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-    return [EMOTION_ENGINE_CODEX_STATE_PATH]
+    if source.resolve() != destination.resolve():
+        shutil.copy2(source, destination)
+    return [EMOTION_ENGINE_STATE_PATH]
 
 
 def _migration_runtime_exclusions(source_target_dir, source_manifest, from_adapter, to_adapter, state_snapshots):
@@ -1554,19 +1594,14 @@ def _migration_runtime_exclusions(source_target_dir, source_manifest, from_adapt
             "path": source_entry,
             "reason": f"replaced by {to_adapter} adapter entry",
         })
-    if from_adapter == "codex" and to_adapter != "codex":
-        for rel_path in (EMOTION_ENGINE_CODEX_SKILL_DIR, EMOTION_ENGINE_CODEX_WRAPPER_PATH):
-            if (source_target_dir / rel_path).exists():
-                exclusions.append({
-                    "id": "codex_runtime_sidecar_excluded",
-                    "path": rel_path,
-                    "reason": f"{to_adapter} target does not install the Codex sidecar",
-                })
-        if state_snapshots:
+    for rel_path in emotion_engine_artifacts(from_adapter):
+        if rel_path == EMOTION_ENGINE_STATE_PATH or not (source_target_dir / rel_path).exists():
+            continue
+        if rel_path not in emotion_engine_artifacts(to_adapter):
             exclusions.append({
-                "id": "emotion_state_snapshot_inert",
-                "path": EMOTION_ENGINE_CODEX_STATE_PATH,
-                "reason": f"copied as a snapshot; {to_adapter} has no active Codex sidecar",
+                "id": "source_emotion_engine_projection_excluded",
+                "path": rel_path,
+                "reason": f"{to_adapter} receives its own runtime projection",
             })
     return exclusions
 
@@ -1629,103 +1664,334 @@ def _manifest_emotion_engine_mode(manifest):
     return "light"
 
 
-def _prepare_emotion_engine_codex_install(target_dir, source, force, emotion_style, emotion_engine_mode, manifest):
-    source_dir = _resolve_emotion_engine_codex_source(source)
-    required = [
-        source_dir / "SKILL.md",
-        source_dir / "README.md",
-        source_dir / "install.sh",
-        source_dir / "scripts" / "codex_emotion.sh",
-        source_dir / "scripts" / "pulse_demo.py",
-    ]
-    missing = [str(path) for path in required if not path.is_file()]
-    shared = {
-        "scripts/emotion_engine_utils.py": _shared_source(source_dir, "scripts/emotion_engine_utils.py"),
-        "scripts/emotion_engine_mcp.py": _shared_source(source_dir, "scripts/emotion_engine_mcp.py"),
-        "scripts/register_mcp_client.py": _shared_source(source_dir, "scripts/register_mcp_client.py"),
-        "emotion-state-template.json": _shared_source(source_dir, "emotion-state-template.json"),
-        "spec/emotion-state.schema.json": _shared_source(source_dir, "spec/emotion-state.schema.json", required=False),
-        "LICENSE": _shared_source(source_dir, "LICENSE", required=False),
+def _resolve_emotion_engine_arguments(
+    include_emotion_engine,
+    emotion_engine_source,
+    include_emotion_engine_codex,
+    emotion_engine_codex_source,
+):
+    source = _coalesce_emotion_engine_source(emotion_engine_source, emotion_engine_codex_source)
+    if include_emotion_engine is None:
+        include = bool(include_emotion_engine_codex)
+    elif include_emotion_engine_codex and not include_emotion_engine:
+        raise PackwrightValidationError([
+            "conflicting Emotion Engine flags: generic install is disabled while the deprecated Codex flag is enabled"
+        ])
+    else:
+        include = bool(include_emotion_engine)
+    return include, source
+
+
+def _coalesce_emotion_engine_source(source, legacy_source):
+    if source and legacy_source and Path(source).resolve() != Path(legacy_source).resolve():
+        raise PackwrightValidationError([
+            "--emotion-engine-source and --emotion-engine-codex-source point to different directories"
+        ])
+    return source or legacy_source
+
+
+def _prepare_emotion_engine_install(
+    target_dir,
+    source,
+    adapter,
+    force,
+    emotion_style,
+    emotion_engine_mode,
+    manifest,
+    state_source=None,
+):
+    source_root, legacy_source = _resolve_emotion_engine_source(source)
+    common = {
+        target_path: source_root / source_path
+        for target_path, source_path in EMOTION_ENGINE_COMMON_SOURCE_FILES.items()
     }
+    missing = [str(path) for path in common.values() if not path.is_file()]
+    skill_source = _emotion_engine_skill_source(source_root, adapter, legacy_source)
+    if adapter != "cursor" and not skill_source.is_file():
+        missing.append(str(skill_source))
     if missing:
-        raise PackwrightValidationError([f"Emotion Engine Codex source is missing required file: {path}" for path in missing])
-    _validate_emotion_engine_codex_source(source_dir, shared)
+        raise PackwrightValidationError([
+            f"Emotion Engine v{EMOTION_ENGINE_VERSION} source is missing required file: {path}"
+            for path in missing
+        ])
+    _validate_emotion_engine_source(source_root, common, skill_source, adapter)
 
-    skill_dir = target_dir / EMOTION_ENGINE_CODEX_SKILL_DIR
-    if skill_dir.exists() and not force:
-        raise PackwrightValidationError(
-            [
-                "target already contains Emotion Engine Codex sidecar; rerun with --force after reviewing it",
-                f"existing target artifact: {skill_dir.relative_to(target_dir)}",
-            ]
-        )
+    projection = {
+        rel_path: source_path.read_bytes()
+        for rel_path, source_path in common.items()
+    }
+    upstream_skill = skill_source.read_text(encoding="utf-8") if skill_source.is_file() else ""
+    projection[emotion_engine_skill_path(adapter)] = _project_emotion_skill_text(
+        adapter,
+        upstream_skill,
+    ).encode("utf-8")
+    projection[EMOTION_ENGINE_WRAPPER_PATH] = _project_emotion_wrapper_text().encode("utf-8")
+    projection[EMOTION_ENGINE_MCP_WRAPPER_PATH] = _project_emotion_mcp_wrapper_text().encode("utf-8")
 
+    existing = [path for path in projection if (target_dir / path).exists()]
+    if existing and not force:
+        raise PackwrightValidationError([
+            "target already contains Emotion Engine files; rerun with --force after reviewing them",
+            *[f"existing target artifact: {path}" for path in existing],
+        ])
+
+    selected_state = _select_emotion_state_source(target_dir, explicit=state_source)
+    if selected_state:
+        issue = _emotion_engine_state_issue_for_path(selected_state)
+        if issue:
+            raise PackwrightValidationError([issue["message"] + f": {selected_state}"])
+
+    config_plan = _prepare_emotion_engine_mcp_config(target_dir, adapter, force)
+    source_digest = _emotion_engine_source_digest(source_root, common, skill_source)
     return {
-        "source_dir": source_dir,
-        "shared": shared,
-        "skill_dir": skill_dir,
-        "state_file": target_dir / EMOTION_ENGINE_CODEX_STATE_PATH,
+        "adapter": adapter,
+        "source_root": source_root,
+        "projection": projection,
+        "source_digest": source_digest,
+        "state_file": target_dir / EMOTION_ENGINE_STATE_PATH,
+        "state_source": selected_state,
         "emotion_style": emotion_style or _manifest_emotion_style(manifest),
         "relationship_continuity": _manifest_relationship_continuity(manifest),
         "mode": emotion_engine_mode,
         "force": force,
+        "mcp_config": config_plan,
     }
 
 
-def _resolve_emotion_engine_codex_source(source):
-    raw = source or os.environ.get("PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR")
+def _resolve_emotion_engine_source(source):
+    raw = (
+        source
+        or os.environ.get("PACKWRIGHT_EMOTION_ENGINE_DIR")
+        or os.environ.get("PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR")
+    )
     if not raw:
         raise PackwrightValidationError([
-            "Emotion Engine Codex source directory is required; pass --emotion-engine-codex-source "
-            "or set PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR"
+            "Emotion Engine source directory is required; pass --emotion-engine-source "
+            "or set PACKWRIGHT_EMOTION_ENGINE_DIR (deprecated: PACKWRIGHT_EMOTION_ENGINE_CODEX_DIR)"
         ])
-    source_dir = Path(raw)
-    if not source_dir.is_dir():
-        raise PackwrightValidationError([f"Emotion Engine Codex source directory does not exist: {source_dir}"])
-    return source_dir
+    supplied = Path(raw).expanduser().resolve()
+    if not supplied.is_dir():
+        raise PackwrightValidationError([f"Emotion Engine source directory does not exist: {supplied}"])
+    for candidate in (supplied, *supplied.parents):
+        if (
+            (candidate / "scripts" / "emotion_engine_utils.py").is_file()
+            and (candidate / "scripts" / "emotion_engine_mcp.py").is_file()
+            and (candidate / "emotion-state-template.json").is_file()
+        ):
+            return candidate, supplied
+    raise PackwrightValidationError([
+        f"cannot locate an Emotion Engine repository root from {supplied}; expected scripts/emotion_engine_utils.py"
+    ])
 
 
-def _shared_source(source_dir, rel_path, required=True):
-    direct = source_dir / rel_path
-    if direct.is_file():
-        return direct
-    repo_root = source_dir.parents[2] if len(source_dir.parents) >= 3 else source_dir
-    fallback = repo_root / rel_path
-    if fallback.is_file():
-        return fallback
-    if required:
-        raise PackwrightValidationError([f"Emotion Engine Codex source is missing required shared file: {fallback}"])
-    return None
+def _emotion_engine_skill_source(source_root, adapter, supplied):
+    if adapter in {"codex", "claude-code", "cursor"}:
+        # The v1.0.0 Codex integration is the upstream's most complete MCP-aware
+        # operating contract. Packwright projects that contract into each
+        # adapter-native location while keeping the runtime itself shared.
+        canonical = source_root / "integrations" / "codex" / "emotion-engine-codex" / "SKILL.md"
+    else:
+        raise PackwrightValidationError([f"unsupported Emotion Engine adapter: {adapter}"])
+    if canonical.is_file():
+        return canonical
+    legacy = supplied / "SKILL.md"
+    return legacy if legacy.is_file() else canonical
 
 
-def _validate_emotion_engine_codex_source(source_dir, shared):
+def _validate_emotion_engine_source(source_root, common, skill_source, adapter):
     issues = []
-    skill_text = (source_dir / "SKILL.md").read_text(encoding="utf-8")
-    wrapper_text = (source_dir / "scripts" / "codex_emotion.sh").read_text(encoding="utf-8")
-    engine_path = shared.get("scripts/emotion_engine_utils.py")
-    mcp_path = shared.get("scripts/emotion_engine_mcp.py")
-    register_path = shared.get("scripts/register_mcp_client.py")
-    engine_text = engine_path.read_text(encoding="utf-8") if engine_path else ""
-    mcp_text = mcp_path.read_text(encoding="utf-8") if mcp_path else ""
-    register_text = register_path.read_text(encoding="utf-8") if register_path else ""
-    if "settle_trust" not in skill_text:
-        issues.append("Emotion Engine Codex skill must document settle_trust")
-    if "record_policy" not in skill_text:
-        issues.append("Emotion Engine Codex skill must document record_policy")
-    if "settle_trust" not in engine_text:
-        issues.append("Emotion Engine helper must implement settle_trust")
-    if "record_policy" not in engine_text or "reply_bias" not in engine_text:
-        issues.append("Emotion Engine helper must implement deterministic record_policy with reply_bias")
+    engine_text = common[f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py"].read_text(encoding="utf-8")
+    mcp_text = common[f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py"].read_text(encoding="utf-8")
+    skill_text = skill_source.read_text(encoding="utf-8") if skill_source.is_file() else ""
+    if "emotion-engine-state/v2" not in engine_text:
+        issues.append("Emotion Engine helper must implement the v2 state schema")
+    if "settle_trust" not in engine_text or "record_policy" not in engine_text or "reply_bias" not in engine_text:
+        issues.append("Emotion Engine helper must implement settle_trust and deterministic record_policy with reply_bias")
+    if f'SERVER_VERSION = "{EMOTION_ENGINE_VERSION}"' not in mcp_text:
+        issues.append(f"Emotion Engine MCP server must report version {EMOTION_ENGINE_VERSION}")
     if "tools/list" not in mcp_text or "emotion_engine_record_policy" not in mcp_text:
         issues.append("Emotion Engine MCP server must expose record_policy through tools/list")
     if "emotion_engine_repair" in mcp_text or "doctor_target" in mcp_text:
         issues.append("Emotion Engine MCP server must not expose Packwright repair commands")
-    if "codex" not in register_text or "state" not in register_text:
-        issues.append("Emotion Engine MCP registration helper must support Codex client registration")
-    if "exec \"$PYTHON\" \"$ENGINE\" \"$COMMAND\" \"$STATE_FILE\"" not in wrapper_text:
-        issues.append("Emotion Engine Codex wrapper must forward commands to the shared helper")
+    if adapter != "cursor" and ("settle_trust" not in skill_text or "record_policy" not in skill_text):
+        issues.append(f"Emotion Engine {adapter} guidance must document settle_trust and record_policy")
     if issues:
         raise PackwrightValidationError(issues)
+
+
+def _emotion_engine_source_digest(source_root, common, selected_skill):
+    files = {path.relative_to(source_root).as_posix(): path for path in common.values()}
+    for candidate in (
+        source_root / "integrations" / "codex" / "emotion-engine-codex" / "SKILL.md",
+        source_root / "integrations" / "claude-skill" / "emotion-engine" / "SKILL.md",
+        selected_skill,
+    ):
+        if candidate.is_file():
+            try:
+                key = candidate.relative_to(source_root).as_posix()
+            except ValueError:
+                key = candidate.name
+            files[key] = candidate
+    digest = hashlib.sha256()
+    for rel_path, path in sorted(files.items()):
+        digest.update(rel_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _project_emotion_skill_text(adapter, upstream_text):
+    if adapter == "cursor":
+        return """---
+description: Use the project-local Emotion Engine MCP tools for lightweight emotional continuity.
+globs: []
+alwaysApply: true
+---
+
+# Emotion Engine
+
+Use the `emotion-engine` MCP server or `scripts/emotion_engine.sh` for project-local emotional continuity.
+The live state is `.emotion-engine/state.json`; never mix it into durable `memory/*` files.
+Run `record_policy` before persisting meaningful turns, and `settle_trust` only at a real session or milestone close.
+Never expose raw PAD/trust values unless asked. Never run `reset` or `clear_log` without explicit user approval.
+"""
+    text = upstream_text
+    if adapter == "claude-code":
+        text = text.replace("Codex", "Claude Code").replace("CODEX_", "EMOTION_ENGINE_")
+    replacements = {
+        "name: emotion-engine-codex": "name: emotion-engine",
+        "scripts/codex_emotion.sh": EMOTION_ENGINE_WRAPPER_PATH,
+        "scripts/claude_emotion.sh": EMOTION_ENGINE_WRAPPER_PATH,
+        ".emotion-engine/codex-state.json": EMOTION_ENGINE_STATE_PATH,
+        ".emotion-engine/emotion-state.json": EMOTION_ENGINE_STATE_PATH,
+        ".codex/skills/emotion-engine-codex/scripts/codex_emotion.sh": EMOTION_ENGINE_WRAPPER_PATH,
+        ".agents/skills/emotion-engine-codex/scripts/codex_emotion.sh": EMOTION_ENGINE_WRAPPER_PATH,
+        ".codex/skills/emotion-engine-codex/scripts/emotion_engine_mcp.py": f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py",
+        ".agents/skills/emotion-engine-codex/scripts/emotion_engine_mcp.py": f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py",
+        ".codex/skills/emotion-engine-codex/scripts/register_mcp_client.py": f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py",
+        ".agents/skills/emotion-engine-codex/scripts/register_mcp_client.py": f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py",
+    }
+    for old, new in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        text = text.replace(old, new)
+    note = (
+        "\n> Packwright projection: use the project-local wrapper and MCP configuration above; "
+        f"live state is `{EMOTION_ENGINE_STATE_PATH}`.\n"
+    )
+    heading_end = text.find("\n", text.find("# "))
+    if heading_end != -1:
+        text = text[:heading_end + 1] + note + text[heading_end + 1:]
+    return text
+
+
+def _project_emotion_wrapper_text():
+    return f"""#!/usr/bin/env sh
+set -eu
+
+if [ "$#" -lt 1 ]; then
+  echo "usage: scripts/emotion_engine.sh <command> [args...]" >&2
+  exit 2
+fi
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+COMMAND=$1
+shift
+exec python3 "$PROJECT_DIR/{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py" "$COMMAND" "$PROJECT_DIR/{EMOTION_ENGINE_STATE_PATH}" "$@"
+"""
+
+
+def _project_emotion_mcp_wrapper_text():
+    return f"""#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+exec python3 "$PROJECT_DIR/{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py" --state "$PROJECT_DIR/{EMOTION_ENGINE_STATE_PATH}"
+"""
+
+
+def _prepare_emotion_engine_mcp_config(target_dir, adapter, force):
+    rel_path = emotion_engine_mcp_config_path(adapter)
+    path = target_dir / rel_path
+    entry = {"command": "sh", "args": [EMOTION_ENGINE_MCP_WRAPPER_PATH]}
+    if adapter == "codex":
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        rendered, conflict = _merge_codex_mcp_config(existing, entry)
+    else:
+        data = {}
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise PackwrightValidationError([f"invalid MCP config {path}: {exc}"])
+            if not isinstance(data, dict):
+                raise PackwrightValidationError([f"MCP config must contain a JSON object: {path}"])
+        servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            raise PackwrightValidationError([f"MCP config mcpServers must be an object: {path}"])
+        current = servers.get(EMOTION_ENGINE_SIDECAR)
+        conflict = current is not None and current != entry
+        servers[EMOTION_ENGINE_SIDECAR] = entry
+        rendered = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    if conflict and not force:
+        raise PackwrightValidationError([
+            f"MCP config already contains a different {EMOTION_ENGINE_SIDECAR!r} entry: {rel_path}; rerun with --force after review"
+        ])
+    return {"path": rel_path, "destination": path, "entry": entry, "rendered": rendered}
+
+
+def _prepare_installed_emotion_engine_plan(target_dir, adapter, mode, manifest):
+    """Build a source-free diagnostic plan for a self-contained installed target."""
+    feature = manifest.get("features", {}).get("emotion_engine", {})
+    return {
+        "adapter": adapter,
+        "projection": {},
+        "source_digest": feature.get("source_digest"),
+        "state_file": target_dir / EMOTION_ENGINE_STATE_PATH,
+        "state_source": _select_emotion_state_source(target_dir),
+        "mode": mode,
+        "mcp_config": _prepare_emotion_engine_mcp_config(target_dir, adapter, force=True),
+    }
+
+
+def _merge_codex_mcp_config(existing, entry):
+    header = f"[mcp_servers.{EMOTION_ENGINE_SIDECAR}]"
+    accepted_headers = {
+        header,
+        f'[mcp_servers."{EMOTION_ENGINE_SIDECAR}"]',
+        f"[mcp_servers.'{EMOTION_ENGINE_SIDECAR}']",
+    }
+    expected = (
+        f"{header}\n"
+        f"command = {json.dumps(entry['command'])}\n"
+        f"args = {json.dumps(entry['args'])}\n"
+    )
+    lines = existing.splitlines(keepends=True)
+    output = []
+    blocks = []
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() not in accepted_headers:
+            output.append(lines[index])
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines) and not lines[end].lstrip().startswith("["):
+            end += 1
+        blocks.append("".join(lines[index:end]).strip())
+        if len(blocks) == 1:
+            output.append(expected)
+        index = end
+    if blocks:
+        conflict = len(blocks) != 1 or blocks[0] != expected.strip()
+        rendered = "".join(output)
+    else:
+        conflict = False
+        separator = "" if not existing else ("\n" if existing.endswith("\n") else "\n\n")
+        rendered = existing + separator + expected
+    if rendered and not rendered.endswith("\n"):
+        rendered += "\n"
+    return rendered, conflict
 
 
 def _manifest_emotion_style(manifest):
@@ -1741,59 +2007,39 @@ def _manifest_relationship_continuity(manifest):
     return "warm_selective"
 
 
-def _emotion_engine_codex_projection_files(plan):
-    skill_dir = plan["skill_dir"]
-    source_dir = plan["source_dir"]
-    files = [
-        ("SKILL.md", source_dir / "SKILL.md"),
-        ("README.md", source_dir / "README.md"),
-        ("install.sh", source_dir / "install.sh"),
-        ("scripts/codex_emotion.sh", source_dir / "scripts" / "codex_emotion.sh"),
-        ("scripts/pulse_demo.py", source_dir / "scripts" / "pulse_demo.py"),
-    ]
-    files.extend((rel_path, source_path) for rel_path, source_path in plan["shared"].items() if source_path is not None)
-    return [
-        (
-            f"{EMOTION_ENGINE_CODEX_SKILL_DIR}/{rel_path}",
-            skill_dir / rel_path,
-            source_path,
-        )
-        for rel_path, source_path in files
-    ]
-
-
-def _emotion_engine_codex_expected_in_target(manifest, target_dir):
-    if emotion_engine_codex_expected(manifest):
+def _emotion_engine_expected_in_target(manifest, target_dir):
+    if emotion_engine_expected(manifest):
         return True
-    return any((target_dir / artifact).exists() for artifact in EMOTION_ENGINE_CODEX_ARTIFACTS)
+    adapter = manifest.get("adapter")
+    if adapter not in SUPPORTED_INSTALL_ADAPTERS:
+        return False
+    return any((target_dir / artifact).exists() for artifact in emotion_engine_artifacts(adapter))
 
 
-def _emotion_engine_codex_doctor_issues(target_dir, manifest, plan):
+def _emotion_engine_doctor_issues(target_dir, manifest, plan):
     issues = []
-    expected_artifacts = {EMOTION_ENGINE_CODEX_WRAPPER_PATH, EMOTION_ENGINE_CODEX_STATE_PATH}
+    adapter = plan["adapter"]
+    expected_artifacts = set(emotion_engine_artifacts(adapter))
 
-    for rel_path, target_path, source_path in _emotion_engine_codex_projection_files(plan):
-        expected_artifacts.add(rel_path)
+    for rel_path, expected_bytes in plan["projection"].items():
+        target_path = target_dir / rel_path
         if not target_path.is_file():
-            issues.append(_doctor_issue("emotion_engine_codex_missing_file", rel_path, "projected sidecar file is missing"))
+            issues.append(_doctor_issue("emotion_engine_missing_file", rel_path, "projected sidecar file is missing"))
             continue
-        if _read_bytes(target_path) != _read_bytes(source_path):
-            issues.append(_doctor_issue("emotion_engine_codex_file_drift", rel_path, "projected sidecar file differs from source"))
-
-    wrapper_path = target_dir / EMOTION_ENGINE_CODEX_WRAPPER_PATH
-    expected_wrapper = _project_emotion_wrapper_text()
-    if not wrapper_path.is_file():
-        issues.append(_doctor_issue("emotion_engine_codex_missing_file", EMOTION_ENGINE_CODEX_WRAPPER_PATH, "project wrapper is missing"))
-    elif wrapper_path.read_text(encoding="utf-8") != expected_wrapper:
-        issues.append(_doctor_issue("emotion_engine_codex_file_drift", EMOTION_ENGINE_CODEX_WRAPPER_PATH, "project wrapper differs from expected projection"))
+        if _read_bytes(target_path) != expected_bytes:
+            issues.append(_doctor_issue("emotion_engine_file_drift", rel_path, "projected sidecar file differs from source"))
 
     state_issue = _emotion_engine_state_issue(plan["state_file"])
     if state_issue:
         issues.append(state_issue)
 
+    config_issue = _emotion_engine_mcp_config_issue(target_dir, plan["mcp_config"], adapter)
+    if config_issue:
+        issues.append(config_issue)
+
     mode = plan["mode"]
     issues.extend(
-        emotion_engine_codex_manifest_diagnostics(
+        emotion_engine_manifest_diagnostics(
             manifest,
             expected_mode=mode,
             required_artifacts=expected_artifacts,
@@ -1814,102 +2060,119 @@ def _read_bytes(path):
 
 
 def _emotion_engine_state_issue(state_file):
+    return _emotion_engine_state_issue_for_path(state_file, display_path=EMOTION_ENGINE_STATE_PATH)
+
+
+def _emotion_engine_state_issue_for_path(state_file, display_path=None):
+    display_path = display_path or str(state_file)
     if not state_file.is_file():
-        return _doctor_issue("emotion_engine_codex_missing_file", EMOTION_ENGINE_CODEX_STATE_PATH, "runtime state file is missing")
+        return _doctor_issue("emotion_engine_missing_file", display_path, "runtime state file is missing")
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return _doctor_issue("emotion_engine_codex_state_invalid", EMOTION_ENGINE_CODEX_STATE_PATH, "runtime state file is not valid JSON")
+        return _doctor_issue("emotion_engine_state_invalid", display_path, "runtime state file is not valid JSON")
     if not isinstance(state, dict) or state.get("_schema") != "emotion-engine-state/v2":
-        return _doctor_issue("emotion_engine_codex_state_invalid", EMOTION_ENGINE_CODEX_STATE_PATH, "runtime state file has an unexpected schema")
+        return _doctor_issue("emotion_engine_state_invalid", display_path, "runtime state file has an unexpected schema")
     return None
 
 
-def _install_emotion_engine_codex(target_dir, plan):
-    skill_dir = plan["skill_dir"]
-    if skill_dir.exists() and not skill_dir.is_dir():
-        raise PackwrightValidationError([f"Emotion Engine Codex skill path is not a directory: {skill_dir}"])
+def _emotion_engine_mcp_config_issue(target_dir, config_plan, adapter):
+    path = target_dir / config_plan["path"]
+    if not path.is_file():
+        return _doctor_issue("emotion_engine_mcp_config_missing", config_plan["path"], "project MCP configuration is missing")
+    expected = config_plan["entry"]
+    if adapter == "codex":
+        text = path.read_text(encoding="utf-8")
+        rendered, conflict = _merge_codex_mcp_config(text, expected)
+        if conflict:
+            return _doctor_issue("emotion_engine_mcp_config_drift", config_plan["path"], "Emotion Engine MCP entry differs from the expected project-local command")
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _doctor_issue("emotion_engine_mcp_config_invalid", config_plan["path"], "project MCP configuration is not valid JSON")
+    current = data.get("mcpServers", {}).get(EMOTION_ENGINE_SIDECAR) if isinstance(data, dict) else None
+    if current != expected:
+        return _doctor_issue("emotion_engine_mcp_config_drift", config_plan["path"], "Emotion Engine MCP entry differs from the expected project-local command")
+    return None
 
-    (skill_dir / "scripts").mkdir(parents=True, exist_ok=True)
-    (skill_dir / "spec").mkdir(parents=True, exist_ok=True)
-    for _, target_path, source_path in _emotion_engine_codex_projection_files(plan):
-        _copy_sidecar_file(source_path, target_path)
 
-    _make_executable(skill_dir / "install.sh")
-    _make_executable(skill_dir / "scripts" / "codex_emotion.sh")
-    _make_executable(skill_dir / "scripts" / "emotion_engine_mcp.py")
-    _make_executable(skill_dir / "scripts" / "register_mcp_client.py")
-    wrapper_path = _write_project_emotion_wrapper(target_dir, plan["force"])
+def _install_emotion_engine(target_dir, plan):
+    for rel_path, content in plan["projection"].items():
+        destination = resolve_destination_path(target_dir, rel_path, "Emotion Engine projection destination")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+        if rel_path in {
+            EMOTION_ENGINE_WRAPPER_PATH,
+            EMOTION_ENGINE_MCP_WRAPPER_PATH,
+            f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py",
+            f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py",
+        }:
+            _make_executable(destination)
 
-    state_created = _ensure_emotion_state(
+    state_result = _ensure_emotion_state(
         plan["state_file"],
         plan["emotion_style"],
         plan["mode"],
         plan["relationship_continuity"],
+        source=plan["state_source"],
     )
-    agents_section_added = _ensure_emotion_section(target_dir / "AGENTS.md", plan["mode"])
+    config = plan["mcp_config"]
+    config["destination"].parent.mkdir(parents=True, exist_ok=True)
+    config["destination"].write_text(config["rendered"], encoding="utf-8")
+    entry_updated = _ensure_emotion_section(
+        target_dir,
+        plan["adapter"],
+        plan["mode"],
+    )
 
     return {
-        "skill_dir": str(skill_dir),
+        "version": EMOTION_ENGINE_VERSION,
+        "upstream_commit": EMOTION_ENGINE_UPSTREAM_COMMIT,
+        "source_digest": plan["source_digest"],
+        "skill_path": emotion_engine_skill_path(plan["adapter"]),
         "state_file": str(plan["state_file"]),
-        "wrapper": str(wrapper_path),
+        "wrapper": str(target_dir / EMOTION_ENGINE_WRAPPER_PATH),
+        "mcp_config": config["path"],
+        "mcp_status": "configured_runtime_approval_may_be_required",
         "mode": plan["mode"],
-        "state_created": state_created,
-        "agents_section_added": agents_section_added,
+        **state_result,
+        "entry_updated": entry_updated,
     }
 
 
-def _mark_emotion_engine_codex_installed(target_dir, sidecar, mode):
+def _mark_emotion_engine_installed(target_dir, sidecar, adapter, mode):
     manifest_path = target_dir / "manifest.json"
     if not manifest_path.exists():
         return False
     manifest = _load_manifest(target_dir)
     manifest.setdefault("features", {})["emotion_engine"] = emotion_engine_feature(
         mode=mode,
-        adapter="codex",
+        adapter=adapter,
         installed=True,
+        source_digest=sidecar["source_digest"],
+        mcp_status=sidecar["mcp_status"],
     )
-    manifest.setdefault("sidecars", {})[EMOTION_ENGINE_CODEX_SIDECAR] = emotion_engine_codex_sidecar_record(mode)
+    manifest.setdefault("sidecars", {})[EMOTION_ENGINE_SIDECAR] = emotion_engine_sidecar_record(
+        adapter,
+        mode,
+        sidecar["source_digest"],
+        sidecar["mcp_status"],
+    )
     boundaries = manifest.setdefault("boundaries", {})
     boundaries["emotion_engine_runtime"] = EMOTION_ENGINE_RUNTIME
     boundaries["emotion_engine_mode"] = mode
     artifacts = set(manifest.get("artifacts", []))
-    artifacts.update(_existing_sidecar_artifacts(target_dir))
+    artifacts.update(_existing_sidecar_artifacts(target_dir, adapter))
     manifest["artifacts"] = sorted(artifacts)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return True
 
 
-def _existing_sidecar_artifacts(target_dir):
-    return [artifact for artifact in EMOTION_ENGINE_CODEX_ARTIFACTS if (target_dir / artifact).is_file()]
-
-
-def _copy_sidecar_file(source, destination):
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, destination)
-
-
-def _project_emotion_wrapper_text():
-    return """#!/usr/bin/env sh
-set -eu
-
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-exec "$PROJECT_DIR/{script_path}" "$@"
-""".format(script_path=EMOTION_ENGINE_CODEX_SCRIPT_PATH)
-
-
-def _write_project_emotion_wrapper(target_dir, force=False):
-    wrapper_path = target_dir / EMOTION_ENGINE_CODEX_WRAPPER_PATH
-    expected = _project_emotion_wrapper_text()
-    if wrapper_path.exists() and wrapper_path.read_text(encoding="utf-8") != expected and not force:
-        raise PackwrightValidationError([
-            "target already contains scripts/codex_emotion.sh; rerun with --force after reviewing it"
-        ])
-    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
-    wrapper_path.write_text(expected, encoding="utf-8")
-    _make_executable(wrapper_path)
-    return wrapper_path
+def _existing_sidecar_artifacts(target_dir, adapter=None):
+    if adapter is None:
+        adapter = _load_manifest(target_dir).get("adapter")
+    return [artifact for artifact in emotion_engine_artifacts(adapter) if (target_dir / artifact).is_file()]
 
 
 def _make_executable(path):
@@ -1917,10 +2180,66 @@ def _make_executable(path):
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _ensure_emotion_state(state_file, emotion_style, mode, relationship_continuity="warm_selective"):
+def _select_emotion_state_source(root_dir, explicit=None):
+    root_dir = Path(root_dir)
+    candidates = []
+    if explicit is not None:
+        explicit_path = Path(explicit).expanduser().resolve()
+        if not explicit_path.is_file():
+            raise PackwrightValidationError([f"Emotion Engine state source does not exist: {explicit_path}"])
+        candidates.append(explicit_path)
+    for rel_path in (EMOTION_ENGINE_STATE_PATH, *EMOTION_ENGINE_LEGACY_STATE_PATHS):
+        candidate = root_dir / rel_path
+        if candidate.is_file():
+            candidates.append(candidate.resolve())
+    unique = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            unique.append(candidate)
+            seen.add(key)
+    if not unique:
+        return None
+    hashes = {_file_sha256(path) for path in unique}
+    if len(hashes) > 1:
+        listed = ", ".join(str(path) for path in unique)
+        raise PackwrightValidationError([
+            "multiple Emotion Engine state candidates contain different data; choose one explicitly before install or migration",
+            f"state candidates: {listed}",
+        ])
+    canonical = (root_dir / EMOTION_ENGINE_STATE_PATH).resolve()
+    if canonical in unique:
+        return canonical
+    return unique[0]
+
+
+def _ensure_emotion_state(
+    state_file,
+    emotion_style,
+    mode,
+    relationship_continuity="warm_selective",
+    source=None,
+):
+    if source is not None:
+        source = Path(source)
+        before_hash = _file_sha256(source)
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != state_file.resolve():
+            shutil.copy2(source, state_file)
+        return {
+            "state_created": False,
+            "state_preserved": True,
+            "state_sha256": before_hash,
+            "state_migrated_from": str(source),
+        }
     if state_file.exists():
-        _update_existing_emotion_state(state_file, mode, emotion_style, relationship_continuity)
-        return False
+        return {
+            "state_created": False,
+            "state_preserved": True,
+            "state_sha256": _file_sha256(state_file),
+            "state_migrated_from": None,
+        }
     state_file.parent.mkdir(parents=True, exist_ok=True)
     profile = _infer_emotion_profile(emotion_style, relationship_continuity)
     state = {
@@ -1951,7 +2270,12 @@ def _ensure_emotion_state(state_file, emotion_style, mode, relationship_continui
         "log_limit": 200,
     }
     state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return True
+    return {
+        "state_created": True,
+        "state_preserved": False,
+        "state_sha256": _file_sha256(state_file),
+        "state_migrated_from": None,
+    }
 
 
 def _update_existing_emotion_state(state_file, mode, emotion_style, relationship_continuity):
@@ -2071,11 +2395,19 @@ def _style_traits(emotion_style):
     return words or ["calm", "direct", "lightly warm"]
 
 
-def _ensure_emotion_section(agents_path, mode):
-    if not agents_path.exists():
+def _ensure_emotion_section(target_dir, adapter, mode):
+    if adapter == "cursor":
         return False
-    text = agents_path.read_text(encoding="utf-8")
-    section = EMOTION_ENGINE_SECTION.format(mode=mode)
+    entry_path = target_dir / adapter_entry(adapter)
+    if not entry_path.exists():
+        return False
+    text = entry_path.read_text(encoding="utf-8")
+    section = EMOTION_ENGINE_SECTION.format(
+        mode=mode,
+        skill_path=emotion_engine_skill_path(adapter),
+        state_path=EMOTION_ENGINE_STATE_PATH,
+        wrapper_path=EMOTION_ENGINE_WRAPPER_PATH,
+    )
     for heading in ["## Emotion Engine", "## Optional Emotion Engine"]:
         marker = text.find(heading)
         if marker == -1:
@@ -2086,11 +2418,11 @@ def _ensure_emotion_section(agents_path, mode):
         else:
             updated = text[:marker].rstrip() + "\n\n" + section.rstrip() + "\n" + text[next_heading:]
         if updated != text:
-            agents_path.write_text(updated, encoding="utf-8")
+            entry_path.write_text(updated, encoding="utf-8")
             return True
         return False
     if text and not text.endswith("\n"):
         text += "\n"
     text += "\n" + section
-    agents_path.write_text(text, encoding="utf-8")
+    entry_path.write_text(text, encoding="utf-8")
     return True

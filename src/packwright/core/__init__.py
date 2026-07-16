@@ -1,5 +1,5 @@
 from .errors import PackwrightError, PackwrightValidationError
-from .adopt import adopt_existing
+from .adopt import adopt_existing, apply_adoption_review, plan_adoption_review
 from .character_intake import (
     generate_character_source,
     generate_character_source_from_data,
@@ -20,10 +20,12 @@ from .install import (
     install_pack,
     migrate_target,
     plan_migration,
+    refresh_emotion_engine,
     refresh_emotion_engine_codex,
 )
 from .intake_contract import render_interviewer_prompt, write_interviewer_prompt
 from .loader import load_mechanism
+from .mechanism_contract import normalize_mechanism
 from .resolver import resolve_mechanism
 from .validation import file_exists, path_exists, validate_mechanism
 
@@ -32,6 +34,7 @@ __all__ = [
     "PackwrightValidationError",
     "MigrationPlan",
     "adopt_existing",
+    "apply_adoption_review",
     "apply_migration",
     "create_handoff",
     "doctor_target",
@@ -43,10 +46,13 @@ __all__ = [
     "install_pack",
     "load_character_intake",
     "load_mechanism",
+    "normalize_mechanism",
     "path_exists",
     "render_interviewer_prompt",
     "migrate_target",
     "plan_migration",
+    "plan_adoption_review",
+    "refresh_emotion_engine",
     "refresh_emotion_engine_codex",
     "resolve_mechanism",
     "starter_character_intake",

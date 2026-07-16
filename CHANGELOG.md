@@ -2,6 +2,21 @@
 
 All notable changes are documented here. Packwright follows Semantic Versioning.
 
+## Unreleased
+
+### Added
+
+- Runtime-neutral multi-skill projection with capability-based degradation.
+- Generic Emotion Engine v1.0.0 installation, MCP configuration, state carry-forward, refresh, and diagnosis across Codex, Claude Code, and Cursor.
+- Deterministic `en` and `zh-CN` compiler locales with English fallback and locale-aware checker contracts.
+- Fresh-path `packwright new` orchestration that preserves editable source and built pack directories.
+- Dry-run-first application of individually reviewed adoption decisions, with hash checks and manual-only memory merge and knowledge promotion.
+
+### Changed
+
+- Adapter metadata and artifact routing now come from a central registry, and install infers the adapter from the pack manifest.
+- The character interviewer follows clearly established English or Chinese instead of embedding a Chinese-only relationship question.
+
 ## [0.1.0] - 2026-07-14
 
 ### Added
