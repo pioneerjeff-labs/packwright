@@ -102,7 +102,7 @@ def render_target_handoff_wrapper():
         "set -eu\n"
         "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "TARGET_DIR=$(CDPATH= cd -- \"$SCRIPT_DIR/..\" && pwd)\n"
-        "PYTHON=${PYTHON:-python3}\n"
+        "PYTHON=${PACKWRIGHT_PYTHON:-python3}\n"
         "exec \"$PYTHON\" \"$SCRIPT_DIR/packwright_handoff.py\" --source-target-dir \"$TARGET_DIR\" \"$@\"\n"
     )
 
