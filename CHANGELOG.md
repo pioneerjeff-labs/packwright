@@ -4,6 +4,8 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.1.1] - 2026-07-17
+
 ### Added
 
 - Runtime-neutral multi-skill projection with capability-based degradation.
@@ -16,6 +18,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 - Adapter metadata and artifact routing now come from a central registry, and install infers the adapter from the pack manifest.
 - The character interviewer follows clearly established English or Chinese instead of embedding a Chinese-only relationship question.
+- Installed handoff wrappers use the scoped `PACKWRIGHT_PYTHON` override so build-environment `PYTHON` values cannot leak into relocated targets.
 
 ## [0.1.0] - 2026-07-14
 
@@ -48,5 +51,6 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.1.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.1
 [0.1.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.0
 [0.1.0rc1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.0rc1

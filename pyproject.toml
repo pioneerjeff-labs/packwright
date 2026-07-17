@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "packwright"
-version = "0.1.0"
+version = "0.1.1"
 description = "Build, install, and migrate portable agent packs across Codex, Claude Code, and Cursor."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -44,7 +44,7 @@
 The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, or Cursor:
 
 ```bash
-python -m pip install packwright==0.1.0
+python -m pip install packwright==0.1.1
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -184,7 +184,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.1.0` is Packwright's first stable release. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
+`0.1.1` is the current stable release; `0.1.0` remains the first stable baseline. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
 
 ## Documentation
 
@@ -194,6 +194,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Character drafting](docs/CHARACTER_DRAFTING.md)
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
+- [0.1.1 release notes](docs/releases/0.1.1.md)
 - [0.1.0 release notes](docs/releases/0.1.0.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

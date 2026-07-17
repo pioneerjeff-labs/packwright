@@ -664,7 +664,7 @@ character:
 
         version = run_cli("--version")
         self.assertEqual(version.returncode, 0, version.stderr + version.stdout)
-        self.assertEqual(version.stdout.strip(), "packwright 0.1.0")
+        self.assertEqual(version.stdout.strip(), "packwright 0.1.1")
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
@@ -2241,6 +2241,7 @@ character:
             )
             handoff_rel = Path(DEFAULT_HANDOFF_DIR) / "cursor-to-codex.md"
             wrapper = cursor_target_dir / HANDOFF_WRAPPER_PATH
+            self.assertIn("PACKWRIGHT_PYTHON", wrapper.read_text(encoding="utf-8"))
 
             completed = subprocess.run(
                 [
@@ -3324,7 +3325,7 @@ character:
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
-        self.assertIn('version = "0.1.0"', pyproject)
+        self.assertIn('version = "0.1.1"', pyproject)
         self.assertIn('packwright = "packwright.cli:main"', pyproject)
 
     def test_cli_handoff_export_writes_review_file(self):
