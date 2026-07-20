@@ -9,6 +9,7 @@ from packwright.core.adapter_layout import (
     render_adapter_capabilities,
     render_ownership_contract,
 )
+from packwright.core.automation_projection import project_runtime_automations
 from packwright.core.emotion_engine_contract import EMOTION_ENGINE_MODES, emotion_engine_feature
 from packwright.core.knowledge_contract import knowledge_feature, knowledge_files
 from packwright.core.locale import (
@@ -60,14 +61,17 @@ def compile_to_claude_code_pack(mechanism, references=None):
             save_context,
             body=_render_save_context_skill(mechanism, references),
         ),
-        ".claude/settings.local.json.example": _render_settings_example(mechanism),
     }
+    automation_files, automation_feature = project_runtime_automations(mechanism, ADAPTER_NAME)
+    pack.update(automation_files)
     pack.update(projected_generic_skill_files(mechanism, ADAPTER_NAME))
     pack.update(_reference_files(mechanism))
     pack.update(_memory_skeleton_files(mechanism))
     pack.update(_knowledge_files())
     pack.update(_workspace_files(mechanism))
-    pack["manifest.json"] = _render_manifest(mechanism, references, sorted(pack.keys()) + ["manifest.json"])
+    pack["manifest.json"] = _render_manifest(
+        mechanism, references, sorted(pack.keys()) + ["manifest.json"], automation_feature
+    )
     return pack
 
 
@@ -199,36 +203,6 @@ def _render_save_context_skill(mechanism, references):
     return localize_save_context_markdown("\n".join(lines), mechanism)
 
 
-def _render_settings_example(mechanism):
-    command_parts = [
-        "echo \"=== Session Start: $(date '+%Y-%m-%d %H:%M %A') ===\"",
-    ]
-    for fact in mechanism["session_start"]["facts"]:
-        source = fact["source"]
-        if source == "system_date":
-            continue
-        command_parts.append(f"echo \"--- {fact['id']} ---\"")
-        command_parts.append(f"test -f {source} && cat {source} || true")
-
-    settings = {
-        "hooks": {
-            "SessionStart": [
-                {
-                    "matcher": "*",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": "; ".join(command_parts),
-                        }
-                    ],
-                }
-            ]
-        },
-        "character_note": "Example only. The hook injects date, memory, relationship, and emotion facts; it should not inject long instructions.",
-    }
-    return json.dumps(settings, indent=2, sort_keys=True) + "\n"
-
-
 def _reference_files(mechanism):
     prefix = reference_prefix(mechanism, ADAPTER_NAME)
     refs = {
@@ -297,7 +271,7 @@ def _knowledge_files():
     return knowledge_files()
 
 
-def _render_manifest(mechanism, references, artifacts):
+def _render_manifest(mechanism, references, artifacts, automation_feature):
     slug = character_slug(mechanism)
     emotion_mode = _recommended_emotion_mode(mechanism)
     manifest = {
@@ -317,6 +291,7 @@ def _render_manifest(mechanism, references, artifacts):
             "emotion_style": character_voice_summary(mechanism),
         },
         "features": {
+            "automations": automation_feature,
             "locale": locale_feature(mechanism, ADAPTER_NAME),
             "emotion_engine": emotion_engine_feature("claude-code", installed=False, mode=emotion_mode),
             "skills": skill_projection_feature(mechanism, ADAPTER_NAME),

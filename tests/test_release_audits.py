@@ -269,7 +269,7 @@ class PublicTreeAuditTest(unittest.TestCase):
                 self.assertIn("assets/social-preview.png", text)
                 self.assertIn("https://pioneerjeff-labs.github.io/packwright/", text)
                 self.assertIn("https://pioneerjeff-labs.github.io/packwright/zh-CN.html", text)
-                for receipt_kind in ("generated", "carried", "rewritten", "excluded"):
+                for receipt_kind in ("generated", "carried", "rewritten", "degraded", "excluded"):
                     self.assertIn(f"`{receipt_kind}`", text)
 
         readme = readmes[0].read_text(encoding="utf-8")

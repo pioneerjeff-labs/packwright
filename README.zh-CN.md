@@ -44,7 +44,7 @@
 最短的使用界面是一段对话。安装 Packwright，然后把现成提示词粘贴给 Codex、Claude Code 或 Cursor：
 
 ```bash
-python -m pip install packwright==0.1.0
+python -m pip install packwright==0.1.2
 ```
 
 **[打开可直接粘贴的 agent 操作提示词 →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -75,7 +75,7 @@ packwright install pack/nova-claude --adapter claude-code --target project/nova-
 packwright adopt --from existing-agent --dry-run
 ```
 
-如需生成审核材料，可增加 `--target <target-dir>`。Packwright 会写出一份所有决定均为 `pending` 的 `adoption-review.yaml` 队列；它不会自动应用队列或合并内容。
+如需生成审核材料，可增加 `--target <target-dir>`。Packwright 会写出一份所有决定均为 `pending` 的源隔离队列 `adoption-review-<source>-<hash>.yaml`，多个来源不会互相覆盖；它不会自动应用队列或合并内容。
 
 不通过 coding agent 时，可使用 `packwright init --interactive` 的固定问题后备流程。它会先展示完整 canonical YAML，确认后才写入。
 
@@ -115,6 +115,7 @@ packwright migrate project/nova-claude \
 | `generated` | 为目标 runtime 编译生成的文件 |
 | `carried` | 原样复制并用 SHA-256 验证的可移植文件 |
 | `rewritten` | 针对目标 runtime 改写的 Packwright 路由行 |
+| `degraded` | 已发现但未经显式接受、不会在目标端重现的非托管 runtime automation |
 | `excluded` | 明确留在原 runtime 的专属文件 |
 
 审阅收据后，再应用同一迁移并验证结果：
@@ -126,6 +127,19 @@ packwright migrate project/nova-claude \
 packwright doctor project/nova-codex
 packwright score project/nova-codex
 ```
+
+如果只是升级某一个已安装实例的基础机制，不要走 handoff，也不需要迁移到另一
+runtime；使用独立的 reconcile：
+
+```bash
+packwright reconcile --target project/nova-codex --mechanism work/nova --json --dry-run
+packwright reconcile --target project/nova-codex --mechanism work/nova --json --yes
+```
+
+机制 0.8 会从 canonical `automations` 投影有字节上限的本地
+`session_start` 与 `user_prompt` 上下文。Claude Code 和 Codex 支持两个事件；
+Cursor 只支持 session-start 上下文，prompt-time 能力缺口会明确出现在收据中。
+用户已有的 settings 与 hook 条目会按条目保留，不会被整份覆盖。
 
 在预览和确认命令中加入 `--json`，即可得到机器可读的 `packwright-migration/v1` 收据。除非另行使用 `--force`，Packwright 不会覆盖已有 target。
 
@@ -162,12 +176,14 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 - `score` 检查公开结构与 artifact contract。`100.0` 表示结构通过，不承诺 runtime 行为完美。
 - `doctor` 校验 Packwright 管理的投影哈希，并能修复可重建的漂移，不把可移植用户状态当成生成物。
-- 迁移会对 carried 与 rewritten 文件逐个做哈希验证，同时记录计划分数和安装后分数。
+- 迁移会验证目标端的 carried 与 rewritten 文件，并在写入前重新核对 degraded 源文件，同时记录计划分数和安装后分数；runtime automation 不再被静默当作可移植能力。存在 degraded 项时，非交互应用还必须提供 `--accept-degraded`。
+- Reconcile 会比较 installed 与 desired canonical spec 哈希，保留实例状态并写入本地收据，不会反编译另一 runtime 的 hooks。
 - 当前三个 adapter 共覆盖六个有向迁移路径。新 adapter 只有通过 checker 才会加入。
 
 ## 当前发布边界
 
-`0.1.0` 是 Packwright 的首个稳定版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云同步服务；plain-file 结构分数与真实 runtime 兼容性是两件事。
+`0.1.2` 是当前稳定版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云
+同步服务；plain-file 结构分数与真实 runtime 兼容性是两件事。
 
 ## 文档
 
@@ -177,6 +193,9 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [角色起草](docs/CHARACTER_DRAFTING.md)
 - [agent archetype](docs/AGENT_ARCHETYPES.md)
 - [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
+- [本地 runtime automation](docs/RUNTIME_AUTOMATIONS.md)
+- [0.1.2 发布说明](docs/releases/0.1.2.md)
+- [0.1.1 发布说明](docs/releases/0.1.1.md)
 - [0.1.0 发布说明](docs/releases/0.1.0.md)
 - [参与贡献](CONTRIBUTING.md)
 - [安全政策](SECURITY.md)

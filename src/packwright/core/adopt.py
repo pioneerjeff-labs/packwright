@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from datetime import date
 from pathlib import Path
 
@@ -20,6 +21,17 @@ ADOPTION_REVIEW_DECISIONS = (
     "carry_verbatim",
     "copy_to_workspace",
     "manual_memory_merge",
+    "manual_automation_merge",
+)
+AUTOMATION_PATTERNS = (
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".claude/hooks/",
+    ".codex/hooks.json",
+    ".codex/config.toml",
+    ".codex/hooks/",
+    ".cursor/hooks.json",
+    ".cursor/hooks/",
 )
 RUNTIME_PATTERNS = (
     "AGENTS.md",
@@ -59,12 +71,14 @@ def adopt_existing(source_dir, target_dir=None, dry_run=True, force=False):
 
     inventory = _inventory(source_dir)
     categories = _category_counts(inventory)
+    advisories = _adoption_advisories(inventory)
     review_queue = _review_queue(source_dir, inventory)
     result = {
         "source_dir": str(source_dir),
         "dry_run": bool(dry_run),
         "files": len(inventory),
         "categories": categories,
+        "advisories": advisories,
         "adoption_policy": {
             "existing_instance_role": "source_material",
             "memory_merge": "review_required",
@@ -84,9 +98,10 @@ def adopt_existing(source_dir, target_dir=None, dry_run=True, force=False):
     if target_dir is None:
         raise PackwrightValidationError(["adopt target_dir is required unless dry_run is true"])
     target_dir = Path(target_dir)
-    report_path = target_dir / MIGRATION_DIR / f"adopt-report-{date.today().isoformat()}.md"
-    inventory_path = target_dir / MIGRATION_DIR / "inventory.json"
-    review_path = target_dir / MIGRATION_DIR / "adoption-review.yaml"
+    source_key = _adoption_source_key(source_dir)
+    report_path = target_dir / MIGRATION_DIR / f"adopt-report-{date.today().isoformat()}-{source_key}.md"
+    inventory_path = target_dir / MIGRATION_DIR / f"inventory-{source_key}.json"
+    review_path = target_dir / MIGRATION_DIR / f"adoption-review-{source_key}.yaml"
     existing = [path for path in (report_path, inventory_path, review_path) if path.exists()]
     if not force and existing:
         raise PackwrightValidationError([
@@ -96,9 +111,18 @@ def adopt_existing(source_dir, target_dir=None, dry_run=True, force=False):
                 for path in existing
             ],
         ])
-    _write_knowledge_scaffold(target_dir, force=force)
+    _write_knowledge_scaffold(target_dir)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(_render_report(source_dir, inventory, categories), encoding="utf-8")
+    report_path.write_text(
+        _render_report(
+            source_dir,
+            inventory,
+            categories,
+            advisories,
+            review_filename=review_path.name,
+        ),
+        encoding="utf-8",
+    )
     inventory_path.write_text(json.dumps({"files": inventory}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     review_path.write_text(
         yaml.safe_dump(review_queue, sort_keys=False, allow_unicode=True),
@@ -142,6 +166,8 @@ def _skip_path(rel_path):
 
 def _classify(rel_path):
     lowered = rel_path.lower()
+    if any(lowered == pattern.lower() or lowered.startswith(pattern.lower()) for pattern in AUTOMATION_PATTERNS):
+        return "automation_candidate"
     if any(lowered == pattern.lower() or lowered.startswith(pattern.lower()) for pattern in RUNTIME_PATTERNS):
         return "runtime_instruction"
     if lowered.startswith(("workspace/", "artifacts/", "drafts/", "archive/")):
@@ -266,6 +292,7 @@ def apply_adoption_review(review_path, target_dir):
     target_dir = Path(plan["target_dir"])
     applied = []
     registrations = []
+    automation_candidates = []
     for action in plan["actions"]:
         if action["operation"] == "copy" and action["status"] == "approved_copy":
             source = resolve_source_path(source_dir, action["source"], "adoption source")
@@ -278,10 +305,22 @@ def apply_adoption_review(review_path, target_dir):
         elif action["operation"] == "register_source":
             registrations.append(action)
             applied.append({**action, "status": "registered"})
+        elif action["operation"] == "automation_draft":
+            source = resolve_source_path(source_dir, action["source"], "automation adoption source")
+            if _sha256(source) != action["sha256"]:
+                raise PackwrightValidationError([f"adoption source changed after review: {action['source']}"])
+            automation_candidates.append(action)
+            applied.append({**action, "status": "drafted_for_manual_canonicalization"})
         else:
             applied.append(action)
     if registrations:
         _apply_source_registrations(target_dir, source_dir, registrations)
+
+    automation_draft = None
+    if automation_candidates:
+        automation_draft = _write_automation_draft(
+            target_dir, source_dir, review_path, automation_candidates
+        )
 
     receipt = {
         **plan,
@@ -290,9 +329,12 @@ def apply_adoption_review(review_path, target_dir):
         "actions": applied,
         "conflicts": [],
     }
+    if automation_draft:
+        receipt["automation_draft"] = automation_draft
+    receipt_key = _adoption_receipt_key(review_path)
     receipt_path = resolve_destination_path(
         target_dir,
-        f"{MIGRATION_DIR}/adoption-apply-receipt.json",
+        f"{MIGRATION_DIR}/adoption-apply-receipt-{receipt_key}.json",
         "adoption receipt",
     )
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -374,6 +416,14 @@ def _plan_review_item(item, index, source_dir, target_dir):
         if not _destination_under(action["destination"], ("memory",)):
             conflicts.append(_review_conflict(index, source_value, "manual_memory_merge must name the intended memory/* owner file"))
         return action, conflicts
+    if decision == "manual_automation_merge":
+        action["operation"] = "automation_draft"
+        action["status"] = "approved_automation_draft"
+        if action["category"] != "automation_candidate":
+            conflicts.append(_review_conflict(index, source_value, "manual_automation_merge is only valid for automation candidates"))
+        if action["destination"] is not None:
+            conflicts.append(_review_conflict(index, source_value, "manual_automation_merge must not set a destination"))
+        return action, conflicts
 
     prefixes = ("workspace",) if decision == "copy_to_workspace" else ("workspace", "skills")
     if not _destination_under(action["destination"], prefixes):
@@ -447,6 +497,39 @@ def _apply_source_registrations(target_dir, source_dir, registrations):
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_automation_draft(target_dir, source_dir, review_path, candidates):
+    key = _adoption_receipt_key(review_path)
+    rel_path = f"{MIGRATION_DIR}/automation-canonicalization-draft-{key}.yaml"
+    destination = resolve_destination_path(target_dir, rel_path, "automation canonicalization draft")
+    if destination.exists():
+        raise PackwrightValidationError([
+            f"automation canonicalization draft already exists: {rel_path}"
+        ])
+    draft = {
+        "schema": "packwright-automation-adoption-draft/v1",
+        "status": "review_required",
+        "source_dir": str(source_dir),
+        "policy": {
+            "reverse_compilation": False,
+            "canonical_spec_modified": False,
+            "next_step": "describe lifecycle intent using canonical local automations, then run reconcile",
+        },
+        "evidence": [
+            {
+                "path": action["source"],
+                "sha256": action["sha256"],
+                "size": action["size"],
+                "rationale": action["rationale"],
+            }
+            for action in candidates
+        ],
+        "canonical_automations": [],
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(yaml.safe_dump(draft, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return {"path": rel_path, "status": "review_required", "evidence": len(candidates)}
+
+
 def _sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -455,16 +538,65 @@ def _sha256(path):
     return digest.hexdigest()
 
 
-def _write_knowledge_scaffold(target_dir, force=False):
+def _write_knowledge_scaffold(target_dir):
     for rel_path, text in knowledge_files().items():
         path = target_dir / rel_path
-        if path.exists() and not force:
+        if path.exists():
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
 
-def _render_report(source_dir, inventory, categories):
+def _adoption_source_key(source_dir):
+    source_dir = Path(source_dir).resolve()
+    token = _safe_artifact_token(source_dir.name or "source")
+    digest = hashlib.sha256(str(source_dir).encode("utf-8")).hexdigest()[:8]
+    return f"{token}-{digest}"
+
+
+def _adoption_receipt_key(review_path):
+    stem = Path(review_path).stem
+    prefix = "adoption-review-"
+    if stem.startswith(prefix):
+        stem = stem[len(prefix):]
+    return _safe_artifact_token(stem or "review")
+
+
+def _safe_artifact_token(value):
+    token = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value)).strip("-._")
+    return token or "source"
+
+
+def _adoption_advisories(inventory):
+    scheduled_task_markers = (
+        ".claude/scheduled_tasks.lock",
+        ".claude/scheduled-tasks.lock",
+        ".claude/scheduled_tasks/",
+        ".claude/scheduled-tasks/",
+    )
+    matches = sorted(
+        item["path"]
+        for item in inventory
+        if any(
+            item["path"] == marker.rstrip("/") or item["path"].startswith(marker)
+            for marker in scheduled_task_markers
+        )
+    )
+    if not matches:
+        return []
+    return [
+        {
+            "id": "external_scheduled_tasks_may_reference_source",
+            "paths": matches,
+            "message": (
+                "scheduled-task runner markers were found; inspect runtime-global task definitions "
+                "for working-directory references before freezing or moving the source"
+            ),
+        }
+    ]
+
+
+def _render_report(source_dir, inventory, categories, advisories, review_filename):
     lines = [
         "# Packwright Adopt Report",
         "",
@@ -483,8 +615,15 @@ def _render_report(source_dir, inventory, categories):
     ]
     for category, count in sorted(categories.items()):
         lines.append(f"- {category}: {count}")
+    if advisories:
+        lines.extend(["", "## Advisories", ""])
+        for advisory in advisories:
+            lines.append(f"- **{advisory['id']}**: {advisory['message']}")
+            for path in advisory.get("paths", []):
+                lines.append(f"  - `{path}`")
     lines.extend(["", "## Review Queues", ""])
     for category in (
+        "automation_candidate",
         "runtime_instruction",
         "memory_candidate",
         "knowledge_candidate",
@@ -505,12 +644,13 @@ def _render_report(source_dir, inventory, categories):
         [
             "## Next Steps",
             "",
-            "1. Open `adoption-review.yaml` and choose a decision for each item.",
+            f"1. Open `{review_filename}` and choose a decision for each item.",
             "2. Leave uncertain items as `pending`; pending items are never applied.",
             "3. Preview approved actions with `packwright adopt --review <queue> --target-dir <target> --dry-run`.",
             "4. Apply reviewed safe-copy and source-registration decisions by replacing `--dry-run` with `--yes`.",
             "5. `manual_memory_merge` records the intended owner file but never writes memory automatically.",
-            "6. Promote reusable knowledge manually after reviewing its content and provenance.",
+            "6. `manual_automation_merge` writes an evidence-only canonicalization draft; it never reverse-compiles or edits mechanism.yaml.",
+            "7. Promote reusable knowledge manually after reviewing its content and provenance.",
         ]
     )
     return "\n".join(lines) + "\n"

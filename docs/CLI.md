@@ -16,6 +16,7 @@ the default help screen.
 | `packwright build` | Validate the source, compile an adapter pack, and score it. |
 | `packwright install` | Install an adapter pack into a local runtime target. |
 | `packwright migrate` | Compile and install an existing target for another adapter. |
+| `packwright reconcile` | Upgrade one installed target from a newer canonical mechanism without mixing work-state into mechanism. |
 | `packwright doctor` | Diagnose and optionally repair deterministic target drift. |
 | `packwright score` | Score an adapter pack against its mechanism source. |
 
@@ -57,6 +58,8 @@ packwright build work/nova --adapter claude-code -o pack/nova-claude
 packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
 packwright migrate project/nova-claude --to codex --target project/nova-codex --json --dry-run
 packwright migrate project/nova-claude --to codex --target project/nova-codex --json --yes
+packwright reconcile --target project/nova-codex --mechanism work/nova --json --dry-run
+packwright reconcile --target project/nova-codex --mechanism work/nova --json --yes
 packwright doctor project/nova-codex
 packwright score work/nova --adapter claude-code --pack-dir pack/nova-claude
 packwright score project/nova-codex
@@ -80,7 +83,7 @@ For intake-file creation, put `locale: en` or `locale: zh-CN` at the document
 root. `--locale` applies to `--template` and `--interactive`. Locale changes
 only compiler-owned text; Packwright never translates user-authored prose.
 
-`adopt --dry-run` only returns the inventory and review summary. With an explicit target, adopt writes `inventory.json`, a Markdown report, and `adoption-review.yaml` under `workspace/shared/artifacts/migrations/`. The `packwright-adoption-review/v1` queue records path, category, size, SHA-256, a `pending` decision, optional destination, and rationale for every candidate.
+`adopt --dry-run` only returns the inventory and review summary. With an explicit target, adopt writes source-scoped `inventory-<source>-<hash>.json`, a Markdown report, and `adoption-review-<source>-<hash>.yaml` under `workspace/shared/artifacts/migrations/`. The source key prevents multi-source review artifacts from colliding. Existing knowledge and source manifests are never replaced by scaffold content, including when `--force` refreshes review artifacts. The `packwright-adoption-review/v1` queue records path, category, size, SHA-256, a `pending` decision, optional destination, and rationale for every candidate.
 
 After reviewing individual items, preview the action plan and then apply it:
 
@@ -93,6 +96,9 @@ Approved copies are limited to explicit `workspace/*` or unmanaged `skills/*`
 destinations, never overwrite different content, and are rechecked against the
 inventoried SHA-256. `manual_memory_merge` records the intended `memory/*`
 owner but never writes it; knowledge promotion also remains manual.
+`manual_automation_merge` writes an evidence-only canonicalization draft with
+an empty `canonical_automations` list. It never reverse-compiles hooks or edits
+the canonical mechanism.
 
 `init` and `build` accept `-o` as the short form of `--out-dir`. `install`,
 `migrate`, and `doctor` accept `--target` as the short form of `--target-dir`.
@@ -103,6 +109,13 @@ remain accepted for compatibility.
 explicitly supplied. `install --force` replaces Packwright-managed runtime
 projections while preserving existing `memory/`, `workspace/`, `knowledge/`,
 and `sources/` state.
+
+Runtime-neutral mechanism 0.8 stores local `session_start` and `user_prompt`
+context automation under `automations`. Build projects those entries into
+`.claude/settings.json`, `.codex/hooks.json`, or `.cursor/hooks.json` plus a
+bounded local Python runner. Cursor cannot inject dynamic context at
+`beforeSubmitPrompt`, so its `user_prompt` entries are reported as
+`unavailable_missing_effect` rather than mapped to a static rule.
 
 Packs built by Packwright and their installed targets include portable
 `.packwright/` metadata: a canonical spec/source snapshot, artifact lock, and
@@ -141,17 +154,35 @@ migration.
 
 1. Run with `--dry-run` to receive the complete path-level plan. Neither the
    destination target nor `--pack-dir` is created.
-2. Review `generated`, `carried`, `rewritten`, and `excluded`, plus the planned
+2. Review `generated`, `carried`, `rewritten`, `degraded`, and `excluded`, plus the planned
    checker score and any destination conflicts.
-3. After confirmation, rerun the same command with `--yes`. Non-interactive
-   execution without `--dry-run` or `--yes` exits without writing.
+3. After confirmation, rerun the same command with `--yes`. If the plan lists
+   degraded runtime automation, non-interactive apply also requires
+   `--accept-degraded`; `--yes` alone does not accept missing behavior.
+   Non-interactive execution without `--dry-run` or `--yes` exits without
+   writing.
 
 Use `--json` for the `packwright-migration/v1` receipt. Interactive terminals
 otherwise show a compact directory-level summary and prompt before applying.
 After apply, the receipt contains the planned score, installed-target score,
-and SHA-256 verification for every carried or rewritten file. Packwright may
+and SHA-256 verification for every carried or rewritten destination file. It
+also rechecks every detected degraded source file before writing. Packwright may
 rewrite only adapter-routing lines in `memory/index.md`, `memory/pinned.md`,
 and `memory/source-map.md`; every actual rewrite is disclosed.
+
+## Reconcile safety contract
+
+`packwright reconcile --target <installed> --mechanism <canonical> --dry-run`
+compares installed and desired spec hashes and reports managed projection
+updates, preserved instance state, safe missing scaffolds, manual JSON merges,
+runtime capability gaps, and pending activation reviews. It never reads another
+runtime's generated hook as its source.
+
+After review, replace `--dry-run` with `--yes`. Capability gaps additionally
+require `--accept-degraded`. Reconcile preserves existing portable state and
+merges only entries containing the Packwright runner marker in runtime JSON;
+unrelated user settings and hooks remain untouched. Its applied
+`packwright-reconcile/v1` receipt is stored under `.packwright/receipts/`.
 
 ## Compatibility commands
 

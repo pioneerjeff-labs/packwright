@@ -18,10 +18,10 @@ from .workspace_contract import (
 
 
 SUPPORTED_KINDS = {"AtlasMechanismSpec", "CharacterMechanismSpec"}
-SUPPORTED_VERSIONS = {"0.5", "0.6", "0.7"}
+SUPPORTED_VERSIONS = {"0.5", "0.6", "0.7", "0.8"}
 MVP_ADAPTER = "codex"
 SUPPORTED_ADAPTERS = set(supported_adapters())
-RUNTIME_NEUTRAL_VERSION = "0.7"
+RUNTIME_NEUTRAL_VERSION = "0.8"
 
 
 def validate_mechanism(data):
@@ -45,7 +45,10 @@ def validate_mechanism(data):
     if "projection" in data:
         _validate_projection(data, issues)
     _validate_emotion(data, issues)
-    _validate_session_start(data.get("session_start"), issues)
+    if str(data.get("version")) == RUNTIME_NEUTRAL_VERSION:
+        _validate_automations(data, issues)
+    else:
+        _validate_session_start(data.get("session_start"), issues)
     _validate_memory(data, issues)
     _validate_workspace(data.get("workspace"), issues)
     _validate_skills(data, issues)
@@ -91,13 +94,16 @@ def _validate_top_level(data, issues):
         "operating",
         "mechanism",
         "emotion",
-        "session_start",
         "memory",
         "workspace",
         "skills",
         "checker",
         "coverage",
     ]
+    if str(data.get("version")) == RUNTIME_NEUTRAL_VERSION:
+        required.append("automations")
+    else:
+        required.append("session_start")
     if str(data.get("version")) in {"0.5", "0.6"}:
         required.extend(("targets", "implementation_scope", "projection", "outputs", "reserved_specs"))
     for key in required:
@@ -353,6 +359,75 @@ def _validate_session_start(session_start, issues):
     for index, fact in enumerate(_as_list(facts)):
         if _is_mapping(fact) and not _non_empty_string(fact.get("source")):
             issues.append(f"session_start.facts[{index}].source must be a non-empty string")
+
+
+def _validate_automations(data, issues):
+    automations = data.get("automations")
+    if not _is_non_empty_list(automations):
+        issues.append("automations must be a non-empty list")
+        return
+    _validate_id_list(automations, "automations", issues)
+    for index, automation in enumerate(_as_list(automations)):
+        prefix = f"automations[{index}]"
+        if not _is_mapping(automation):
+            continue
+        if automation.get("scope") != "local":
+            issues.append(f"{prefix}.scope must be local")
+        if automation.get("event") not in {"session_start", "user_prompt"}:
+            issues.append(f"{prefix}.event must be session_start or user_prompt")
+        if automation.get("effect") != "add_context":
+            issues.append(f"{prefix}.effect must be add_context")
+        budget = automation.get("budget_bytes")
+        if not isinstance(budget, int) or isinstance(budget, bool) or budget <= 0:
+            issues.append(f"{prefix}.budget_bytes must be a positive integer")
+        producer = automation.get("producer")
+        if not _is_mapping(producer):
+            issues.append(f"{prefix}.producer must be a mapping")
+            continue
+        kind = producer.get("kind")
+        if kind == "memory_view":
+            source = producer.get("source")
+            if not _non_empty_string(source):
+                issues.append(f"{prefix}.producer.source must be a non-empty string")
+            else:
+                _validate_file_ref(data, source, f"{prefix}.producer.source", issues)
+            select = producer.get("select")
+            if not _is_mapping(select):
+                issues.append(f"{prefix}.producer.select must be a mapping")
+            else:
+                max_bytes = select.get("max_bytes")
+                if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes <= 0:
+                    issues.append(f"{prefix}.producer.select.max_bytes must be a positive integer")
+                for key in ("section", "until_section"):
+                    if key in select and not _non_empty_string(select.get(key)):
+                        issues.append(f"{prefix}.producer.select.{key} must be a non-empty string")
+                latest = select.get("bullets_latest")
+                if latest is not None and (
+                    not isinstance(latest, int) or isinstance(latest, bool) or latest <= 0
+                ):
+                    issues.append(f"{prefix}.producer.select.bullets_latest must be a positive integer")
+        elif kind == "freshness_facts":
+            facts = producer.get("facts")
+            if not _is_non_empty_list(facts):
+                issues.append(f"{prefix}.producer.facts must be a non-empty list")
+            else:
+                for fact_index, fact in enumerate(_as_list(facts)):
+                    fact_prefix = f"{prefix}.producer.facts[{fact_index}]"
+                    if not _is_mapping(fact):
+                        issues.append(f"{fact_prefix} must be a mapping")
+                        continue
+                    if not _non_empty_string(fact.get("field")):
+                        issues.append(f"{fact_prefix}.field must be a non-empty string")
+                    if fact.get("source") not in {"system_date", "system_datetime"}:
+                        issues.append(f"{fact_prefix}.source must be system_date or system_datetime")
+        elif kind == "relocation_guard":
+            baseline = producer.get("baseline_path")
+            if baseline != ".packwright/baseline-path":
+                issues.append(f"{prefix}.producer.baseline_path must be .packwright/baseline-path")
+        else:
+            issues.append(
+                f"{prefix}.producer.kind must be memory_view, freshness_facts, or relocation_guard"
+            )
 
 
 def _validate_memory(data, issues):

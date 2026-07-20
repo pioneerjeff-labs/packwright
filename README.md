@@ -44,7 +44,7 @@
 The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, or Cursor:
 
 ```bash
-python -m pip install packwright==0.1.1
+python -m pip install packwright==0.1.2
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -75,7 +75,7 @@ Already have an agent or workspace? Inventory it before importing anything:
 packwright adopt --from existing-agent --dry-run
 ```
 
-To create review materials, add `--target <target-dir>`. Packwright writes an `adoption-review.yaml` queue with every decision set to `pending`. Review items individually, preview with `packwright adopt --review <queue> --target-dir <target> --dry-run`, then replace `--dry-run` with `--yes`. Approved safe copies and source registrations can be applied; memory merge and knowledge promotion remain manual.
+To create review materials, add `--target <target-dir>`. Packwright writes a source-scoped `adoption-review-<source>-<hash>.yaml` queue with every decision set to `pending`, so multiple source inventories do not overwrite one another. Review items individually, preview with `packwright adopt --review <queue> --target-dir <target> --dry-run`, then replace `--dry-run` with `--yes`. Approved safe copies and source registrations can be applied; memory merge and knowledge promotion remain manual.
 
 Without a coding agent, `packwright init --interactive` offers a fixed-question fallback. It shows the completed canonical YAML and waits for confirmation before writing.
 
@@ -132,6 +132,7 @@ The plan names four kinds of paths:
 | `generated` | Files compiled for the destination runtime |
 | `carried` | Portable user files copied and SHA-256 verified |
 | `rewritten` | Packwright-managed routing lines changed for the destination |
+| `degraded` | Unmanaged runtime automation detected but not reproduced without explicit acceptance |
 | `excluded` | Runtime-specific files deliberately left behind |
 
 After reviewing the receipt, apply that exact move and verify the result:
@@ -143,6 +144,20 @@ packwright migrate project/nova-claude \
 packwright doctor project/nova-codex
 packwright score project/nova-codex
 ```
+
+Upgrade the mechanism of one installed local instance separately from work
+handoff or cross-runtime migration:
+
+```bash
+packwright reconcile --target project/nova-codex --mechanism work/nova --json --dry-run
+packwright reconcile --target project/nova-codex --mechanism work/nova --json --yes
+```
+
+Mechanism 0.8 projects bounded local `session_start` and `user_prompt` context
+from canonical `automations`. Claude Code and Codex support both events. Cursor
+supports session-start context but reports prompt-time context as an explicit
+capability gap. Existing user settings and hook entries are preserved by
+entry-level managed merges.
 
 Add `--json` to the dry run and confirmed run for a machine-readable `packwright-migration/v1` receipt. Packwright refuses to overwrite an existing target unless you separately opt into `--force`.
 
@@ -179,12 +194,13 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 - `score` evaluates the public pack structure and artifact contract. `100.0` is a structural pass, not a promise that a runtime will behave perfectly.
 - `doctor` verifies Packwright-managed projection hashes and can repair reproducible drift without treating portable user state as generated output.
-- Migration verifies carried and rewritten files by hash and records planned and installed scores.
+- Migration verifies carried and rewritten files in the destination, rechecks detected degraded source files before writing, records planned and installed scores, and never silently treats runtime automation as portable. When degraded items exist, non-interactive apply also requires `--accept-degraded`.
+- Reconcile compares installed and desired canonical spec hashes, preserves instance state, and writes a local receipt without reverse-compiling another runtime's hooks.
 - Packwright ships six directed migration paths across the three current adapters. New adapters land when they pass the checker.
 
 ## Current release boundary
 
-`0.1.1` is the current stable release; `0.1.0` remains the first stable baseline. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
+`0.1.2` is the current stable release; `0.1.0` remains the first stable baseline. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
 
 ## Documentation
 
@@ -194,6 +210,8 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Character drafting](docs/CHARACTER_DRAFTING.md)
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
+- [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.1.2 release notes](docs/releases/0.1.2.md)
 - [0.1.1 release notes](docs/releases/0.1.1.md)
 - [0.1.0 release notes](docs/releases/0.1.0.md)
 - [Contributing](CONTRIBUTING.md)

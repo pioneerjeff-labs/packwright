@@ -17,6 +17,7 @@ from packwright.core import (
     adopt_existing,
     apply_adoption_review,
     apply_migration,
+    apply_reconcile,
     create_handoff,
     doctor_target,
     generate_character_source,
@@ -26,6 +27,7 @@ from packwright.core import (
     load_mechanism,
     normalize_mechanism,
     plan_migration,
+    plan_reconcile,
     plan_adoption_review,
     refresh_emotion_engine,
     render_interviewer_prompt,
@@ -63,6 +65,8 @@ def main(argv=None):
             return _cmd_install(args)
         if args.command in {"migrate", "migrate-target"}:
             return _cmd_migrate_target(args)
+        if args.command == "reconcile":
+            return _cmd_reconcile(args)
         if args.command == "handoff-export":
             return _cmd_handoff_export(args)
         if args.command == "adopt":
@@ -96,7 +100,7 @@ def _build_parser():
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
+        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,reconcile,doctor,score}",
     )
 
     new = subparsers.add_parser(
@@ -207,6 +211,24 @@ def _build_parser():
         description="legacy alias for migrate",
     )
     _add_migrate_arguments(migrate_target)
+
+    reconcile = subparsers.add_parser(
+        "reconcile",
+        help="upgrade one installed local instance from a desired canonical mechanism",
+    )
+    reconcile.add_argument("--target-dir", "--target", required=True, dest="target_dir")
+    reconcile.add_argument("--mechanism", required=True, help="desired editable canonical mechanism")
+    reconcile.add_argument("--set", action="append", default=[], dest="sets", help="parameter override as key=value")
+    execution = reconcile.add_mutually_exclusive_group()
+    execution.add_argument("--dry-run", action="store_true", help="print the in-place upgrade plan without writing")
+    execution.add_argument("--yes", action="store_true", help="apply without an interactive confirmation prompt")
+    reconcile.add_argument(
+        "--accept-degraded",
+        action="store_true",
+        help="with --yes, explicitly accept destination automation capability gaps",
+    )
+    reconcile.add_argument("--json", action="store_true", help="emit the complete reconcile receipt as JSON")
+    reconcile.add_argument("--out", help="output reconcile JSON path")
 
     handoff = subparsers.add_parser(
         "handoff-export",
@@ -372,6 +394,11 @@ def _add_migrate_arguments(parser):
         "--yes",
         action="store_true",
         help="apply without an interactive confirmation prompt",
+    )
+    parser.add_argument(
+        "--accept-degraded",
+        action="store_true",
+        help="with --yes, explicitly accept runtime automation behavior gaps listed by the plan",
     )
     parser.add_argument("--json", action="store_true", help="emit the complete path-level migration receipt as JSON")
     parser.add_argument("--slug", help="explicit character slug for generated destination artifacts")
@@ -562,6 +589,8 @@ def _cmd_install(args):
 
 
 def _cmd_migrate_target(args):
+    if args.accept_degraded and not args.yes:
+        raise PackwrightError("--accept-degraded requires --yes")
     source_target_dir = _required_path_argument(
         args.source_target_dir_positional,
         args.source_target_dir_option,
@@ -595,6 +624,18 @@ def _cmd_migrate_target(args):
         _emit_migration_report(report, args)
         return 1
 
+    degraded = report["changes"].get("degraded", [])
+    if args.yes and degraded and not args.accept_degraded:
+        report["status"] = "degradation_confirmation_required"
+        report["dry_run"] = True
+        _emit_migration_report(report, args)
+        print(
+            "migration not applied: review degraded runtime automation and rerun with --yes --accept-degraded",
+            file=sys.stderr,
+        )
+        return 2
+
+    accept_degraded = bool(args.accept_degraded)
     if not args.yes:
         if args.json or not (sys.stdin.isatty() and sys.stdout.isatty()):
             report["status"] = "confirmation_required"
@@ -606,12 +647,67 @@ def _cmd_migrate_target(args):
             )
             return 2
         _print_migration_report(report)
+        if degraded and not _confirm_degraded_migration(degraded):
+            print("Migration cancelled. No files written.")
+            return 1
+        accept_degraded = bool(degraded)
         if not _confirm_migration():
             print("Migration cancelled. No files written.")
             return 1
-    result = apply_migration(plan)
+    result = apply_migration(plan, accept_degraded=accept_degraded)
     result["dry_run"] = False
     _emit_migration_report(result, args)
+    return 0 if result["ok"] else 1
+
+
+def _cmd_reconcile(args):
+    if args.accept_degraded and not args.yes:
+        raise PackwrightError("--accept-degraded requires --yes")
+    plan = plan_reconcile(
+        args.target_dir,
+        args.mechanism,
+        parameters=_parse_sets(args.sets),
+    )
+    report = plan.to_dict()
+    if args.dry_run:
+        report["dry_run"] = True
+        _emit_reconcile_report(report, args)
+        return 0 if report["ready"] else 1
+    if not report["ready"]:
+        report["dry_run"] = True
+        _emit_reconcile_report(report, args)
+        return 1
+
+    degraded = report["changes"].get("degraded", [])
+    if args.yes and degraded and not args.accept_degraded:
+        report["status"] = "degradation_confirmation_required"
+        report["dry_run"] = True
+        _emit_reconcile_report(report, args)
+        print(
+            "reconcile not applied: review degraded automations and rerun with --yes --accept-degraded",
+            file=sys.stderr,
+        )
+        return 2
+
+    accept_degraded = bool(args.accept_degraded)
+    if not args.yes:
+        if args.json or not (sys.stdin.isatty() and sys.stdout.isatty()):
+            report["status"] = "confirmation_required"
+            report["dry_run"] = True
+            _emit_reconcile_report(report, args)
+            print("reconcile not applied: use --dry-run or --yes after review", file=sys.stderr)
+            return 2
+        _print_reconcile_report(report)
+        if degraded and not _confirm_degraded_reconcile(degraded):
+            print("Reconcile cancelled. No files written.")
+            return 1
+        accept_degraded = bool(degraded)
+        if not _confirm_reconcile():
+            print("Reconcile cancelled. No files written.")
+            return 1
+    result = apply_reconcile(plan, accept_degraded=accept_degraded)
+    result["dry_run"] = False
+    _emit_reconcile_report(result, args)
     return 0 if result["ok"] else 1
 
 
@@ -1204,12 +1300,37 @@ def _emit_migration_report(report, args):
     _print_migration_report(report)
 
 
+def _emit_reconcile_report(report, args):
+    if args.out:
+        _write_json(report, Path(args.out))
+        return
+    if args.json or not sys.stdout.isatty():
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return
+    _print_reconcile_report(report)
+
+
+def _print_reconcile_report(report):
+    print(f"Packwright reconcile {report['status']}: {report['adapter']}")
+    print(f"  target: {report['target_dir']}")
+    print(f"  spec: {report['spec']['from_sha256'][:12]} -> {report['spec']['to_sha256'][:12]}")
+    for name, items in report["changes"].items():
+        print(f"  {name}: {len(items)}")
+    planned = report["score"]["planned"]
+    print(f"  score: {planned['score']:.1f} ({'pass' if planned['passed'] else 'fail'})")
+    if report.get("conflicts"):
+        for conflict in report["conflicts"]:
+            print(f"  conflict: {conflict.get('path')}: {conflict.get('message')}")
+    if not str(report["status"]).startswith("applied"):
+        print("No files written. Use --json for the complete receipt.")
+
+
 def _print_migration_report(report):
     source = report["source"]
     destination = report["destination"]
     print(f"Packwright migration {report['status']}: {source['adapter']} -> {destination['adapter']}")
     print(f"  {source['target_dir']} -> {destination['target_dir']}")
-    for name in ("generated", "carried", "rewritten", "excluded"):
+    for name in ("generated", "carried", "rewritten", "degraded", "excluded"):
         items = report["changes"][name]
         print(f"  {name}: {len(items)} | {_migration_path_summary(items, exact=name == 'rewritten')}")
     planned = report["score"]["planned"]
@@ -1257,6 +1378,37 @@ def _migration_conflict_summary(conflicts):
 def _confirm_migration():
     try:
         answer = input("Apply this migration? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def _confirm_reconcile():
+    try:
+        answer = input("Apply this reconcile upgrade? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def _confirm_degraded_reconcile(degraded):
+    print("The destination runtime cannot implement these canonical automations:")
+    for item in degraded:
+        print(f"  - {item.get('id')} ({item.get('canonical_event')}: {item.get('reason')})")
+    try:
+        answer = input("Accept these behavior gaps and continue? [y/N] ").strip().lower()
+    except EOFError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def _confirm_degraded_migration(degraded):
+    print("Degraded runtime automation will not be reproduced in the destination:")
+    for item in degraded:
+        events = ", ".join(item.get("events", [])) or "events unknown"
+        print(f"  - {item['path']} ({events})")
+    try:
+        answer = input("Accept these behavior gaps and continue? [y/N] ").strip().lower()
     except EOFError:
         return False
     return answer in {"y", "yes"}
