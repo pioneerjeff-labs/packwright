@@ -78,7 +78,8 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     skill_path = save_context_skill_path(mechanism, adapter)
     entry = adapter_pack.get(entry_path, "")
     skill = adapter_pack.get(skill_path, "")
-    settings = adapter_pack.get(".claude/settings.local.json.example", "")
+    settings = adapter_pack.get(".claude/settings.json", "")
+    automation_runner = adapter_pack.get(".claude/hooks/packwright_automation.py", "")
     manifest = _parse_json(adapter_pack.get("manifest.json", "{}"))
     locale = mechanism_locale(mechanism)
 
@@ -212,15 +213,15 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         _add(
             checks,
             "hook_injects_facts_only",
-            _hook_injects_facts_only(settings),
+            _hook_injects_facts_only(settings, automation_runner),
             10,
-            "SessionStart example injects date, memory, relationship, and emotion facts, not long instructions",
+            "managed local hooks inject bounded canonical facts rather than long instructions",
         )
     else:
         _add(
             checks,
             "no_fake_claude_hook",
-            ".claude/settings.local.json.example" not in adapter_pack and "SessionStart" not in entry,
+            not any(path.startswith(".claude/") for path in adapter_pack) and "SessionStart" not in entry,
             10,
             "non-Claude Code projection does not fake Claude Code SessionStart hook semantics",
         )
@@ -474,14 +475,14 @@ def _entry_excludes_implementation_scope(mechanism, entry):
     return not any(item and item in entry for item in forbidden + run_values)
 
 
-def _hook_injects_facts_only(settings_text):
+def _hook_injects_facts_only(settings_text, runner_text):
     settings = _parse_json(settings_text)
     if not isinstance(settings, dict):
         return False
     hooks = settings.get("hooks", {}).get("SessionStart", [])
-    command = json.dumps(hooks)
+    command = json.dumps(hooks) + runner_text
     required = (
-        "date",
+        "system_datetime",
         "memory/index.md",
         "memory/profile.md",
         "memory/workstreams.md",

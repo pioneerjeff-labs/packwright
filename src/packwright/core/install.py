@@ -7,6 +7,7 @@ import stat
 import tempfile
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +33,12 @@ from .emotion_engine_contract import (
     emotion_engine_skill_path,
 )
 from .adapter_layout import adapter_entry, adapter_skill_root, supported_adapters
+from .automation_projection import (
+    automation_config_paths,
+    is_managed_automation_config,
+    managed_hook_fragment_digest,
+    merge_managed_hook_config,
+)
 from .errors import PackwrightValidationError
 from .handoff import HANDOFF_ARTIFACTS, HANDOFF_EXECUTABLE_ARTIFACTS, target_handoff_artifacts
 from .knowledge_contract import (
@@ -47,6 +54,7 @@ from .memory_projection import project_memory_file
 from .mechanism_contract import normalize_mechanism
 from .pack_metadata import LOCK_PATH, SPEC_PATH, embed_pack_metadata, load_embedded_spec
 from .path_safety import resolve_destination_path, resolve_source_path, validate_relative_path
+from .runtime_automation import discover_unmanaged_runtime_automation_assets
 from .naming import (
     character_slug,
     is_valid_slug,
@@ -59,6 +67,7 @@ from .workspace_contract import workspace_artifacts, workspace_readme, workspace
 SUPPORTED_INSTALL_ADAPTERS = set(supported_adapters())
 PORTABLE_STATE_DIRS = ("memory", "workspace", KNOWLEDGE_ROOT, SOURCES_ROOT, "skills")
 MIGRATION_SCHEMA = "packwright-migration/v1"
+RECONCILE_SCHEMA = "packwright-reconcile/v1"
 EMOTION_ENGINE_SECTION = """## Emotion Engine
 - Default mode: `{mode}`. The project-local MCP sidecar is installed; use it according to this mode's loading policy.
 - Use `{skill_path}` for runtime guidance, `{state_path}` for live project state, and `{wrapper_path}` for shell access.
@@ -91,6 +100,20 @@ class MigrationPlan:
     emotion_state_source: object
     emotion_style: object
     emotion_engine_mode: object
+    report: dict
+
+    def to_dict(self):
+        return copy.deepcopy(self.report)
+
+
+@dataclass(frozen=True)
+class ReconcilePlan:
+    target_dir: Path
+    mechanism_file: Path
+    resolved: dict
+    pack: dict
+    installed_manifest: dict
+    mechanism_sha256: str
     report: dict
 
     def to_dict(self):
@@ -175,14 +198,30 @@ def install_pack(
     target_dir.mkdir(parents=True, exist_ok=True)
     installed = []
     preserved_portable = []
+    merged_managed_configs = []
+    automation_configs = automation_config_paths(manifest)
+    automation_runner = manifest.get("features", {}).get("automations", {}).get("runner", {}).get("path")
     for artifact, source_path in source_paths:
         destination = destinations[artifact]
         if force and _is_portable_path(artifact) and destination.exists():
             preserved_portable.append(artifact)
             continue
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, destination)
-        if artifact in HANDOFF_EXECUTABLE_ARTIFACTS:
+        if force and artifact in automation_configs and destination.is_file():
+            try:
+                merged = merge_managed_hook_config(
+                    destination.read_text(encoding="utf-8"),
+                    source_path.read_text(encoding="utf-8"),
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                raise PackwrightValidationError([
+                    f"cannot safely merge managed hook entries in {artifact}: {exc}"
+                ]) from exc
+            destination.write_text(merged, encoding="utf-8")
+            merged_managed_configs.append(artifact)
+        else:
+            shutil.copy2(source_path, destination)
+        if artifact in HANDOFF_EXECUTABLE_ARTIFACTS or artifact == automation_runner:
             _make_executable(destination)
         installed.append(artifact)
 
@@ -196,6 +235,7 @@ def install_pack(
             resolved_emotion_engine_mode,
         )
 
+    _write_automation_baseline(target_dir, manifest)
     _refresh_artifact_lock(target_dir)
 
     result = {
@@ -208,6 +248,8 @@ def install_pack(
         result["stale_removed"] = stale_removed
     if preserved_portable:
         result["preserved_portable_state"] = sorted(preserved_portable)
+    if merged_managed_configs:
+        result["merged_managed_configs"] = sorted(merged_managed_configs)
     if sidecars:
         result["sidecars"] = sidecars
     return result
@@ -399,6 +441,7 @@ def migrate_target(
     emotion_style=None,
     emotion_engine_mode=None,
     emotion_engine_source=None,
+    accept_degraded=False,
 ):
     """Plan and apply an installed-target migration for programmatic callers."""
     plan = plan_migration(
@@ -417,7 +460,7 @@ def migrate_target(
         emotion_style=emotion_style,
         emotion_engine_mode=emotion_engine_mode,
     )
-    return apply_migration(plan)
+    return apply_migration(plan, accept_degraded=accept_degraded)
 
 
 def plan_migration(
@@ -505,6 +548,7 @@ def plan_migration(
     planned_score = _score_migration_pack(resolved, pack, to_adapter)
     conflicts = _migration_plan_conflicts(target_dir, resolved_pack_dir)
     ready = planned_score["passed"] and (force or not conflicts)
+    required_confirmations = _migration_required_confirmations(changes)
     report = {
         "schema": MIGRATION_SCHEMA,
         "status": "planned",
@@ -527,6 +571,7 @@ def plan_migration(
         "changes": changes,
         "summary": {name: len(items) for name, items in changes.items()},
         "conflicts": conflicts,
+        "required_confirmations": required_confirmations,
         "mechanism_changes": mechanism_changes,
         "emotion_engine_state": _migration_emotion_state_report(
             emotion_state_source,
@@ -558,10 +603,16 @@ def plan_migration(
     )
 
 
-def apply_migration(plan):
+def apply_migration(plan, accept_degraded=False):
     """Apply a previously prepared MigrationPlan and return its receipt."""
     if not isinstance(plan, MigrationPlan):
         raise TypeError("apply_migration expects a MigrationPlan")
+    degraded = plan.report["changes"].get("degraded", [])
+    if degraded and not accept_degraded:
+        raise PackwrightValidationError([
+            "migration contains unmanaged runtime automation that will not be reproduced in the destination",
+            "review the degraded receipt and explicitly accept the behavior gap before applying",
+        ])
     planned_score = plan.report["score"]["planned"]
     if not planned_score["passed"]:
         raise PackwrightValidationError(["destination adapter pack failed its planned checker score"])
@@ -626,10 +677,12 @@ def apply_migration(plan):
     receipt = plan.to_dict()
     receipt.update(
         {
-            "status": "applied",
+            "status": "applied_with_degradations" if degraded else "applied",
             "ready": True,
             "ok": integrity["passed"] and installed_score["passed"],
             "integrity": integrity,
+            "source_integrity": source_integrity,
+            "accepted_degradations": copy.deepcopy(degraded) if accept_degraded else [],
             "source_target_dir": str(plan.source_target_dir),
             "target_dir": str(plan.target_dir),
             "from_adapter": plan.from_adapter,
@@ -661,6 +714,343 @@ def apply_migration(plan):
     )
     receipt["score"]["installed"] = installed_score
     return receipt
+
+
+def plan_reconcile(target_dir, mechanism_path, parameters=None):
+    """Plan an in-place canonical mechanism upgrade without writing the target."""
+    target_dir = Path(target_dir)
+    mechanism_input = Path(mechanism_path).resolve()
+    mechanism_file = (
+        mechanism_input / "mechanism.yaml" if mechanism_input.is_dir() else mechanism_input
+    )
+    installed_manifest = _load_manifest(target_dir)
+    adapter = installed_manifest.get("adapter")
+    if adapter not in SUPPORTED_INSTALL_ADAPTERS:
+        raise PackwrightValidationError([f"target adapter is unsupported: {adapter!r}"])
+    mechanism = load_mechanism(mechanism_input)
+    resolved = resolve_mechanism(mechanism, parameters or {})
+    desired_commit = _git_commit_for(mechanism_file)
+    pack = _compile_pack_for_adapter(
+        adapter,
+        resolved,
+        references={"source_mechanism": str(mechanism_file)},
+    )
+    manifest = json.loads(pack["manifest.json"])
+    manifest["source_provenance"] = {
+        "mechanism_path": str(mechanism_file),
+        "git_commit": desired_commit,
+    }
+    pack["manifest.json"] = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    planned_score = _score_migration_pack(resolved, pack, adapter)
+    pack = embed_pack_metadata(pack, resolved, planned_score)
+    installed_spec_path = resolve_source_path(target_dir, SPEC_PATH, "installed canonical spec")
+    from_spec_hash = _sha256_bytes(installed_spec_path.read_bytes())
+    to_spec_hash = _sha256_bytes(pack[SPEC_PATH].encode("utf-8"))
+    changes, conflicts = _plan_reconcile_changes(target_dir, installed_manifest, pack)
+    degraded = changes["degraded"]
+    required_confirmations = []
+    if degraded:
+        required_confirmations.append(
+            {
+                "id": "accept_degraded_runtime_automation",
+                "kind": "degradation",
+                "automations": [item["id"] for item in degraded],
+                "message": "accept destination runtime automation capability gaps",
+            }
+        )
+    ready = planned_score["passed"] and not conflicts
+    report = {
+        "schema": RECONCILE_SCHEMA,
+        "status": "planned",
+        "ready": ready,
+        "target_dir": str(target_dir),
+        "adapter": adapter,
+        "mechanism": str(mechanism_file),
+        "spec": {"from_sha256": from_spec_hash, "to_sha256": to_spec_hash},
+        "git": {
+            "from_commit": installed_manifest.get("source_provenance", {}).get("git_commit"),
+            "to_commit": desired_commit,
+            "role": "provenance_only",
+        },
+        "changes": changes,
+        "summary": {name: len(items) for name, items in changes.items()},
+        "conflicts": conflicts,
+        "required_confirmations": required_confirmations,
+        "score": {"planned": planned_score, "installed": None},
+    }
+    return ReconcilePlan(
+        target_dir=target_dir,
+        mechanism_file=mechanism_file,
+        resolved=resolved,
+        pack=pack,
+        installed_manifest=installed_manifest,
+        mechanism_sha256=_file_sha256(mechanism_file),
+        report=report,
+    )
+
+
+def apply_reconcile(plan, accept_degraded=False):
+    """Apply a reviewed ReconcilePlan and write a durable local receipt."""
+    if not isinstance(plan, ReconcilePlan):
+        raise TypeError("apply_reconcile expects a ReconcilePlan")
+    if not plan.report["ready"]:
+        raise PackwrightValidationError(["reconcile plan has unresolved conflicts"])
+    degraded = plan.report["changes"]["degraded"]
+    if degraded and not accept_degraded:
+        raise PackwrightValidationError([
+            "reconcile contains destination runtime automation capability gaps",
+            "review them and explicitly accept degraded behavior before applying",
+        ])
+    if _file_sha256(plan.mechanism_file) != plan.mechanism_sha256:
+        raise PackwrightValidationError([
+            "canonical mechanism changed after reconcile planning; prepare a new plan"
+        ])
+
+    apply_pack = _augment_reconcile_pack_with_installed_sidecars(
+        plan.pack, plan.target_dir, plan.installed_manifest
+    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pack_dir = Path(temp_dir)
+        _write_pack_to_dir(apply_pack, pack_dir, force=True)
+        install_result = install_pack(
+            pack_dir,
+            plan.target_dir,
+            adapter=plan.report["adapter"],
+            force=True,
+        )
+    if emotion_engine_expected(plan.installed_manifest):
+        for rel_path in (EMOTION_ENGINE_WRAPPER_PATH, EMOTION_ENGINE_MCP_WRAPPER_PATH):
+            executable = plan.target_dir / rel_path
+            if executable.is_file():
+                _make_executable(executable)
+        _ensure_emotion_section(
+            plan.target_dir,
+            plan.report["adapter"],
+            _manifest_emotion_engine_mode(plan.installed_manifest),
+        )
+        _refresh_artifact_lock(plan.target_dir)
+
+    installed_score = _score_migration_pack(
+        plan.resolved, plan.pack, plan.report["adapter"]
+    )
+    installed_spec = resolve_source_path(
+        plan.target_dir, SPEC_PATH, "reconciled canonical spec"
+    )
+    installed_spec_hash = _sha256_bytes(installed_spec.read_bytes())
+    doctor = doctor_target(plan.target_dir)
+    ok = (
+        installed_score["passed"]
+        and installed_spec_hash == plan.report["spec"]["to_sha256"]
+        and doctor["ok"]
+    )
+    receipt = plan.to_dict()
+    receipt.update(
+        {
+            "status": "applied_with_degradations" if degraded else "applied",
+            "ok": ok,
+            "accepted_degradations": copy.deepcopy(degraded) if accept_degraded else [],
+            "installed_artifacts": install_result["installed_artifacts"],
+            "preserved_instance_state": receipt["changes"]["preserved_instance_state"],
+            "installed_spec_sha256": installed_spec_hash,
+            "doctor": doctor,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    receipt["score"]["installed"] = installed_score
+    receipt_dir = plan.target_dir / ".packwright" / "receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = receipt_dir / f"reconcile-{plan.report['spec']['to_sha256'][:12]}.json"
+    receipt["receipt"] = str(receipt_path)
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return receipt
+
+
+def _plan_reconcile_changes(target_dir, installed_manifest, pack):
+    desired_manifest = json.loads(pack["manifest.json"])
+    desired_artifacts = set(_manifest_artifacts(desired_manifest))
+    installed_artifacts = set(_manifest_artifacts(installed_manifest))
+    managed_updates = []
+    safe_memory = []
+    preserved_state = []
+    manual_merges = []
+    conflicts = []
+    config_paths = automation_config_paths(desired_manifest)
+
+    for rel_path in sorted(desired_artifacts):
+        desired = pack.get(rel_path)
+        target = target_dir / rel_path
+        if _is_portable_path(rel_path):
+            if target.is_file():
+                preserved_state.append({"path": rel_path, "status": "preserved"})
+            elif desired is not None:
+                safe_memory.append({"path": rel_path, "operation": "create_missing_scaffold"})
+            continue
+        if desired is None:
+            continue
+        if not target.is_file():
+            managed_updates.append({"path": rel_path, "operation": "add"})
+            continue
+        if rel_path in config_paths:
+            try:
+                existing_text = target.read_text(encoding="utf-8")
+                merge_managed_hook_config(existing_text, desired)
+                same = managed_hook_fragment_digest(existing_text) == managed_hook_fragment_digest(desired)
+                if _json_has_unmanaged_hook_entries(existing_text):
+                    manual_merges.append(
+                        {
+                            "path": rel_path,
+                            "operation": "preserve_user_entries_and_replace_packwright_entries",
+                        }
+                    )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                conflicts.append({"path": rel_path, "message": f"cannot safely merge hook JSON: {exc}"})
+                continue
+        else:
+            same = target.read_bytes() == desired.encode("utf-8")
+        if not same:
+            managed_updates.append({"path": rel_path, "operation": "update"})
+
+    installed_sidecars = (
+        set(emotion_engine_artifacts(installed_manifest.get("adapter")))
+        if emotion_engine_expected(installed_manifest)
+        else set()
+    )
+    removed = [
+        {"path": path, "operation": "remove_stale_managed_projection"}
+        for path in sorted(installed_artifacts - desired_artifacts)
+        if not _is_portable_path(path)
+        and path != EMOTION_ENGINE_STATE_PATH
+        and path not in installed_sidecars
+    ]
+    preserved_sidecars = [
+        {"path": path, "status": "preserved_installed_sidecar"}
+        for path in sorted(installed_sidecars)
+        if (target_dir / path).is_file()
+    ]
+    feature = desired_manifest.get("features", {}).get("automations", {})
+    records = feature.get("records", []) if isinstance(feature, dict) else []
+    degraded = [
+        copy.deepcopy(record)
+        for record in records
+        if str(record.get("status", "")).startswith("unavailable_")
+    ]
+    pending_activation = [
+        copy.deepcopy(record)
+        for record in records
+        if record.get("status") == "projected_pending_user_review"
+    ]
+    return (
+        {
+            "managed_projection_updates": managed_updates,
+            "safe_structural_memory_migrations": safe_memory,
+            "preserved_instance_state": preserved_state,
+            "manual_merges": manual_merges,
+            "removed_managed_artifacts": removed,
+            "preserved_sidecars": preserved_sidecars,
+            "degraded": degraded,
+            "pending_activation": pending_activation,
+        },
+        conflicts,
+    )
+
+
+def _json_has_unmanaged_hook_entries(text):
+    data = json.loads(text)
+    hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
+    marker = "packwright_automation.py"
+    return any(
+        marker not in json.dumps(entry, sort_keys=True)
+        for entries in hooks.values()
+        if isinstance(entries, list)
+        for entry in entries
+    )
+
+
+def _git_commit_for(path):
+    current = Path(path).resolve().parent
+    git_dir = None
+    for parent in (current, *current.parents):
+        marker = parent / ".git"
+        if marker.is_dir():
+            git_dir = marker
+            break
+        if marker.is_file():
+            try:
+                declaration = marker.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeError):
+                return None
+            if declaration.startswith("gitdir:"):
+                candidate = declaration.split(":", 1)[1].strip()
+                git_dir = (parent / candidate).resolve()
+                break
+    if git_dir is None:
+        return None
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if head.startswith("ref:"):
+        ref = head.split(":", 1)[1].strip()
+        try:
+            value = (git_dir / ref).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError):
+            value = _packed_git_ref(git_dir, ref)
+    else:
+        value = head
+    return value.lower() if _is_git_commit(value) else None
+
+
+def _packed_git_ref(git_dir, ref):
+    try:
+        lines = (git_dir / "packed-refs").read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    suffix = f" {ref}"
+    for line in lines:
+        if not line.startswith(("#", "^")) and line.endswith(suffix):
+            return line.split(" ", 1)[0]
+    return None
+
+
+def _is_git_commit(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(char in "0123456789abcdefABCDEF" for char in value)
+    )
+
+
+def _augment_reconcile_pack_with_installed_sidecars(pack, target_dir, installed_manifest):
+    if not emotion_engine_expected(installed_manifest):
+        return dict(pack)
+    enriched = dict(pack)
+    adapter = installed_manifest.get("adapter")
+    manifest = json.loads(enriched["manifest.json"])
+    sidecar_paths = []
+    for rel_path in emotion_engine_artifacts(adapter):
+        path = target_dir / rel_path
+        if path.is_file():
+            enriched[rel_path] = path.read_text(encoding="utf-8")
+            sidecar_paths.append(rel_path)
+    manifest["features"]["emotion_engine"] = copy.deepcopy(
+        installed_manifest.get("features", {}).get("emotion_engine", {})
+    )
+    if "sidecars" in installed_manifest:
+        manifest["sidecars"] = copy.deepcopy(installed_manifest["sidecars"])
+    for key in ("emotion_engine_runtime", "emotion_engine_mode"):
+        if key in installed_manifest.get("boundaries", {}):
+            manifest.setdefault("boundaries", {})[key] = installed_manifest["boundaries"][key]
+    manifest["artifacts"] = sorted(set(manifest.get("artifacts", [])) | set(sidecar_paths))
+    enriched["manifest.json"] = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    locked = {
+        path: hashlib.sha256(content.encode("utf-8")).hexdigest()
+        for path, content in sorted(enriched.items())
+        if path != LOCK_PATH
+    }
+    enriched[LOCK_PATH] = json.dumps(
+        {"schema": "packwright-lock/v1", "artifacts": locked}, indent=2, sort_keys=True
+    ) + "\n"
+    return enriched
 
 
 def _plan_migration_changes(
@@ -734,8 +1124,27 @@ def _plan_migration_changes(
                 }
             )
 
+    degraded = _plan_runtime_automation_degradations(
+        source_target_dir,
+        source_manifest,
+        from_adapter,
+        to_adapter,
+    )
+    if degraded:
+        warnings.append(
+            {
+                "id": "runtime_automation_degraded",
+                "paths": [item["path"] for item in degraded],
+                "message": (
+                    "unmanaged runtime automation is outside the installed canonical spec; "
+                    "it will be left behind unless the user explicitly accepts the behavior gap"
+                ),
+            }
+        )
+
     carried_paths = {item["path"] for item in carried}
     rewritten_paths = {item["path"] for item in rewritten}
+    degraded_paths = {item["path"] for item in degraded}
     target_manifest = json.loads(pack["manifest.json"])
     generated_by_path = {}
     for rel_path in _manifest_artifacts(target_manifest):
@@ -781,7 +1190,7 @@ def _plan_migration_changes(
         source_manifest,
         from_adapter,
         to_adapter,
-        carried_paths | rewritten_paths,
+        carried_paths | rewritten_paths | degraded_paths,
         include_emotion_state,
     )
     return (
@@ -789,6 +1198,7 @@ def _plan_migration_changes(
             "generated": sorted(generated_by_path.values(), key=lambda item: item["path"]),
             "carried": sorted(carried, key=lambda item: item["path"]),
             "rewritten": sorted(rewritten, key=lambda item: item["path"]),
+            "degraded": degraded,
             "excluded": excluded,
         },
         warnings,
@@ -869,6 +1279,50 @@ def _plan_migration_exclusions(
     return excluded
 
 
+def _plan_runtime_automation_degradations(source_target_dir, source_manifest, from_adapter, to_adapter):
+    feature = source_manifest.get("features", {}).get("automations", {})
+    managed_paths = set()
+    if isinstance(feature, dict):
+        for key in ("config", "runner"):
+            value = feature.get(key, {})
+            if isinstance(value, dict) and isinstance(value.get("path"), str):
+                managed_paths.add(value["path"])
+    return [
+        {
+            **asset,
+            "id": "unmanaged_runtime_automation",
+            "reason_code": "unmanaged_requires_canonicalization",
+            "reason": (
+                f"{from_adapter} runtime automation is outside the installed canonical spec; "
+                f"it will not be reproduced for {to_adapter} until it is reviewed as a canonical change"
+            ),
+            "source_adapter": from_adapter,
+            "destination_adapter": to_adapter,
+            "required_decision": "accept_behavior_gap",
+        }
+        for asset in discover_unmanaged_runtime_automation_assets(
+            source_target_dir, from_adapter, managed_paths=managed_paths
+        )
+    ]
+
+
+def _migration_required_confirmations(changes):
+    degraded = changes.get("degraded", [])
+    if not degraded:
+        return []
+    return [
+        {
+            "id": "accept_degraded_runtime_automation",
+            "kind": "degradation",
+            "paths": [item["path"] for item in degraded],
+            "message": (
+                "accept that unmanaged source runtime automation will not be reproduced "
+                "in the destination"
+            ),
+        }
+    ]
+
+
 def _migration_plan_conflicts(target_dir, pack_dir):
     conflicts = _migration_directory_conflicts(target_dir, "target")
     if pack_dir:
@@ -920,6 +1374,13 @@ def _verify_migration_source(changes, source_target_dir):
         path = source_target_dir / item["path"]
         actual = _file_sha256(path) if path.is_file() else None
         passed = actual == item["source_sha256"]
+        checks.append({"path": item["path"], "passed": passed})
+        if not passed:
+            issues.append({"path": item["path"], "message": f"source changed: {item['path']}"})
+    for item in changes.get("degraded", []):
+        path = source_target_dir / item["path"]
+        actual = _file_sha256(path) if path.is_file() else None
+        passed = actual == item["sha256"]
         checks.append({"path": item["path"], "passed": passed})
         if not passed:
             issues.append({"path": item["path"], "message": f"source changed: {item['path']}"})
@@ -1004,10 +1465,20 @@ def _load_artifact_lock(target_dir):
         except PackwrightValidationError as exc:
             issues.extend(exc.issues)
             continue
+        record = digest
+        if isinstance(record, dict):
+            if record.get("mode") != "managed_json_hooks":
+                issues.append(f"artifact lock mode is unsupported: {rel_path}")
+                continue
+            digest = record.get("sha256")
         if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
             issues.append(f"artifact lock digest must be a SHA-256 hex string: {rel_path}")
             continue
-        normalized[relative] = digest.lower()
+        normalized[relative] = (
+            {"mode": "managed_json_hooks", "sha256": digest.lower()}
+            if isinstance(record, dict)
+            else digest.lower()
+        )
     if issues:
         raise PackwrightValidationError(issues)
     return normalized
@@ -1023,7 +1494,7 @@ def _refresh_artifact_lock(target_dir):
         if rel_path in {LOCK_PATH, EMOTION_ENGINE_STATE_PATH}:
             continue
         path = resolve_source_path(target_dir, rel_path, "installed artifact")
-        artifacts[rel_path] = _file_sha256(path)
+        artifacts[rel_path] = _artifact_lock_record(manifest, rel_path, path)
     destination = resolve_destination_path(target_dir, LOCK_PATH, "artifact lock destination")
     destination.write_text(
         json.dumps({"schema": "packwright-lock/v1", "artifacts": artifacts}, indent=2, sort_keys=True) + "\n",
@@ -1041,7 +1512,8 @@ def _update_artifact_lock_paths(target_dir, rel_paths):
         if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_STATE_PATH:
             continue
         path = resolve_source_path(target_dir, rel_path, "managed artifact")
-        locked[rel_path] = _file_sha256(path)
+        manifest = _load_manifest(target_dir)
+        locked[rel_path] = _artifact_lock_record(manifest, rel_path, path)
     destination = resolve_destination_path(target_dir, LOCK_PATH, "artifact lock destination")
     destination.write_text(
         json.dumps({"schema": "packwright-lock/v1", "artifacts": locked}, indent=2, sort_keys=True) + "\n",
@@ -1059,7 +1531,7 @@ def _artifact_lock_doctor_issues(target_dir, manifest):
         return [_doctor_issue("artifact_lock_invalid", LOCK_PATH, "; ".join(exc.issues))]
 
     issues = []
-    for rel_path, expected_hash in sorted(locked.items()):
+    for rel_path, expected_record in sorted(locked.items()):
         if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_STATE_PATH:
             continue
         try:
@@ -1068,11 +1540,11 @@ def _artifact_lock_doctor_issues(target_dir, manifest):
             issues.append(_doctor_issue("managed_artifact_missing_or_unsafe", rel_path, "; ".join(exc.issues)))
             continue
         try:
-            actual_hash = _file_sha256(path)
-        except OSError as exc:
+            actual_hash = _artifact_lock_actual_digest(expected_record, path)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
             issues.append(_doctor_issue("managed_artifact_unreadable", rel_path, f"cannot read managed artifact: {exc}"))
             continue
-        if actual_hash != expected_hash:
+        if actual_hash != _artifact_lock_digest(expected_record):
             issues.append(_doctor_issue("managed_artifact_drift", rel_path, "managed artifact hash differs from .packwright/lock.json"))
 
     try:
@@ -1117,16 +1589,64 @@ def _repair_managed_artifact_drift(target_dir, manifest, issues):
         if rel_path.startswith(".packwright/source/") or rel_path == SPEC_PATH:
             continue
         content = expected.get(rel_path)
-        expected_hash = locked.get(rel_path)
-        if content is None or expected_hash != _sha256_bytes(content.encode("utf-8")):
+        expected_record = locked.get(rel_path)
+        if content is None or expected_record is None:
+            continue
+        if isinstance(expected_record, dict):
+            try:
+                desired_hash = managed_hook_fragment_digest(content)
+            except (json.JSONDecodeError, ValueError):
+                continue
+        else:
+            desired_hash = _sha256_bytes(content.encode("utf-8"))
+        if _artifact_lock_digest(expected_record) != desired_hash:
             continue
         destination = resolve_destination_path(target_dir, rel_path, "managed artifact repair destination")
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(expected_record, dict) and destination.is_file():
+            try:
+                content = merge_managed_hook_config(
+                    destination.read_text(encoding="utf-8"), content
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+                continue
         destination.write_text(content, encoding="utf-8")
         if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
             _make_executable(destination)
         fixed.append(rel_path)
     return sorted(set(fixed))
+
+
+def _artifact_lock_record(manifest, rel_path, path):
+    if is_managed_automation_config(manifest, rel_path):
+        return {
+            "mode": "managed_json_hooks",
+            "sha256": managed_hook_fragment_digest(path.read_text(encoding="utf-8")),
+        }
+    return _file_sha256(path)
+
+
+def _artifact_lock_digest(record):
+    return record["sha256"] if isinstance(record, dict) else record
+
+
+def _artifact_lock_actual_digest(record, path):
+    if isinstance(record, dict) and record.get("mode") == "managed_json_hooks":
+        return managed_hook_fragment_digest(path.read_text(encoding="utf-8"))
+    return _file_sha256(path)
+
+
+def _write_automation_baseline(target_dir, manifest):
+    feature = manifest.get("features", {}).get("automations", {}) if isinstance(manifest, dict) else {}
+    records = feature.get("records", []) if isinstance(feature, dict) else []
+    if not any(record.get("producer") == "relocation_guard" for record in records if isinstance(record, dict)):
+        return False
+    destination = resolve_destination_path(
+        target_dir, ".packwright/baseline-path", "automation relocation baseline"
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(str(target_dir.resolve()) + "\n", encoding="utf-8")
+    return True
 
 
 def _load_manifest(pack_dir):
@@ -1181,11 +1701,11 @@ def _prepare_migration_mechanism(data, to_adapter, slug=None, upgrade_adapter_su
 
 def _ensure_current_adapter_contract(data, to_adapter):
     version = str(data.get("version"))
-    if version in {"0.5", "0.6"}:
+    if version in {"0.5", "0.6", "0.7"}:
         return [{
             "id": "legacy_contract_normalized",
             "from_version": version,
-            "to_version": "0.7",
+            "to_version": "0.8",
             "adapter": to_adapter,
         }]
     return []

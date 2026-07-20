@@ -95,12 +95,13 @@ class MvpChainTest(unittest.TestCase):
 
         resolved = resolve_mechanism(legacy)
 
-        self.assertEqual(resolved["version"], "0.7")
+        self.assertEqual(resolved["version"], "0.8")
         for key in ("targets", "outputs", "projection", "implementation_scope", "reserved_specs"):
             self.assertNotIn(key, resolved)
         self.assertNotIn("projection", resolved["emotion"])
-        self.assertEqual(resolved["session_start"]["event"], "session_start")
-        self.assertNotIn("hook", resolved["session_start"])
+        self.assertNotIn("session_start", resolved)
+        self.assertTrue(resolved["automations"])
+        self.assertTrue(all(item["event"] == "session_start" for item in resolved["automations"]))
 
         for adapter, compiler in (
             ("codex", compile_to_codex_pack),
@@ -134,7 +135,7 @@ class MvpChainTest(unittest.TestCase):
             mechanism_text = (source_dir / "mechanism.yaml").read_text(encoding="utf-8")
             mechanism = load_mechanism(source_dir)
 
-            self.assertEqual(mechanism["version"], "0.7")
+            self.assertEqual(mechanism["version"], "0.8")
             for runtime_name in ("codex", "claude-code", "cursor"):
                 self.assertNotIn(runtime_name, mechanism_text.lower())
 
@@ -184,7 +185,7 @@ class MvpChainTest(unittest.TestCase):
             self.assertIn("legacy_contract_normalized", changes)
             self.assertTrue((destination / "CLAUDE.md").exists())
             embedded = json.loads((destination / ".packwright" / "spec.json").read_text(encoding="utf-8"))
-            self.assertEqual(embedded["version"], "0.7")
+            self.assertEqual(embedded["version"], "0.8")
             self.assertNotIn("targets", embedded)
             self.assertNotIn("outputs", embedded)
             self.assertEqual(str(legacy["version"]), "0.5")
@@ -664,12 +665,12 @@ character:
 
         version = run_cli("--version")
         self.assertEqual(version.returncode, 0, version.stderr + version.stdout)
-        self.assertEqual(version.stdout.strip(), "packwright 0.1.1")
+        self.assertEqual(version.stdout.strip(), "packwright 0.1.2")
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
         self.assertIn(
-            "{new,init,draft-character,presets,adopt,build,install,migrate,doctor,score}",
+            "{new,init,draft-character,presets,adopt,build,install,migrate,reconcile,doctor,score}",
             help_result.stdout,
         )
         self.assertIn("new", help_result.stdout)
@@ -2120,6 +2121,158 @@ character:
                     pack_dir=source_target_dir / "nested-pack",
                 )
 
+    def test_migration_reports_runtime_automation_as_degraded_and_hash_checks_it(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        claude_pack = compile_to_claude_code_pack(
+            resolved,
+            references={"source_mechanism": str(MECHANISM_PATH)},
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_pack_dir = root / "claude-pack"
+            source_target_dir = root / "claude-target"
+            codex_target_dir = root / "codex-target"
+            _write_pack(claude_pack, source_pack_dir)
+            install_pack(source_pack_dir, source_target_dir, adapter="claude-code")
+
+            settings_path = source_target_dir / ".claude" / "settings.local.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "permissions": {"allow": ["Read"]},
+                        "hooks": {
+                            "SessionStart": [{"hooks": [{"type": "command", "command": ".claude/hooks/start.sh"}]}],
+                            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "date"}]}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            hook_path = source_target_dir / ".claude" / "hooks" / "start.sh"
+            hook_path.parent.mkdir(parents=True, exist_ok=True)
+            hook_path.write_text("#!/bin/sh\necho ready\n", encoding="utf-8")
+
+            plan = plan_migration(source_target_dir, codex_target_dir, to_adapter="codex")
+            report = plan.to_dict()
+            degraded = {item["path"]: item for item in report["changes"]["degraded"]}
+
+            self.assertEqual(report["summary"]["degraded"], 2)
+            self.assertEqual(
+                degraded[".claude/settings.local.json"]["events"],
+                ["SessionStart", "UserPromptSubmit"],
+            )
+            self.assertEqual(
+                degraded[".claude/settings.local.json"]["reason_code"],
+                "unmanaged_requires_canonicalization",
+            )
+            self.assertEqual(
+                degraded[".claude/hooks/start.sh"]["reason_code"],
+                "unmanaged_requires_canonicalization",
+            )
+            self.assertEqual(degraded[".claude/settings.local.json"]["role"], "configuration")
+            self.assertEqual(degraded[".claude/hooks/start.sh"]["role"], "supporting_asset_candidate")
+            self.assertEqual(
+                report["required_confirmations"][0]["id"],
+                "accept_degraded_runtime_automation",
+            )
+            self.assertNotIn(
+                ".claude/settings.local.json",
+                {item["path"] for item in report["changes"]["excluded"]},
+            )
+            self.assertIn("runtime_automation_degraded", {item["id"] for item in report["warnings"]})
+            self.assertFalse(codex_target_dir.exists())
+
+            with self.assertRaises(PackwrightValidationError):
+                apply_migration(plan)
+            self.assertFalse(codex_target_dir.exists())
+
+            hook_path.write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+            with self.assertRaises(PackwrightValidationError):
+                apply_migration(plan, accept_degraded=True)
+            self.assertFalse(codex_target_dir.exists())
+
+            hook_path.write_text("#!/bin/sh\necho ready\n", encoding="utf-8")
+            result = apply_migration(plan, accept_degraded=True)
+            self.assertEqual(result["status"], "applied_with_degradations")
+            self.assertEqual(len(result["accepted_degradations"]), 2)
+            self.assertTrue(result["source_integrity"]["passed"])
+            self.assertTrue(codex_target_dir.exists())
+
+    def test_migration_detects_codex_inline_hooks_but_ignores_mcp_only_config(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        codex_pack = compile_to_codex_pack(
+            resolved,
+            references={"source_mechanism": str(MECHANISM_PATH)},
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_pack_dir = root / "codex-pack"
+            source_target_dir = root / "codex-target"
+            cursor_target_dir = root / "cursor-target"
+            _write_pack(codex_pack, source_pack_dir)
+            install_pack(source_pack_dir, source_target_dir, adapter="codex")
+
+            config_path = source_target_dir / ".codex" / "config.toml"
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text('[mcp_servers.local]\ncommand = "helper"\n', encoding="utf-8")
+            clean = plan_migration(source_target_dir, cursor_target_dir, to_adapter="cursor")
+            self.assertFalse(clean.to_dict()["changes"]["degraded"])
+
+            config_path.write_text(
+                '[mcp_servers.local]\ncommand = "helper"\n\n[hooks.SessionStart]\ncommand = "echo ready"\n',
+                encoding="utf-8",
+            )
+            plan = plan_migration(source_target_dir, cursor_target_dir, to_adapter="cursor")
+            degraded = plan.to_dict()["changes"]["degraded"]
+            self.assertEqual([item["path"] for item in degraded], [".codex/config.toml"])
+            self.assertEqual(degraded[0]["events"], ["SessionStart"])
+            self.assertEqual(degraded[0]["parse_status"], "marker_scan")
+
+    def test_migration_detects_cursor_local_hooks_and_supporting_assets(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        cursor_pack = compile_to_cursor_pack(
+            resolved,
+            references={"source_mechanism": str(MECHANISM_PATH)},
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_pack_dir = root / "cursor-pack"
+            source_target_dir = root / "cursor-target"
+            claude_target_dir = root / "claude-target"
+            _write_pack(cursor_pack, source_pack_dir)
+            install_pack(source_pack_dir, source_target_dir, adapter="cursor")
+
+            hooks_path = source_target_dir / ".cursor" / "hooks.json"
+            hooks_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "hooks": {
+                            "beforeSubmitPrompt": [{"command": ".cursor/hooks/prompt.sh"}],
+                            "sessionStart": [{"command": "date"}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            asset_path = source_target_dir / ".cursor" / "hooks" / "prompt.sh"
+            asset_path.parent.mkdir(parents=True, exist_ok=True)
+            asset_path.write_text("#!/bin/sh\necho prompt\n", encoding="utf-8")
+
+            plan = plan_migration(source_target_dir, claude_target_dir, to_adapter="claude-code")
+            degraded = {item["path"]: item for item in plan.to_dict()["changes"]["degraded"]}
+            self.assertEqual(
+                degraded[".cursor/hooks.json"]["events"],
+                ["beforeSubmitPrompt", "sessionStart"],
+            )
+            self.assertEqual(degraded[".cursor/hooks.json"]["role"], "configuration")
+            self.assertEqual(degraded[".cursor/hooks/prompt.sh"]["role"], "supporting_asset_candidate")
+
     def test_all_directed_cross_adapter_migrations_pass_plan_apply_and_score(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         compilers = {
@@ -2720,7 +2873,7 @@ character:
             applied = adopt_existing(source, target_dir=target, dry_run=False)
 
             self.assertFalse(applied["dry_run"])
-            self.assertTrue((target / "workspace" / "shared" / "artifacts" / "migrations" / "inventory.json").exists())
+            self.assertTrue(Path(applied["inventory_json"]).exists())
             self.assertTrue(Path(applied["report"]).exists())
             review_path = Path(applied["review_queue_yaml"])
             self.assertTrue(review_path.exists())
@@ -2739,8 +2892,50 @@ character:
             report = Path(applied["report"]).read_text(encoding="utf-8")
             self.assertIn("Existing instances are source material", report)
             self.assertIn("memory_candidate", report)
-            self.assertIn("adoption-review.yaml", report)
+            self.assertIn(review_path.name, report)
             self.assertIn("pending items are never applied", report)
+
+    def test_adopt_force_preserves_existing_knowledge_and_scopes_artifacts_by_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "target"
+            first_source = root / "first-agent"
+            second_source = root / "second-agent"
+            (first_source / ".claude").mkdir(parents=True)
+            (first_source / ".claude" / "scheduled_tasks.lock").write_text("runner lock\n", encoding="utf-8")
+            second_source.mkdir()
+            (second_source / "notes.md").write_text("second source\n", encoding="utf-8")
+
+            (target / "knowledge").mkdir(parents=True)
+            (target / "knowledge" / "index.md").write_text("# Reviewed knowledge\n", encoding="utf-8")
+            (target / "knowledge" / "manifest.json").write_text(
+                json.dumps({"schema": "packwright-knowledge-manifest/v1", "generated": False, "notes": [{"path": "knowledge/domain/note.md"}]}) + "\n",
+                encoding="utf-8",
+            )
+            (target / "sources" / "local").mkdir(parents=True)
+            (target / "sources" / "local" / "manifest.json").write_text(
+                json.dumps({"schema": "packwright-source-manifest/v1", "provider": "local", "sources": {"kept": {"path": "evidence.md"}}}) + "\n",
+                encoding="utf-8",
+            )
+            expected_knowledge = (target / "knowledge" / "index.md").read_bytes()
+            expected_manifest = (target / "knowledge" / "manifest.json").read_bytes()
+            expected_sources = (target / "sources" / "local" / "manifest.json").read_bytes()
+
+            first = adopt_existing(first_source, target_dir=target, dry_run=False)
+            second = adopt_existing(second_source, target_dir=target, dry_run=False)
+            repeated = adopt_existing(first_source, target_dir=target, dry_run=False, force=True)
+
+            self.assertNotEqual(first["inventory_json"], second["inventory_json"])
+            self.assertNotEqual(first["review_queue_yaml"], second["review_queue_yaml"])
+            self.assertEqual(first["review_queue_yaml"], repeated["review_queue_yaml"])
+            self.assertEqual((target / "knowledge" / "index.md").read_bytes(), expected_knowledge)
+            self.assertEqual((target / "knowledge" / "manifest.json").read_bytes(), expected_manifest)
+            self.assertEqual((target / "sources" / "local" / "manifest.json").read_bytes(), expected_sources)
+            self.assertEqual(
+                first["advisories"][0]["id"],
+                "external_scheduled_tasks_may_reference_source",
+            )
+            self.assertIn(".claude/scheduled_tasks.lock", first["advisories"][0]["paths"])
 
     def test_adoption_review_apply_is_per_item_hash_checked_and_never_merges_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3104,6 +3299,73 @@ character:
             self.assertTrue(fixed_manifest["ok"])
             self.assertIn("state_file_lock", target_helper.read_text(encoding="utf-8"))
 
+    def test_cli_migrate_requires_separate_degradation_acceptance(self):
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_pack_dir = root / "claude-pack"
+            source_target_dir = root / "claude-target"
+            codex_target_dir = root / "codex-target"
+            resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+            claude_pack = compile_to_claude_code_pack(
+                resolved,
+                references={"source_mechanism": str(MECHANISM_PATH)},
+            )
+            _write_pack(claude_pack, source_pack_dir)
+            install_pack(source_pack_dir, source_target_dir, adapter="claude-code")
+            settings_path = source_target_dir / ".claude" / "settings.local.json"
+            settings_path.write_text(
+                json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "date"}]}]}})
+                + "\n",
+                encoding="utf-8",
+            )
+
+            command = [
+                sys.executable,
+                "-m",
+                "packwright",
+                "migrate",
+                str(source_target_dir),
+                "--target",
+                str(codex_target_dir),
+                "--to",
+                "codex",
+                "--json",
+            ]
+            missing_acceptance = subprocess.run(
+                [*command, "--yes"],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                missing_acceptance.returncode,
+                2,
+                missing_acceptance.stderr + missing_acceptance.stdout,
+            )
+            self.assertEqual(
+                json.loads(missing_acceptance.stdout)["status"],
+                "degradation_confirmation_required",
+            )
+            self.assertFalse(codex_target_dir.exists())
+
+            accepted = subprocess.run(
+                [*command, "--yes", "--accept-degraded"],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
+            receipt = json.loads(accepted.stdout)
+            self.assertEqual(receipt["status"], "applied_with_degradations")
+            self.assertEqual(len(receipt["accepted_degradations"]), 1)
+            self.assertTrue(codex_target_dir.exists())
+
     def test_cli_migrate_target_writes_cursor_working_directory(self):
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
@@ -3240,11 +3502,11 @@ character:
             self.assertEqual(applied.returncode, 0, applied.stderr + applied.stdout)
             manifest = json.loads(applied.stdout)
             self.assertFalse(manifest["dry_run"])
-            self.assertTrue((target / "workspace" / "shared" / "artifacts" / "migrations" / "inventory.json").exists())
+            self.assertTrue(Path(manifest["inventory_json"]).exists())
             self.assertTrue((target / "knowledge" / "index.md").exists())
             self.assertFalse((target / "memory" / "todos.md").exists())
 
-            review_path = target / "workspace/shared/artifacts/migrations/adoption-review.yaml"
+            review_path = Path(manifest["review_queue_yaml"])
             review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
             for item in review["items"]:
                 if item["source"] == ".cursor/rules/agent.mdc":
@@ -3277,7 +3539,7 @@ character:
             )
             self.assertEqual(preview.returncode, 0, preview.stderr + preview.stdout)
             self.assertTrue(json.loads(preview.stdout)["ready"])
-            self.assertFalse((target / "workspace/shared/artifacts/migrations/adoption-apply-receipt.json").exists())
+            self.assertFalse(list((target / "workspace/shared/artifacts/migrations").glob("adoption-apply-receipt-*.json")))
 
             unconfirmed = subprocess.run(
                 [
@@ -3318,14 +3580,15 @@ character:
                 text=True,
             )
             self.assertEqual(confirmed.returncode, 0, confirmed.stderr + confirmed.stdout)
-            self.assertEqual(json.loads(confirmed.stdout)["status"], "applied")
-            self.assertTrue((target / "workspace/shared/artifacts/migrations/adoption-apply-receipt.json").is_file())
+            confirmed_receipt = json.loads(confirmed.stdout)
+            self.assertEqual(confirmed_receipt["status"], "applied")
+            self.assertTrue(Path(confirmed_receipt["receipt"]).is_file())
             self.assertFalse((target / "memory/todos.md").exists())
 
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
-        self.assertIn('version = "0.1.1"', pyproject)
+        self.assertIn('version = "0.1.2"', pyproject)
         self.assertIn('packwright = "packwright.cli:main"', pyproject)
 
     def test_cli_handoff_export_writes_review_file(self):

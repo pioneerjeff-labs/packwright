@@ -9,6 +9,7 @@ from packwright.core.adapter_layout import (
     render_adapter_capabilities,
     render_ownership_contract,
 )
+from packwright.core.automation_projection import project_runtime_automations
 from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_MODES,
     emotion_engine_feature,
@@ -69,13 +70,17 @@ def compile_to_cursor_pack(mechanism, references=None):
             body=_render_save_context_rule(mechanism, references),
         ),
     }
+    automation_files, automation_feature = project_runtime_automations(mechanism, ADAPTER_NAME)
+    pack.update(automation_files)
     pack.update(projected_generic_skill_files(mechanism, ADAPTER_NAME))
     pack.update(target_handoff_artifacts())
     pack.update(_reference_files(mechanism))
     pack.update(_memory_skeleton_files(mechanism))
     pack.update(_knowledge_files())
     pack.update(_workspace_files(mechanism))
-    pack["manifest.json"] = _render_manifest(mechanism, references, sorted(pack.keys()) + ["manifest.json"])
+    pack["manifest.json"] = _render_manifest(
+        mechanism, references, sorted(pack.keys()) + ["manifest.json"], automation_feature
+    )
     return pack
 
 
@@ -290,7 +295,7 @@ def _knowledge_files():
     return knowledge_files()
 
 
-def _render_manifest(mechanism, references, artifacts):
+def _render_manifest(mechanism, references, artifacts, automation_feature):
     slug = character_slug(mechanism)
     emotion_mode = _recommended_emotion_mode(mechanism)
     manifest = {
@@ -310,6 +315,7 @@ def _render_manifest(mechanism, references, artifacts):
             "emotion_style": character_voice_summary(mechanism),
         },
         "features": {
+            "automations": automation_feature,
             "locale": locale_feature(mechanism, ADAPTER_NAME),
             "emotion_engine": emotion_engine_feature("cursor", installed=False, mode=emotion_mode),
             "skills": skill_projection_feature(mechanism, ADAPTER_NAME),

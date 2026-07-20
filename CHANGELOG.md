@@ -4,6 +4,26 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.1.2] - 2026-07-20
+
+### Added
+
+- Runtime-neutral local automation contract 0.8 for bounded `session_start` and
+  `user_prompt` context from memory views, freshness facts, and relocation guards.
+- Native Claude Code, Codex, and Cursor project-hook projections with explicit
+  Cursor `user_prompt` degradation instead of a false compatibility fallback.
+- Dry-run-first `reconcile` with spec hashes, optional Git provenance, preserved
+  instance state, managed hook-entry merging, activation notes, and receipts.
+- Evidence-only adopt-to-canonical automation drafts; unmanaged hooks are never
+  reverse-compiled into another runtime.
+
+### Changed
+
+- Managed hook JSON uses entry-level ownership and lock hashing, so user settings
+  and unrelated hooks survive install, reconcile, and doctor checks.
+- Legacy mechanism 0.5, 0.6, and 0.7 sources normalize to the 0.8 automation
+  model without rewriting the editable source.
+
 ## [0.1.1] - 2026-07-17
 
 ### Added
@@ -51,6 +71,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.1.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.2
 [0.1.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.1
 [0.1.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.0
 [0.1.0rc1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.0rc1

@@ -1,3 +1,3 @@
 """Packwright agent pack compiler."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"

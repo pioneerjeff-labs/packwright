@@ -437,7 +437,7 @@ def _mechanism_yaml(character, slug):
     locale = normalize_locale(character.get("locale"))
     is_zh = locale == "zh-CN"
     data = {
-        "version": "0.7",
+        "version": "0.8",
         "kind": "CharacterMechanismSpec",
         "metadata": {
             "name": f"{slug}-work",
@@ -528,25 +528,7 @@ def _mechanism_yaml(character, slug):
             "voice_modulation_path": "emotion/voice-modulation.yaml",
             "memory_events_path": "emotion/memory-events.yaml",
         },
-        "session_start": {
-            "event": "session_start",
-            "injects_facts_only": True,
-            "facts": [
-                {
-                    "id": "current_time",
-                    "source": "system_date",
-                    "command_hint": "date '+%Y-%m-%d %H:%M %A'",
-                },
-                {"id": "memory_index", "source": "memory/index.md"},
-                {"id": "profile", "source": "memory/profile.md"},
-                {"id": "workstream_router", "source": "memory/workstreams.md"},
-                {"id": "session_index", "source": "memory/session-index.md"},
-                {"id": "personal_todos", "source": "memory/todos.md"},
-                {"id": "source_map", "source": "memory/source-map.md"},
-                {"id": "collaboration", "source": "memory/collaboration.md"},
-                {"id": "emotion_state", "source": "memory/emotion-state.json.example"},
-            ],
-        },
+        "automations": _default_automations(),
         "memory": {
             "local_files": [
                 {"id": "memory_index", "path": "memory/index.md", "track": "router"},
@@ -653,6 +635,71 @@ def _archetype_spec(archetype_id):
     }
 
 
+def _default_automations():
+    automations = [
+        {
+            "id": "session-start-current-time",
+            "scope": "local",
+            "event": "session_start",
+            "effect": "add_context",
+            "producer": {
+                "kind": "freshness_facts",
+                "facts": [{"field": "current_time", "source": "system_datetime"}],
+            },
+            "budget_bytes": 512,
+        },
+        {
+            "id": "session-start-relocation-guard",
+            "scope": "local",
+            "event": "session_start",
+            "effect": "add_context",
+            "producer": {
+                "kind": "relocation_guard",
+                "baseline_path": ".packwright/baseline-path",
+            },
+            "budget_bytes": 1024,
+        },
+    ]
+    for automation_id, source in (
+        ("session-start-memory-index", "memory/index.md"),
+        ("session-start-profile", "memory/profile.md"),
+        ("session-start-workstream-router", "memory/workstreams.md"),
+        ("session-start-session-index", "memory/session-index.md"),
+        ("session-start-source-map", "memory/source-map.md"),
+        ("session-start-collaboration", "memory/collaboration.md"),
+        ("session-start-emotion-state", "memory/emotion-state.json.example"),
+    ):
+        automations.append(
+            {
+                "id": automation_id,
+                "scope": "local",
+                "event": "session_start",
+                "effect": "add_context",
+                "producer": {
+                    "kind": "memory_view",
+                    "source": source,
+                    "select": {"max_bytes": 4096},
+                },
+                "budget_bytes": 4096,
+            }
+        )
+    automations.append(
+        {
+            "id": "user-prompt-current-todos",
+            "scope": "local",
+            "event": "user_prompt",
+            "effect": "add_context",
+            "producer": {
+                "kind": "memory_view",
+                "source": "memory/todos.md",
+                "select": {"max_bytes": 4096},
+            },
+            "budget_bytes": 4096,
+        }
+    )
+    return automations
+
+
 def _coverage():
     return {
         "required_mechanisms": [
@@ -690,7 +737,7 @@ def _coverage():
             "operating_principles": ["operating.principles_path"],
             "operating_boundaries": ["operating.boundaries_path"],
             "context_loading": ["mechanism.context_loading_path"],
-            "session_start": ["session_start"],
+            "session_start": ["automations"],
             "session_guards": ["mechanism.session_guards_path"],
             "profile_memory": ["memory.local_files", "mechanism.memory_policy_path"],
             "pinned_memory": ["memory.local_files", "memory.limits"],
