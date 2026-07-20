@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("audit_zero_network", ROOT / "scripts" / "audit_zero_network.py")
@@ -131,6 +132,31 @@ class ZeroNetworkAuditTest(unittest.TestCase):
 
 
 class PublicTreeAuditTest(unittest.TestCase):
+    def test_private_metadata_exception_is_commit_scoped(self):
+        private_metadata = "person" + "@" + "gmail.com"
+        allowed_revision = next(iter(public_audit.ALLOWED_PRIVATE_METADATA_COMMITS))
+
+        with mock.patch.object(public_audit, "history_revisions", return_value=[allowed_revision]):
+            with mock.patch.object(
+                public_audit,
+                "git",
+                side_effect=[private_metadata.encode(), b""],
+            ):
+                issues, commits = public_audit.history_issues(ROOT)
+        self.assertEqual(issues, [])
+        self.assertEqual(commits, 1)
+
+        different_revision = "0" * 40
+        with mock.patch.object(public_audit, "history_revisions", return_value=[different_revision]):
+            with mock.patch.object(
+                public_audit,
+                "git",
+                side_effect=[private_metadata.encode(), b""],
+            ):
+                issues, commits = public_audit.history_issues(ROOT)
+        self.assertTrue(any("commit metadata private email" in item for item in issues))
+        self.assertEqual(commits, 1)
+
     def test_old_name_variants_are_detected(self):
         for separator in (" ", "_", "-"):
             value = "agent" + separator + "harness"

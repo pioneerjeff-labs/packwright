@@ -10,6 +10,14 @@ from pathlib import Path
 SELF = "scripts/audit_public_tree.py"
 REVISION_ENV = "PACKWRIGHT_PUBLIC_AUDIT_REVISION"
 FULL_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
+ALLOWED_PRIVATE_METADATA_COMMITS = frozenset(
+    {
+        # GitHub's rebase-and-merge UI created this already-published commit with
+        # the repository owner's web-account committer email. Keep the exception
+        # commit-scoped so every later private metadata occurrence still fails.
+        "c2b582ee8dfdb76a0d19c94215b6c0bfd08104d2",
+    }
+)
 PATTERNS = {
     "private email": re.compile(r"[A-Z0-9._%+-]+@gmail\.com", re.I),
     "private path": re.compile(r"/(?:Users|home)/[^/\s]+/"),
@@ -71,7 +79,10 @@ def history_issues(root, revision=None):
     for rev in revisions:
         metadata = git(root, "show", "-s", "--format=%ae%n%ce", rev).decode(errors="replace")
         for line in metadata.splitlines():
-            if PATTERNS["private email"].search(line):
+            if (
+                rev not in ALLOWED_PRIVATE_METADATA_COMMITS
+                and PATTERNS["private email"].search(line)
+            ):
                 issues.append(f"{rev}: commit metadata private email")
         paths = git(root, "ls-tree", "-r", "--name-only", "-z", rev).split(b"\0")
         for raw in paths:
