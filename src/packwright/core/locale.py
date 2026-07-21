@@ -232,7 +232,7 @@ def _localize_runtime_entry_line(line, adapter):
 
 
 def localize_save_context_markdown(text, mechanism):
-    """Localize compiler-owned save-context instructions for Chinese packs."""
+    """Localize scaffold-owned save-context instructions for Chinese sources."""
     if mechanism_locale(mechanism) != "zh-CN":
         return text
     name = character_name(mechanism)

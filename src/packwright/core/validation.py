@@ -544,6 +544,10 @@ def _validate_skills(data, issues):
             )
         elif len(capabilities) != len(set(capabilities)):
             issues.append(f"skills[{index}].capabilities must not contain duplicates")
+        elif skill_id == "save-context" and capabilities:
+            issues.append(
+                f"skills[{index}].capabilities must be empty because save-context is a mandatory artifact"
+            )
 
 
 def _validate_outputs(data, issues):

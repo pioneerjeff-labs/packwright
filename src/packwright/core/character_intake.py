@@ -937,6 +937,86 @@ def _session_guards_yaml(name):
     )
 
 
+def _memory_track_specs():
+    return {
+        "index": {
+            "id": "memory-index",
+            "file": "memory/index.md",
+            "purpose": "Default memory router; points to active projects and canonical memory owners.",
+        },
+        "profile": {
+            "id": "profile",
+            "file": "memory/profile.md",
+            "purpose": "Stable user, subject, learner, creator, or relationship facts that matter across workstreams.",
+        },
+        "workstreams": {
+            "id": "workstreams",
+            "file": "memory/workstreams.md",
+            "purpose": "Domain router for long-running work areas; route to workstream detail files when useful.",
+        },
+        "workstream_details": {
+            "id": "workstream-details",
+            "dir": "memory/workstreams",
+            "purpose": "Optional detailed domain files for mature workstreams and future agent promotion.",
+        },
+        "projects": {
+            "id": "projects",
+            "dir": "memory/projects",
+            "purpose": "Source of truth for project state, decisions, open loops, and project-specific sources.",
+        },
+        "session_index": {
+            "id": "session-index",
+            "file": "memory/session-index.md",
+            "purpose": "Lookup index for prior sessions, thread recall, and earlier work references.",
+        },
+        "source_map": {
+            "id": "source-map",
+            "file": "memory/source-map.md",
+            "purpose": "Source registry for lookup and verification paths; not a knowledge base.",
+        },
+        "todos": {
+            "id": "todos",
+            "file": "memory/todos.md",
+            "purpose": "Action queues and commitments.",
+        },
+        "collaboration": {
+            "id": "collaboration",
+            "file": "memory/collaboration.md",
+            "purpose": "Learned collaboration calibrations and repair notes.",
+        },
+        "pinned": {
+            "id": "pinned-memory",
+            "file": "memory/pinned.md",
+            "purpose": "Compatibility-only in the MVP; avoid using it as a normal memory layer.",
+        },
+        "light": {
+            "id": "recent-activity",
+            "file": "memory/recent-activity.md",
+            "purpose": "Compatibility alias for memory/session-index.md.",
+        },
+        "heavy": {
+            "id": "save-context",
+            "skill": "skills/save-context/SKILL.md",
+            "purpose": "Persist context into the canonical owner files.",
+        },
+        "relationship": {
+            "id": "relationship-state",
+            "file": "memory/relationship-state.md",
+            "purpose": "Compatibility alias for memory/collaboration.md.",
+        },
+        "emotion": {
+            "id": "emotion-state",
+            "file": "memory/emotion-state.json.example",
+            "purpose": "Reserve state shape; live state belongs in .emotion-engine/state.json only when enabled.",
+        },
+        "workspace": {
+            "id": "workspace",
+            "root": "workspace",
+            "purpose": "Domain-first draft, artifact, and archive storage; important outputs are indexed in memory/source-map.md.",
+        },
+    }
+
+
 def _memory_policy_yaml(name):
     return yaml.safe_dump(
         {
@@ -948,83 +1028,7 @@ def _memory_policy_yaml(name):
                 "cloud_state": "reserved",
                 "emotion_runtime": "optional_sidecar",
             },
-            "tracks": {
-                "index": {
-                    "id": "memory-index",
-                    "file": "memory/index.md",
-                    "purpose": "Default memory router; points to active projects and canonical memory owners.",
-                },
-                "profile": {
-                    "id": "profile",
-                    "file": "memory/profile.md",
-                    "purpose": "Stable user, subject, learner, creator, or relationship facts that matter across workstreams.",
-                },
-                "workstreams": {
-                    "id": "workstreams",
-                    "file": "memory/workstreams.md",
-                    "purpose": "Domain router for long-running work areas; route to workstream detail files when useful.",
-                },
-                "workstream_details": {
-                    "id": "workstream-details",
-                    "dir": "memory/workstreams",
-                    "purpose": "Optional detailed domain files for mature workstreams and future agent promotion.",
-                },
-                "projects": {
-                    "id": "projects",
-                    "dir": "memory/projects",
-                    "purpose": "Source of truth for project state, decisions, open loops, and project-specific sources.",
-                },
-                "session_index": {
-                    "id": "session-index",
-                    "file": "memory/session-index.md",
-                    "purpose": "Lookup index for prior sessions, thread recall, and earlier work references.",
-                },
-                "source_map": {
-                    "id": "source-map",
-                    "file": "memory/source-map.md",
-                    "purpose": "Source registry for lookup and verification paths; not a knowledge base.",
-                },
-                "todos": {
-                    "id": "todos",
-                    "file": "memory/todos.md",
-                    "purpose": "Action queues and commitments.",
-                },
-                "collaboration": {
-                    "id": "collaboration",
-                    "file": "memory/collaboration.md",
-                    "purpose": "Learned collaboration calibrations and repair notes.",
-                },
-                "pinned": {
-                    "id": "pinned-memory",
-                    "file": "memory/pinned.md",
-                    "purpose": "Compatibility-only in the MVP; avoid using it as a normal memory layer.",
-                },
-                "light": {
-                    "id": "recent-activity",
-                    "file": "memory/recent-activity.md",
-                    "purpose": "Compatibility alias for memory/session-index.md.",
-                },
-                "heavy": {
-                    "id": "save-context",
-                    "skill": "skills/save-context/SKILL.md",
-                    "purpose": "Persist context into the canonical owner files.",
-                },
-                "relationship": {
-                    "id": "relationship-state",
-                    "file": "memory/relationship-state.md",
-                    "purpose": "Compatibility alias for memory/collaboration.md.",
-                },
-                "emotion": {
-                    "id": "emotion-state",
-                    "file": "memory/emotion-state.json.example",
-                    "purpose": "Reserve state shape; live state belongs in .emotion-engine/state.json only when enabled.",
-                },
-                "workspace": {
-                    "id": "workspace",
-                    "root": "workspace",
-                    "purpose": "Domain-first draft, artifact, and archive storage; important outputs are indexed in memory/source-map.md.",
-                },
-            },
+            "tracks": _memory_track_specs(),
             "rules": [
                 "Current state should not be copied into the platform entry file.",
                 "Each memory item should have exactly one canonical owner.",
@@ -1520,6 +1524,11 @@ def _emotion_state_example_json():
 def _save_context_skill_md(character):
     name = character["name"]
     user_name = character["user_name"]
+    memory_tracks = "\n".join(
+        f"- {track_name}: {track['purpose']}"
+        for track_name, track in _memory_track_specs().items()
+        if track["id"] != "emotion-state"
+    )
     text = (
         "# Save Context\n\n"
         f"Use this skill at milestone handoff, session close, or when {user_name} asks {name} to preserve state.\n\n"
@@ -1536,6 +1545,8 @@ def _save_context_skill_md(character):
         "10. Put generated drafts, artifacts, and archives under `workspace/<domain>/`; do not copy full deliverables into memory files.\n"
         "11. Update `memory/index.md` only when active projects, memory owners, or routing rules change.\n"
         "12. Report what was saved and what remains unsaved.\n\n"
+        "## Memory Tracks\n\n"
+        f"{memory_tracks}\n\n"
         "## Write Rules\n\n"
         "- Do not write cloud state in the current local projection.\n"
         "- Do not put current status into `CLAUDE.md` or `AGENTS.md`.\n"

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -194,6 +195,82 @@ class RuntimeAutomationTest(unittest.TestCase):
             runner = target / ".codex" / "hooks" / "packwright_automation.py"
             self.assertIn("user-prompt-fresh-clock", runner.read_text(encoding="utf-8"))
             self.assertTrue(Path(receipt["receipt"]).is_file())
+
+    def test_reconcile_applies_source_only_save_context_as_managed_update(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            _, pack = _embedded_pack(source, "codex")
+            pack_dir = Path(tmpdir) / "pack"
+            target = Path(tmpdir) / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+
+            marker = "CANONICAL-SOURCE-ONLY-UPDATE"
+            source_skill = source / "skills" / "save-context" / "SKILL.md"
+            source_skill.write_text(
+                source_skill.read_text(encoding="utf-8") + f"\n{marker}\n",
+                encoding="utf-8",
+            )
+
+            plan = plan_reconcile(target, source)
+            report = plan.to_dict()
+            self.assertEqual(report["spec"]["from_sha256"], report["spec"]["to_sha256"])
+            managed_updates = {
+                item["path"]: item["operation"]
+                for item in report["changes"]["managed_projection_updates"]
+            }
+            self.assertEqual(
+                managed_updates[".agents/skills/rebecca-save-context/SKILL.md"], "update"
+            )
+            self.assertEqual(
+                managed_updates[".packwright/source/skills/save-context/SKILL.md"], "update"
+            )
+            self.assertTrue(report["ready"], report)
+
+            receipt = apply_reconcile(plan)
+            self.assertTrue(receipt["ok"], receipt)
+            self.assertIn(
+                marker,
+                (target / ".agents" / "skills" / "rebecca-save-context" / "SKILL.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn(
+                marker,
+                (target / ".packwright" / "source" / "skills" / "save-context" / "SKILL.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertTrue(doctor_target(target)["ok"])
+
+    def test_doctor_refuses_pre_reconcile_repair_that_would_break_the_old_lock(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            _, pack = _embedded_pack(source, "codex")
+            projected_path = ".agents/skills/rebecca-save-context/SKILL.md"
+            legacy_projection = "# Legacy managed save-context projection\n"
+            pack[projected_path] = legacy_projection
+            lock = json.loads(pack[".packwright/lock.json"])
+            lock["artifacts"][projected_path] = hashlib.sha256(
+                legacy_projection.encode("utf-8")
+            ).hexdigest()
+            pack[".packwright/lock.json"] = json.dumps(lock, indent=2, sort_keys=True) + "\n"
+
+            pack_dir = Path(tmpdir) / "legacy-pack"
+            target = Path(tmpdir) / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+            self.assertTrue(doctor_target(target)["ok"])
+
+            projected = target / projected_path
+            projected.write_text("# manual drift\n", encoding="utf-8")
+            report = doctor_target(target, fix=True)
+            self.assertFalse(report["ok"])
+            self.assertIn("managed_artifact_drift", {item["id"] for item in report["issues"]})
+            self.assertFalse(
+                any(item["id"] == "managed_artifact_drift_repaired" for item in report["fixes"])
+            )
+            self.assertEqual(projected.read_text(encoding="utf-8"), "# manual drift\n")
 
     def test_adopt_can_create_evidence_only_automation_canonicalization_draft(self):
         with tempfile.TemporaryDirectory() as tmpdir:

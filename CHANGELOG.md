@@ -4,6 +4,29 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.2.0] - 2026-07-21
+
+### Changed
+
+- Save-context projections now use the canonical `skills[].path` source body
+  across Codex, Claude Code, and Cursor; adapters own only destination paths
+  and runtime front matter.
+- Newly scaffolded save-context sources derive their Memory Tracks section from
+  the same structured data used to generate `memory-policy.yaml`.
+- The checker keeps the Procedure, session-index, canonical-owner, and
+  runtime-neutrality invariants without requiring the scaffold-default Memory
+  Tracks heading in customized sources.
+- Save-context remains a mandatory, capability-agnostic artifact; validation
+  rejects non-empty `capabilities` instead of allowing manifest and emitted-file
+  state to disagree.
+
+### Fixed
+
+- Preserve customized save-context instructions in built, installed, migrated,
+  and reconciled targets instead of replacing them with adapter-owned templates.
+- Report the canonical source path and forbidden runtime token when a customized
+  save-context body violates projection neutrality.
+
 ## [0.1.2] - 2026-07-20
 
 ### Added
@@ -71,6 +94,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.2.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.2.0
 [0.1.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.2
 [0.1.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.1
 [0.1.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.0

@@ -44,7 +44,7 @@
 最短的使用界面是一段对话。安装 Packwright，然后把现成提示词粘贴给 Codex、Claude Code 或 Cursor：
 
 ```bash
-python -m pip install packwright==0.1.2
+python -m pip install packwright==0.2.0
 ```
 
 **[打开可直接粘贴的 agent 操作提示词 →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -166,7 +166,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
          └── packwright build --adapter cursor      → .cursor/rules/*.mdc
 ```
 
-每个 pack 和已安装 target 都包含自包含的 `.packwright/` 元数据：canonical source snapshot、artifact lock 与 checker receipt。即使移动 target、删除原 build 目录，也能继续运行 `migrate`、`doctor` 与 `score`。
+每个 pack 和已安装 target 都包含自包含的 `.packwright/` 元数据：内嵌 source snapshot、artifact lock 与 checker receipt。即使移动 target、删除原 build 目录，也能继续运行 `migrate`、`doctor` 与 `score`。定制应编辑 work directory 中的 canonical source，而不是 installed target 或 `.packwright/source`；reconcile 会从 work directory 刷新内嵌快照和 managed projection。
 
 ## 迁移一个正在工作的 agent
 
@@ -182,7 +182,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 ## 当前发布边界
 
-`0.1.2` 是当前稳定版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云
+`0.2.0` 是当前稳定版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云
 同步服务；plain-file 结构分数与真实 runtime 兼容性是两件事。
 
 ## 文档
@@ -194,6 +194,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [agent archetype](docs/AGENT_ARCHETYPES.md)
 - [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
 - [本地 runtime automation](docs/RUNTIME_AUTOMATIONS.md)
+- [0.2.0 发布说明](docs/releases/0.2.0.md)
 - [0.1.2 发布说明](docs/releases/0.1.2.md)
 - [0.1.1 发布说明](docs/releases/0.1.1.md)
 - [0.1.0 发布说明](docs/releases/0.1.0.md)

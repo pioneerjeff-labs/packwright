@@ -14,6 +14,23 @@ Use this skill at milestone handoff, session close, or when the user asks Atlas 
 8. Update `memory/index.md` only when active projects, memory owners, or routing rules change.
 9. Report what was saved and what remains unsaved.
 
+## Memory Tracks
+
+- index: Default memory router; points to active projects and canonical memory owners.
+- profile: Stable user, subject, learner, creator, or relationship facts that matter across workstreams.
+- workstreams: Domain router for long-running work areas; route to workstream detail files when useful.
+- workstream_details: Optional detailed domain files for mature workstreams and future agent promotion.
+- projects: Source of truth for project state, decisions, open loops, and project-specific sources.
+- session_index: Lookup index for prior sessions, thread recall, and earlier work references.
+- source_map: Source registry for lookup and verification paths; not a knowledge base.
+- todos: Action queues and commitments.
+- collaboration: Learned collaboration calibrations and repair notes.
+- pinned: Compatibility-only in the MVP; avoid using it as a normal memory layer.
+- light: Compatibility alias for memory/session-index.md.
+- heavy: Persist context into the canonical owner files.
+- relationship: Compatibility alias for memory/collaboration.md.
+- workspace: Domain-first draft, artifact, and archive storage; important outputs are indexed in memory/source-map.md.
+
 ## Write Rules
 
 - Do not write cloud state in the current local projection.

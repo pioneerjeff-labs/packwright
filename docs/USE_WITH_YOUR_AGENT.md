@@ -7,7 +7,7 @@ Packwright's CLI is the deterministic engine. Codex, Claude Code, or Cursor can 
 Install Packwright in the environment your coding agent can access:
 
 ```bash
-python -m pip install packwright==0.1.2
+python -m pip install packwright==0.2.0
 packwright --version
 ```
 

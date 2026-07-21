@@ -44,7 +44,7 @@
 The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, or Cursor:
 
 ```bash
-python -m pip install packwright==0.1.2
+python -m pip install packwright==0.2.0
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -184,7 +184,7 @@ editable source
          └── packwright build --adapter cursor      → .cursor/rules/*.mdc
 ```
 
-Every pack and installed target includes self-contained `.packwright/` metadata: the canonical source snapshot, artifact lock, and checker receipt. You can relocate a target and still run `migrate`, `doctor`, and `score` without its original build directory.
+Every pack and installed target includes self-contained `.packwright/` metadata: an embedded source snapshot, artifact lock, and checker receipt. You can relocate a target and still run `migrate`, `doctor`, and `score` without its original build directory. Edit the canonical source in the work directory, not the installed target or `.packwright/source`; reconcile refreshes the embedded snapshot and managed projections from that work directory.
 
 ## Move a working agent
 
@@ -200,7 +200,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.1.2` is the current stable release; `0.1.0` remains the first stable baseline. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
+`0.2.0` is the current stable release; `0.1.0` remains the first stable baseline. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
 
 ## Documentation
 
@@ -211,6 +211,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.1.2 release notes](docs/releases/0.1.2.md)
 - [0.1.1 release notes](docs/releases/0.1.1.md)
 - [0.1.0 release notes](docs/releases/0.1.0.md)

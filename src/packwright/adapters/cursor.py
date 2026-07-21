@@ -1,7 +1,5 @@
 import json
 
-import yaml
-
 from packwright.core.adapter_layout import (
     adapter_emotion_engine_runtime,
     adapter_lifecycle,
@@ -19,7 +17,6 @@ from packwright.core.knowledge_contract import knowledge_feature, knowledge_file
 from packwright.core.locale import (
     locale_feature,
     localize_entry_markdown,
-    localize_save_context_markdown,
 )
 from packwright.core.memory_projection import project_memory_file
 from packwright.core.mechanism_contract import normalize_mechanism
@@ -63,11 +60,12 @@ def compile_to_cursor_pack(mechanism, references=None):
     pack = {
         main_rule_path: _render_main_rule(mechanism, memory_rule_path, save_context_path),
         memory_rule_path: _render_memory_rule(mechanism),
+        # save-context is mandatory and intentionally bypasses optional
+        # capability gating.
         save_context_path: render_skill_projection(
             mechanism,
             ADAPTER_NAME,
             save_context,
-            body=_render_save_context_rule(mechanism, references),
         ),
     }
     automation_files, automation_feature = project_runtime_automations(mechanism, ADAPTER_NAME)
@@ -193,62 +191,6 @@ def _render_memory_rule(mechanism):
         "",
     ]
     return localize_entry_markdown("\n".join(lines), mechanism, ADAPTER_NAME)
-
-
-def _render_save_context_rule(mechanism, references):
-    memory_policy = _load_yaml_ref(mechanism, mechanism["mechanism"]["memory_policy_path"])
-    name = character_name(mechanism)
-    user_name = character_user_name(mechanism)
-    lines = [
-        "---",
-        f"description: Use when {user_name} asks {name} to save context or at milestone handoff.",
-        "alwaysApply: false",
-        "---",
-        "",
-        f"# {name} Save Context",
-        "",
-        f"Use this rule at milestone handoff, session close, or when {user_name} explicitly asks {name} to preserve context.",
-        "",
-        "## Procedure",
-        "1. Identify the current objective, scope, decisions, changed files, verification, and open questions.",
-        "2. Update the canonical owner file instead of copying the same fact across layers.",
-        "3. Update `memory/profile.md` only for stable cross-workstream profile facts the user intentionally provides or confirms.",
-        "4. Update `memory/workstreams.md` for long-running domain routing, and `memory/workstreams/<slug>.md` for dense domain state.",
-        "5. Update `memory/projects/<slug>.md` for project state, decisions, open loops, and project-specific sources.",
-        "6. Update `memory/session-index.md` for session/thread lookup entries, not project state summaries.",
-        "7. Update `memory/source-map.md` for source-of-truth paths, verification routes, workspace artifacts, and lookup pointers.",
-        "8. Update `memory/todos.md` for action queues and commitments.",
-        "9. Update `memory/collaboration.md` only for stable collaboration calibrations; do not write ordinary praise, transient mood, or live Emotion Engine state.",
-        "10. Put generated drafts, artifacts, and archives under `workspace/<domain>/`; do not copy full deliverables into memory files.",
-        "11. Use `workspace/shared/artifacts/session-briefs/` for same-agent next-session briefs.",
-        "12. Use `workspace/shared/artifacts/handoffs/` only for real cross-agent or cross-runtime handoff files.",
-        "13. Update `memory/index.md` only when active projects, memory owners, or routing rules change.",
-        "14. Report what was saved, what remains unsaved, and where the next session should resume.",
-        "",
-        "## Memory Tracks",
-    ]
-    for track_name, track in memory_policy.get("tracks", {}).items():
-        if track.get("id") == "emotion-state":
-            continue
-        lines.append(f"- {track_name}: {track.get('purpose', '')}")
-
-    lines.extend(
-        [
-            "",
-            "## Boundary Notes",
-            f"- {name} local memory files remain the durable memory source of truth.",
-            "- `memory/profile.md` stores explicit stable profile facts, not inferred mood or secrets.",
-            "- `memory/workstreams.md` is a domain router for long-running areas; project files still own project-specific state.",
-            "- `memory/session-index.md` is a lookup index, not a project state source.",
-            "- `knowledge/index.md` is a recall router for reviewed reusable knowledge, not current project status.",
-            "- `sources/*/manifest.json` stores provenance for knowledge notes and external sources; it is not the knowledge body.",
-            "- `workspace/<domain>/` stores drafts, deliverables, and archives; important outputs should be indexed in `memory/source-map.md`.",
-            "- `.emotion-engine/state.json` stores dynamic emotion state when enabled; do not mirror it into memory files.",
-            "- Fact assertion gates are session guards, not a rule file.",
-            "",
-        ]
-    )
-    return localize_save_context_markdown("\n".join(lines), mechanism)
 
 
 def _reference_files(mechanism):
@@ -404,10 +346,6 @@ def _sentence(text):
 def _read_text_ref(mechanism, rel_path):
     path = _resolve_ref(mechanism, rel_path)
     return path.read_text(encoding="utf-8")
-
-
-def _load_yaml_ref(mechanism, rel_path):
-    return yaml.safe_load(_read_text_ref(mechanism, rel_path)) or {}
 
 
 def _resolve_ref(mechanism, rel_path):

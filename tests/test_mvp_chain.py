@@ -232,7 +232,7 @@ class MvpChainTest(unittest.TestCase):
         self.assertNotIn("## Stable Presence", pack["AGENTS.md"])
         self.assertNotIn("## Entry Boundary", pack["AGENTS.md"])
         self.assertIn("## Procedure", pack[".agents/skills/atlas-save-context/SKILL.md"])
-        self.assertIn("## Boundary Notes", pack[".agents/skills/atlas-save-context/SKILL.md"])
+        self.assertIn("## Write Rules", pack[".agents/skills/atlas-save-context/SKILL.md"])
         self.assertNotIn("Codex Projection Notes", pack[".agents/skills/atlas-save-context/SKILL.md"])
         self.assertNotIn(".agents/skills/atlas-recent-activity/SKILL.md", pack)
         self.assertNotIn(".agents/skills/atlas-fact-check/SKILL.md", pack)
@@ -250,6 +250,95 @@ class MvpChainTest(unittest.TestCase):
         self.assertIn("memory/projects/<slug>.md", pack["AGENTS.md"])
         self.assertIn("Treat file reads as internal work", pack["AGENTS.md"])
         self.assertIn("When memory is empty", pack["AGENTS.md"])
+
+    def test_save_context_source_body_projects_to_all_adapters_without_memory_tracks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            shutil.copytree(MECHANISM_PATH.parent, source_dir)
+            source_body = (
+                "# Save Context\n\n"
+                "CUSTOM-SOURCE-SENTINEL\n\n"
+                "## Procedure\n\n"
+                "1. Update the canonical owner file.\n"
+                "2. Add one lookup entry to `memory/session-index.md`.\n\n"
+                "## Write Rules\n\n"
+                "- Keep the source body runtime-neutral.\n"
+            )
+            (source_dir / "skills" / "save-context" / "SKILL.md").write_text(
+                source_body, encoding="utf-8"
+            )
+            resolved = resolve_mechanism(load_mechanism(source_dir / "mechanism.yaml"))
+            cases = (
+                ("codex", compile_to_codex_pack, ".agents/skills/atlas-save-context/SKILL.md"),
+                ("claude-code", compile_to_claude_code_pack, ".claude/skills/atlas-save-context/SKILL.md"),
+                ("cursor", compile_to_cursor_pack, ".cursor/rules/atlas-save-context.mdc"),
+            )
+            for adapter, compiler, projected_path in cases:
+                pack = compiler(resolved)
+                self.assertIn(source_body.strip(), pack[projected_path])
+                self.assertNotIn("## Memory Tracks", pack[projected_path])
+                self.assertEqual(score_mechanism(resolved, pack, adapter=adapter)["score"], 100.0)
+
+            (source_dir / "skills" / "save-context" / "SKILL.md").write_text(
+                "---\nname: Claude-only-source-front-matter\n---\n\n" + source_body,
+                encoding="utf-8",
+            )
+            cursor_pack = compile_to_cursor_pack(resolved)
+            cursor_projection = cursor_pack[".cursor/rules/atlas-save-context.mdc"]
+            self.assertNotIn("Claude-only-source-front-matter", cursor_projection)
+            self.assertIn(source_body.strip(), cursor_projection)
+            self.assertIn("alwaysApply: false", cursor_projection)
+            self.assertEqual(
+                score_mechanism(resolved, cursor_pack, adapter="cursor")["score"], 100.0
+            )
+
+    def test_save_context_source_is_required_and_cannot_be_capability_gated(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            missing_source = root / "missing-source"
+            shutil.copytree(MECHANISM_PATH.parent, missing_source)
+            (missing_source / "skills" / "save-context" / "SKILL.md").unlink()
+            with self.assertRaises(PackwrightValidationError) as missing:
+                resolve_mechanism(load_mechanism(missing_source / "mechanism.yaml"))
+            self.assertIn("skills[0].path does not exist", str(missing.exception))
+
+            gated_source = root / "gated-source"
+            shutil.copytree(MECHANISM_PATH.parent, gated_source)
+            mechanism_path = gated_source / "mechanism.yaml"
+            mechanism = yaml.safe_load(mechanism_path.read_text(encoding="utf-8"))
+            mechanism["skills"][0]["capabilities"] = ["hooks"]
+            mechanism_path.write_text(
+                yaml.safe_dump(mechanism, sort_keys=False, allow_unicode=True), encoding="utf-8"
+            )
+            with self.assertRaises(PackwrightValidationError) as gated:
+                resolve_mechanism(load_mechanism(mechanism_path))
+            self.assertIn(
+                "capabilities must be empty because save-context is a mandatory artifact",
+                str(gated.exception),
+            )
+
+    def test_save_context_neutrality_failure_points_to_canonical_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            shutil.copytree(MECHANISM_PATH.parent, source_dir)
+            skill_path = source_dir / "skills" / "save-context" / "SKILL.md"
+            skill_path.write_text(
+                skill_path.read_text(encoding="utf-8")
+                + "\n- Put this instruction in Claude only.\n",
+                encoding="utf-8",
+            )
+            resolved = resolve_mechanism(load_mechanism(source_dir / "mechanism.yaml"))
+            pack = compile_to_codex_pack(resolved)
+            result = score_mechanism(resolved, pack, adapter="codex")
+            failed = next(
+                check
+                for check in result["checks"]
+                if check["id"] == "save_context_skill_projection_neutral"
+            )
+            self.assertFalse(failed["passed"])
+            self.assertIn("skills/save-context/SKILL.md", failed["message"])
+            self.assertIn("'Claude'", failed["message"])
+            self.assertIn("runtime-neutral", failed["message"])
 
         manifest = json.loads(pack["manifest.json"])
         self.assertEqual(manifest["features"]["emotion_engine"]["default_mode"], "light")
@@ -364,6 +453,17 @@ character:
                 source_dir = root / locale / "source"
                 generated = generate_character_source_from_data(intake, source_dir)
                 self.assertEqual(generated["locale"], locale)
+                source_skill = (source_dir / "skills" / "save-context" / "SKILL.md").read_text(
+                    encoding="utf-8"
+                )
+                self.assertIn(
+                    "## 记忆轨道" if locale == "zh-CN" else "## Memory Tracks",
+                    source_skill,
+                )
+                self.assertIn(
+                    "- index：默认记忆路由" if locale == "zh-CN" else "- index: Default memory router",
+                    source_skill,
+                )
                 resolved = resolve_mechanism(load_mechanism(source_dir / "mechanism.yaml"))
                 self.assertEqual(resolved["metadata"]["locale"], locale)
 
@@ -665,7 +765,7 @@ character:
 
         version = run_cli("--version")
         self.assertEqual(version.returncode, 0, version.stderr + version.stdout)
-        self.assertEqual(version.stdout.strip(), "packwright 0.1.2")
+        self.assertEqual(version.stdout.strip(), "packwright 0.2.0")
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
@@ -3588,7 +3688,7 @@ character:
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
-        self.assertIn('version = "0.1.2"', pyproject)
+        self.assertIn('version = "0.2.0"', pyproject)
         self.assertIn('packwright = "packwright.cli:main"', pyproject)
 
     def test_cli_handoff_export_writes_review_file(self):

@@ -57,7 +57,7 @@ def render_skill_projection(mechanism, adapter, skill, body=None):
     if body is None:
         source = resolve_mechanism_file(mechanism, skill["path"])
         body = source.read_text(encoding="utf-8")
-    body = _strip_front_matter(body).strip()
+    body = skill_projection_body(body)
     trigger = skill["trigger"].strip()
     slug = character_slug(mechanism)
     if adapter == "cursor":
@@ -71,6 +71,11 @@ def render_skill_projection(mechanism, adapter, skill, body=None):
             "description": trigger,
         }
     return "---\n" + yaml.safe_dump(front_matter, sort_keys=False, allow_unicode=True).strip() + "\n---\n\n" + body + "\n"
+
+
+def skill_projection_body(text):
+    """Return the normalized semantic body projected beneath runtime front matter."""
+    return _strip_front_matter(text).strip()
 
 
 def projected_generic_skill_files(mechanism, adapter, excluded_ids=("save-context",)):

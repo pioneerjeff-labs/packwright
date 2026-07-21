@@ -27,7 +27,11 @@ from packwright.core.locale import (
     mechanism_locale,
     section_heading,
 )
-from packwright.core.skill_projection import projected_skill_path, skill_projection_records
+from packwright.core.skill_projection import (
+    projected_skill_path,
+    skill_projection_body,
+    skill_projection_records,
+)
 from packwright.core.handoff import (
     DEFAULT_HANDOFF_DIR,
     DEFAULT_SESSION_BRIEF_DIR,
@@ -76,12 +80,18 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
     adapter = _adapter_from_manifest(adapter_pack, adapter)
     entry_path = _entry_path(mechanism, adapter)
     skill_path = save_context_skill_path(mechanism, adapter)
+    save_context_source_path = next(
+        item["path"] for item in mechanism["skills"] if item.get("id") == "save-context"
+    )
     entry = adapter_pack.get(entry_path, "")
     skill = adapter_pack.get(skill_path, "")
     settings = adapter_pack.get(".claude/settings.json", "")
     automation_runner = adapter_pack.get(".claude/hooks/packwright_automation.py", "")
     manifest = _parse_json(adapter_pack.get("manifest.json", "{}"))
     locale = mechanism_locale(mechanism)
+    save_context_neutrality_violation = _save_context_skill_projection_neutrality_violation(
+        skill
+    )
 
     implemented_by = mechanism["coverage"]["implemented_by"]
     identity = mechanism["identity"]
@@ -197,17 +207,22 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         "save_context_skill_valid",
         section_heading(locale, "procedure") in skill
         and "memory/session-index.md" in skill
-        and ("canonical owner file" in skill if locale == "en" else "规范文件" in skill)
-        and section_heading(locale, "memory_tracks") in skill,
+        and ("canonical owner file" in skill if locale == "en" else "规范文件" in skill),
         10,
         "save-context skill carries the heavy memory handoff procedure",
     )
     _add(
         checks,
         "save_context_skill_projection_neutral",
-        _save_context_skill_projection_neutral(skill),
+        save_context_neutrality_violation is None,
         10,
-        "save-context skill avoids Codex, Claude Code, and adapter-specific projection wording",
+        (
+            "save-context skill avoids Codex, Claude Code, and adapter-specific projection wording"
+            if save_context_neutrality_violation is None
+            else f"{save_context_source_path} contains runtime-specific token "
+            f"{save_context_neutrality_violation!r}; keep the canonical source body "
+            "runtime-neutral and let adapters own runtime names, paths, and front matter"
+        ),
     )
     if adapter == "claude-code":
         _add(
@@ -545,7 +560,9 @@ def _semantic_skill_projection_neutral(mechanism, adapter_pack, adapter):
             continue
         path = projected_skill_path(mechanism, adapter, skill)
         text = adapter_pack.get(path)
-        if text is not None and any(item in text for item in forbidden):
+        if text is not None and any(
+            item in skill_projection_body(text) for item in forbidden
+        ):
             return False
     return True
 
@@ -623,9 +640,19 @@ def _section_bullets(text, heading):
     return bullets
 
 
-def _save_context_skill_projection_neutral(skill):
-    forbidden = ("Codex", "Claude", "Cursor", "Projection Notes", "adapter pack", ".codex", ".claude", ".cursor")
-    return not any(item in skill for item in forbidden)
+def _save_context_skill_projection_neutrality_violation(skill):
+    forbidden = (
+        "Codex",
+        "Claude",
+        "Cursor",
+        "Projection Notes",
+        "adapter pack",
+        ".codex",
+        ".claude",
+        ".cursor",
+    )
+    body = skill_projection_body(skill)
+    return next((item for item in forbidden if item in body), None)
 
 
 def _empty_memory_skeleton_is_user_ready(adapter_pack):
