@@ -251,6 +251,24 @@ class MvpChainTest(unittest.TestCase):
         self.assertIn("Treat file reads as internal work", pack["AGENTS.md"])
         self.assertIn("When memory is empty", pack["AGENTS.md"])
 
+    def test_codex_manifest_declares_architecture_features(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        pack = compile_to_codex_pack(resolved)
+        manifest = json.loads(pack["manifest.json"])
+
+        self.assertEqual(manifest["features"]["emotion_engine"]["default_mode"], "light")
+        self.assertEqual(manifest["features"]["emotion_engine"]["mode"], "light")
+        self.assertFalse(manifest["features"]["emotion_engine"]["installed"])
+        self.assertEqual(
+            manifest["features"]["memory"]["workstream_load_policy"],
+            "load_router_then_relevant_detail",
+        )
+        self.assertEqual(manifest["features"]["workspace"]["layout"], WORKSPACE_LAYOUT)
+        self.assertEqual(manifest["features"]["workspace"]["domain_template"], WORKSPACE_DOMAIN_TEMPLATE_DIR)
+        self.assertEqual(manifest["features"]["knowledge"]["root"], "knowledge")
+        self.assertEqual(manifest["features"]["knowledge"]["recall_index"], "knowledge/index.md")
+        self.assertIn("memory/index.md", manifest["features"]["memory"]["core_files"])
+
     def test_save_context_source_body_projects_to_all_adapters_without_memory_tracks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             source_dir = Path(tmpdir) / "source"
@@ -339,20 +357,6 @@ class MvpChainTest(unittest.TestCase):
             self.assertIn("skills/save-context/SKILL.md", failed["message"])
             self.assertIn("'Claude'", failed["message"])
             self.assertIn("runtime-neutral", failed["message"])
-
-        manifest = json.loads(pack["manifest.json"])
-        self.assertEqual(manifest["features"]["emotion_engine"]["default_mode"], "light")
-        self.assertEqual(manifest["features"]["emotion_engine"]["mode"], "light")
-        self.assertFalse(manifest["features"]["emotion_engine"]["installed"])
-        self.assertEqual(
-            manifest["features"]["memory"]["workstream_load_policy"],
-            "load_router_then_relevant_detail",
-        )
-        self.assertEqual(manifest["features"]["workspace"]["layout"], WORKSPACE_LAYOUT)
-        self.assertEqual(manifest["features"]["workspace"]["domain_template"], WORKSPACE_DOMAIN_TEMPLATE_DIR)
-        self.assertEqual(manifest["features"]["knowledge"]["root"], "knowledge")
-        self.assertEqual(manifest["features"]["knowledge"]["recall_index"], "knowledge/index.md")
-        self.assertIn("memory/index.md", manifest["features"]["memory"]["core_files"])
 
     def test_character_intake_generates_template_that_compiles_and_scores(self):
         with tempfile.TemporaryDirectory() as tmpdir:
