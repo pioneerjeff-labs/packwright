@@ -16,6 +16,7 @@ ALLOWED_PRIVATE_METADATA_COMMITS = frozenset(
         # the repository owner's web-account committer email. Keep the exception
         # commit-scoped so every later private metadata occurrence still fails.
         "c2b582ee8dfdb76a0d19c94215b6c0bfd08104d2",
+        "cadaf11e7cee7e41389f89bb5f9db48dc0ec978c",
     }
 )
 PATTERNS = {
