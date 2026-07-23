@@ -287,9 +287,9 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         _add(
             checks,
             "reserved_emotion_not_in_daily_codex_entry",
-            "memory/emotion-state.json.example" not in entry and "live Emotion Engine state" not in entry,
+            "live Emotion Engine state" not in entry,
             10,
-            "Codex daily entry keeps reserved Emotion Engine state out of normal operating prompts",
+            "Codex daily entry keeps live Emotion Engine state out of normal operating prompts",
         )
     _add(
         checks,
@@ -505,7 +505,6 @@ def _hook_injects_facts_only(settings_text, runner_text):
         "memory/source-map.md",
         "memory/todos.md",
         "memory/collaboration.md",
-        "memory/emotion-state.json.example",
     )
     forbidden = ("You are", "Always", "Never", "Workflow", "implement")
     return all(item in command for item in required) and not any(item in command for item in forbidden)
@@ -520,7 +519,6 @@ def _emotion_specs_present(mechanism, adapter_pack, adapter):
         f"{prefix}/emotion/voice-modulation.yaml",
         f"{prefix}/emotion/memory-events.yaml",
         "memory/collaboration.md",
-        "memory/emotion-state.json.example",
     ]
     return all(path in adapter_pack for path in expected) and mechanism["emotion"]["status"] == "structured_reserved"
 
@@ -583,20 +581,17 @@ def _entry_uses_runtime_appropriate_links(entry, adapter, skill_path, locale):
             and f"`{skill_path}`" in entry
             and "@" not in entry
             and all(f"`{path}`" in entry for path in daily_memory_paths)
-            and "`memory/emotion-state.json.example`" not in entry
         )
     if adapter == "cursor":
         return (
             section_heading(locale, "use_when_needed") in entry
             and f"`{skill_path}`" in entry
             and all(f"`{path}`" in entry for path in daily_memory_paths)
-            and "`memory/emotion-state.json.example`" not in entry
         )
-    memory_paths = (*daily_memory_paths, "memory/emotion-state.json.example")
     return (
         section_heading(locale, "load_when_needed") in entry
         and f"@{skill_path}" in entry
-        and all(f"@{path}" in entry for path in memory_paths)
+        and all(f"@{path}" in entry for path in daily_memory_paths)
     )
 
 

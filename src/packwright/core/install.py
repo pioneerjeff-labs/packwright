@@ -68,6 +68,8 @@ SUPPORTED_INSTALL_ADAPTERS = set(supported_adapters())
 PORTABLE_STATE_DIRS = ("memory", "workspace", KNOWLEDGE_ROOT, SOURCES_ROOT, "skills")
 MIGRATION_SCHEMA = "packwright-migration/v1"
 RECONCILE_SCHEMA = "packwright-reconcile/v1"
+INSTALL_SCHEMA = "packwright-install/v1"
+INSTALL_PROVENANCE_PATH = ".packwright/install-provenance.json"
 EMOTION_ENGINE_SECTION = """## Emotion Engine
 - Default mode: `{mode}`. The project-local MCP sidecar is installed; use it according to this mode's loading policy.
 - Use `{skill_path}` for runtime guidance, `{state_path}` for live project state, and `{wrapper_path}` for shell access.
@@ -81,6 +83,26 @@ EMOTION_ENGINE_SECTION = """## Emotion Engine
 - Keep it internal: do not expose PAD/trust numbers, state JSON, or step-by-step status unless asked.
 - Do not mix Emotion Engine state into memory files; keep durable facts in `memory/*` and dynamic state in `{state_path}`.
 """
+
+
+@dataclass(frozen=True)
+class InstallPlan:
+    pack_dir: Path
+    target_dir: Path
+    adapter: str
+    manifest: dict
+    source_paths: tuple
+    source_hashes: dict
+    destinations: dict
+    force: bool
+    sidecar_plan: object
+    retire_legacy_state: bool
+    persist_provenance: bool
+    provenance: dict
+    report: dict
+
+    def to_dict(self):
+        return copy.deepcopy(self.report)
 
 
 @dataclass(frozen=True)
@@ -132,8 +154,47 @@ def install_pack(
     include_emotion_engine=None,
     emotion_engine_source=None,
     emotion_state_source=None,
+    retire_legacy_state=False,
+    persist_provenance=True,
+    provenance=None,
 ):
-    """Install an adapter pack into a local agent runtime working directory."""
+    """Plan and install an adapter pack into a local runtime directory."""
+    plan = plan_install(
+        pack_dir,
+        target_dir,
+        adapter=adapter,
+        force=force,
+        include_emotion_engine_codex=include_emotion_engine_codex,
+        emotion_engine_codex_source=emotion_engine_codex_source,
+        emotion_style=emotion_style,
+        emotion_engine_mode=emotion_engine_mode,
+        include_emotion_engine=include_emotion_engine,
+        emotion_engine_source=emotion_engine_source,
+        emotion_state_source=emotion_state_source,
+        retire_legacy_state=retire_legacy_state,
+        persist_provenance=persist_provenance,
+        provenance=provenance,
+    )
+    return apply_install(plan)
+
+
+def plan_install(
+    pack_dir,
+    target_dir,
+    adapter=None,
+    force=False,
+    include_emotion_engine_codex=None,
+    emotion_engine_codex_source=None,
+    emotion_style=None,
+    emotion_engine_mode=None,
+    include_emotion_engine=None,
+    emotion_engine_source=None,
+    emotion_state_source=None,
+    retire_legacy_state=False,
+    persist_provenance=True,
+    provenance=None,
+):
+    """Return a complete no-write install plan."""
     pack_dir = Path(pack_dir)
     target_dir = Path(target_dir)
     manifest = _load_manifest(pack_dir)
@@ -156,25 +217,26 @@ def install_pack(
         include_emotion_engine_codex=include_emotion_engine_codex,
         emotion_engine_codex_source=emotion_engine_codex_source,
     )
+    if retire_legacy_state and not include_emotion_engine:
+        raise PackwrightValidationError([
+            "--retire-legacy-state requires --include-emotion-engine during install"
+        ])
 
     artifacts = _manifest_artifacts(manifest)
-    source_paths = [
+    source_paths = tuple(
         (artifact, resolve_source_path(pack_dir, artifact, "adapter pack artifact"))
         for artifact in artifacts
-    ]
+    )
+    source_hashes = {
+        artifact: _file_sha256(source_path)
+        for artifact, source_path in source_paths
+    }
     destinations = {
         artifact: resolve_destination_path(target_dir, artifact, "installed artifact destination")
         for artifact in artifacts
     }
 
-    existing = [artifact for artifact, path in destinations.items() if path.exists()]
-    if existing and not force:
-        raise PackwrightValidationError(
-            [
-                "target already contains files that would be overwritten; rerun with --force after reviewing them",
-                *[f"existing target artifact: {artifact}" for artifact in existing],
-            ]
-        )
+    existing = sorted(artifact for artifact, path in destinations.items() if path.exists())
     sidecar_plan = None
     if include_emotion_engine:
         sidecar_plan = _prepare_emotion_engine_install(
@@ -188,26 +250,200 @@ def install_pack(
             state_source=emotion_state_source,
         )
 
-    stale_removed = []
-    if force:
-        next_artifacts = set(artifacts)
-        if sidecar_plan:
-            next_artifacts.update(emotion_engine_artifacts(adapter))
-        stale_removed = _remove_stale_manifest_artifacts(target_dir, next_artifacts, preserve_portable=True)
-
-    target_dir.mkdir(parents=True, exist_ok=True)
-    installed = []
-    preserved_portable = []
-    merged_managed_configs = []
     automation_configs = automation_config_paths(manifest)
-    automation_runner = manifest.get("features", {}).get("automations", {}).get("runner", {}).get("path")
+    preserved_portable = sorted(
+        artifact
+        for artifact in existing
+        if force and _is_portable_path(artifact)
+    )
+    preserved_live_state = sorted(
+        artifact
+        for artifact in existing
+        if force and artifact == EMOTION_ENGINE_STATE_PATH
+    )
+    merged_managed_configs = []
+    would_overwrite = []
+    would_add = []
     for artifact, source_path in source_paths:
         destination = destinations[artifact]
-        if force and _is_portable_path(artifact) and destination.exists():
+        if not destination.exists():
+            would_add.append(artifact)
+            continue
+        if artifact in preserved_portable or artifact in preserved_live_state:
+            continue
+        if force and artifact in automation_configs and destination.is_file():
+            try:
+                merge_managed_hook_config(
+                    destination.read_text(encoding="utf-8"),
+                    source_path.read_text(encoding="utf-8"),
+                )
+            except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+                raise PackwrightValidationError([
+                    f"cannot safely merge managed hook entries in {artifact}: {exc}"
+                ]) from exc
+            merged_managed_configs.append(artifact)
+            continue
+        would_overwrite.append(artifact)
+
+    next_artifacts = set(artifacts)
+    if sidecar_plan:
+        next_artifacts.update(emotion_engine_artifacts(adapter))
+    would_remove_stale = (
+        _stale_manifest_artifacts(target_dir, next_artifacts, preserve_portable=True)
+        if force
+        else []
+    )
+    sidecar_existing = sorted(sidecar_plan.get("existing_projection", [])) if sidecar_plan else []
+    mcp_conflict = bool(sidecar_plan and sidecar_plan["mcp_config"].get("conflict"))
+    force_blockers = sorted(set(existing + sidecar_existing))
+    if mcp_conflict:
+        force_blockers.append(sidecar_plan["mcp_config"]["path"])
+    force_blockers = sorted(set(force_blockers)) if not force else []
+    retirements = (
+        _emotion_legacy_retirement_plan(target_dir)
+        if sidecar_plan and retire_legacy_state
+        else []
+    )
+    conflicts = [
+        {
+            "id": "target_artifacts_require_force",
+            "paths": force_blockers,
+            "message": "target contains files that require --force before install",
+        }
+    ] if force_blockers else []
+    provenance_report = _install_provenance_data(
+        pack_dir,
+        manifest,
+        context=provenance,
+        include_timestamp=False,
+    )
+    report = {
+        "schema": INSTALL_SCHEMA,
+        "status": "planned",
+        "ready": not conflicts,
+        "adapter": adapter,
+        "pack_dir": str(pack_dir),
+        "target_dir": str(target_dir),
+        "force": bool(force),
+        "changes": {
+            "add": sorted(would_add),
+            "overwrite": sorted(would_overwrite),
+            "merge_managed_configs": sorted(merged_managed_configs),
+            "remove_stale_managed": would_remove_stale,
+            "preserve_portable_state": preserved_portable,
+            "preserve_live_state": preserved_live_state,
+            "sidecar_projection": _install_sidecar_change_report(sidecar_plan),
+            "retire_legacy_state": retirements,
+        },
+        "conflicts": conflicts,
+        "required_confirmations": ([{"id": "force", "paths": force_blockers}] if force_blockers else []),
+        "provenance": provenance_report,
+    }
+    return InstallPlan(
+        pack_dir=pack_dir,
+        target_dir=target_dir,
+        adapter=adapter,
+        manifest=manifest,
+        source_paths=source_paths,
+        source_hashes=source_hashes,
+        destinations=destinations,
+        force=bool(force),
+        sidecar_plan=sidecar_plan,
+        retire_legacy_state=bool(retire_legacy_state),
+        persist_provenance=bool(persist_provenance),
+        provenance=provenance_report,
+        report=report,
+    )
+
+
+def apply_install(plan):
+    """Apply a prepared InstallPlan after rechecking its pack inputs."""
+    if not isinstance(plan, InstallPlan):
+        raise TypeError("apply_install expects an InstallPlan")
+    if not plan.report["ready"]:
+        blockers = plan.report["required_confirmations"][0]["paths"]
+        raise PackwrightValidationError([
+            "target already contains files that would be overwritten; rerun with --force after reviewing them",
+            *[f"existing target artifact: {artifact}" for artifact in blockers],
+        ])
+    changed_sources = [
+        artifact
+        for artifact, source_path in plan.source_paths
+        if _file_sha256(source_path) != plan.source_hashes[artifact]
+    ]
+    if changed_sources:
+        raise PackwrightValidationError([
+            "adapter pack changed after install planning; prepare a new plan",
+            *[f"changed pack artifact: {artifact}" for artifact in changed_sources],
+        ])
+    if not plan.force:
+        newly_existing = sorted(
+            artifact
+            for artifact, destination in plan.destinations.items()
+            if destination.exists()
+        )
+        if plan.sidecar_plan:
+            newly_existing.extend(
+                path
+                for path in plan.sidecar_plan["projection"]
+                if (plan.target_dir / path).exists()
+            )
+        if newly_existing:
+            raise PackwrightValidationError([
+                "target changed after install planning; prepare a new plan",
+                *[f"existing target artifact: {artifact}" for artifact in sorted(set(newly_existing))],
+            ])
+    if plan.sidecar_plan:
+        config = plan.sidecar_plan["mcp_config"]
+        current_config_hash = (
+            _file_sha256(config["destination"])
+            if config["destination"].is_file()
+            else None
+        )
+        if current_config_hash != config.get("original_sha256"):
+            raise PackwrightValidationError([
+                f"MCP config changed after install planning; prepare a new plan: {config['path']}"
+            ])
+        if plan.retire_legacy_state:
+            _emotion_legacy_retirement_plan(plan.target_dir)
+
+    stale_removed = []
+    if plan.force:
+        next_artifacts = set(_manifest_artifacts(plan.manifest))
+        if plan.sidecar_plan:
+            next_artifacts.update(emotion_engine_artifacts(plan.adapter))
+        current_stale = _stale_manifest_artifacts(
+            plan.target_dir,
+            next_artifacts,
+            preserve_portable=True,
+        )
+        if current_stale != plan.report["changes"]["remove_stale_managed"]:
+            raise PackwrightValidationError([
+                "target managed artifacts changed after install planning; prepare a new plan"
+            ])
+        stale_removed = _remove_stale_manifest_artifacts(
+            plan.target_dir,
+            next_artifacts,
+            preserve_portable=True,
+        )
+
+    plan.target_dir.mkdir(parents=True, exist_ok=True)
+    installed = []
+    preserved_portable = []
+    preserved_live_state = []
+    merged_managed_configs = []
+    automation_configs = automation_config_paths(plan.manifest)
+    automation_runner = plan.manifest.get("features", {}).get("automations", {}).get("runner", {}).get("path")
+    for artifact, source_path in plan.source_paths:
+        destination = plan.destinations[artifact]
+        if plan.force and _is_portable_path(artifact) and destination.exists():
             preserved_portable.append(artifact)
             continue
+        if plan.force and artifact == EMOTION_ENGINE_STATE_PATH and destination.exists():
+            preserved_live_state.append(artifact)
+            continue
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if force and artifact in automation_configs and destination.is_file():
+        if plan.force and artifact in automation_configs and destination.is_file():
             try:
                 merged = merge_managed_hook_config(
                     destination.read_text(encoding="utf-8"),
@@ -226,33 +462,181 @@ def install_pack(
         installed.append(artifact)
 
     sidecars = {}
-    if sidecar_plan:
-        sidecars[EMOTION_ENGINE_SIDECAR] = _install_emotion_engine(target_dir, sidecar_plan)
+    retired_legacy_state = []
+    if plan.sidecar_plan:
+        sidecars[EMOTION_ENGINE_SIDECAR] = _install_emotion_engine(plan.target_dir, plan.sidecar_plan)
+        if plan.retire_legacy_state:
+            retired_legacy_state = _retire_legacy_emotion_states(plan.target_dir)
         _mark_emotion_engine_installed(
-            target_dir,
+            plan.target_dir,
             sidecars[EMOTION_ENGINE_SIDECAR],
-            adapter,
-            resolved_emotion_engine_mode,
+            plan.adapter,
+            plan.sidecar_plan["mode"],
         )
 
-    _write_automation_baseline(target_dir, manifest)
-    _refresh_artifact_lock(target_dir)
+    _write_automation_baseline(plan.target_dir, plan.manifest)
+    _refresh_artifact_lock(plan.target_dir)
+    if plan.persist_provenance:
+        _write_install_provenance(plan.target_dir, plan.provenance)
 
     result = {
-        "adapter": adapter,
-        "pack_dir": str(pack_dir),
-        "target_dir": str(target_dir),
+        "schema": INSTALL_SCHEMA,
+        "status": "applied",
+        "ready": True,
+        "adapter": plan.adapter,
+        "pack_dir": str(plan.pack_dir),
+        "target_dir": str(plan.target_dir),
         "installed_artifacts": installed,
+        "provenance": _read_install_provenance(plan.target_dir) if plan.persist_provenance else plan.provenance,
     }
     if stale_removed:
         result["stale_removed"] = stale_removed
     if preserved_portable:
         result["preserved_portable_state"] = sorted(preserved_portable)
+    if preserved_live_state:
+        result["preserved_live_state"] = sorted(preserved_live_state)
     if merged_managed_configs:
         result["merged_managed_configs"] = sorted(merged_managed_configs)
     if sidecars:
         result["sidecars"] = sidecars
+    if retired_legacy_state:
+        result["retired_legacy_state"] = retired_legacy_state
     return result
+
+
+def _install_sidecar_change_report(plan):
+    if not plan:
+        return None
+    existing = set(plan.get("existing_projection", []))
+    state_file = plan["state_file"]
+    state_source = plan.get("state_source")
+    if state_source is None:
+        state_operation = "preserve" if state_file.is_file() else "create"
+    elif Path(state_source).resolve() == state_file.resolve():
+        state_operation = "preserve"
+    else:
+        state_operation = "migrate_to_canonical"
+    config = plan["mcp_config"]
+    config_exists = config["destination"].is_file()
+    return {
+        "add": sorted(path for path in plan["projection"] if path not in existing),
+        "overwrite": sorted(existing),
+        "state": {
+            "path": EMOTION_ENGINE_STATE_PATH,
+            "operation": state_operation,
+            "source": str(state_source) if state_source else None,
+        },
+        "mcp_config": {
+            "path": config["path"],
+            "operation": "replace_entry" if config.get("conflict") else ("merge_entry" if config_exists else "add_entry"),
+            "conflict": bool(config.get("conflict")),
+        },
+    }
+
+
+def _install_provenance_data(pack_dir, manifest, context=None, include_timestamp=True):
+    pack_dir = Path(pack_dir)
+    context = dict(context or {})
+    lock_path = pack_dir / LOCK_PATH
+    spec_path = pack_dir / SPEC_PATH
+    source_path_explicit = "source_pack_path" in context
+    source_pack_path = context.pop("source_pack_path", None)
+    if not source_path_explicit:
+        source_pack_path = str(pack_dir.resolve())
+    source_pack_digest = (
+        _file_sha256(lock_path)
+        if lock_path.is_file()
+        else _pack_artifact_tree_digest(pack_dir, manifest)
+    )
+    data = {
+        "schema": "packwright-install-provenance/v1",
+        "operation": context.pop("operation", "install"),
+        "adapter": manifest.get("adapter"),
+        "character_slug": manifest.get("character", {}).get("slug"),
+        "source_pack_digest": source_pack_digest,
+        "source_pack_digest_kind": "lock_sha256" if lock_path.is_file() else "artifact_tree_sha256",
+        "spec_sha256": _file_sha256(spec_path) if spec_path.is_file() else None,
+    }
+    if source_pack_path:
+        data["source_pack_path"] = source_pack_path
+    data.update({key: value for key, value in context.items() if value is not None})
+    if include_timestamp:
+        data["installed_at"] = datetime.now(timezone.utc).isoformat()
+    return data
+
+
+def _pack_artifact_tree_digest(pack_dir, manifest):
+    digest = hashlib.sha256()
+    for artifact in sorted(_manifest_artifacts(manifest)):
+        source = resolve_source_path(pack_dir, artifact, "adapter pack artifact")
+        digest.update(artifact.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(source.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _write_install_provenance(target_dir, provenance):
+    path = resolve_destination_path(
+        target_dir,
+        INSTALL_PROVENANCE_PATH,
+        "install provenance destination",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = dict(provenance)
+    data["installed_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_install_provenance(target_dir):
+    path = Path(target_dir) / INSTALL_PROVENANCE_PATH
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _emotion_legacy_retirement_plan(target_dir):
+    target_dir = Path(target_dir)
+    planned = []
+    for rel_path in EMOTION_ENGINE_LEGACY_STATE_PATHS:
+        source = target_dir / rel_path
+        if not source.is_file():
+            continue
+        backup = source.with_name(source.name + ".bak")
+        if backup.exists():
+            raise PackwrightValidationError([
+                f"cannot retire legacy Emotion Engine state because backup already exists: {backup}"
+            ])
+        planned.append({
+            "from": rel_path,
+            "to": backup.relative_to(target_dir).as_posix(),
+            "operation": "rename_backup",
+        })
+    return planned
+
+
+def _retire_legacy_emotion_states(target_dir):
+    target_dir = Path(target_dir)
+    canonical = target_dir / EMOTION_ENGINE_STATE_PATH
+    if not canonical.is_file():
+        raise PackwrightValidationError([
+            f"cannot retire legacy Emotion Engine state before {EMOTION_ENGINE_STATE_PATH} exists"
+        ])
+    planned = _emotion_legacy_retirement_plan(target_dir)
+    canonical_hash = _file_sha256(canonical)
+    for item in planned:
+        source = target_dir / item["from"]
+        if _file_sha256(source) != canonical_hash:
+            raise PackwrightValidationError([
+                f"legacy Emotion Engine state differs from canonical state and was not retired: {source}"
+            ])
+    for item in planned:
+        (target_dir / item["from"]).rename(target_dir / item["to"])
+    return planned
 
 
 def refresh_emotion_engine(
@@ -260,6 +644,7 @@ def refresh_emotion_engine(
     emotion_engine_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
+    retire_legacy_state=False,
 ):
     """Refresh an installed Emotion Engine projection without replacing live state.
 
@@ -287,18 +672,28 @@ def refresh_emotion_engine(
         emotion_engine_mode=resolved_emotion_engine_mode,
         manifest=manifest,
     )
+    if retire_legacy_state:
+        _emotion_legacy_retirement_plan(target_dir)
     sidecar = _install_emotion_engine(target_dir, plan)
+    retired_legacy_state = (
+        _retire_legacy_emotion_states(target_dir)
+        if retire_legacy_state
+        else []
+    )
     _mark_emotion_engine_installed(target_dir, sidecar, manifest_adapter, resolved_emotion_engine_mode)
     updated_lock_paths = ["manifest.json", *_existing_sidecar_artifacts(target_dir)]
     if sidecar.get("entry_updated"):
         updated_lock_paths.append(adapter_entry(manifest_adapter))
     _update_artifact_lock_paths(target_dir, updated_lock_paths)
-    return {
+    result = {
         "adapter": manifest_adapter,
         "target_dir": str(target_dir),
         "refreshed_artifacts": _existing_sidecar_artifacts(target_dir),
         "sidecars": {EMOTION_ENGINE_SIDECAR: sidecar},
     }
+    if retired_legacy_state:
+        result["retired_legacy_state"] = retired_legacy_state
+    return result
 
 
 def refresh_emotion_engine_codex(
@@ -306,6 +701,7 @@ def refresh_emotion_engine_codex(
     emotion_engine_codex_source=None,
     emotion_style=None,
     emotion_engine_mode=None,
+    retire_legacy_state=False,
 ):
     """Deprecated compatibility wrapper for :func:`refresh_emotion_engine`."""
     warnings.warn(
@@ -318,6 +714,7 @@ def refresh_emotion_engine_codex(
         emotion_engine_source=emotion_engine_codex_source,
         emotion_style=emotion_style,
         emotion_engine_mode=emotion_engine_mode,
+        retire_legacy_state=retire_legacy_state,
     )
 
 
@@ -336,9 +733,10 @@ def doctor_target(
     result = {
         "target_dir": str(target_dir),
         "adapter": adapter,
+        "provenance": _target_provenance(target_dir, manifest),
         "ok": True,
         "issues": [],
-        "warnings": [],
+        "warnings": _legacy_emotion_state_warnings(target_dir),
         "fixes": [],
     }
 
@@ -369,6 +767,7 @@ def doctor_target(
     source = emotion_engine_source or emotion_engine_codex_source
     if not _emotion_engine_expected_in_target(manifest, target_dir):
         result["ok"] = not result["issues"]
+        result["provenance"] = _target_provenance(target_dir, manifest)
         return result
 
     mode = emotion_engine_mode or _manifest_emotion_engine_mode(manifest)
@@ -416,14 +815,52 @@ def doctor_target(
             + _artifact_lock_doctor_issues(target_dir, refreshed_manifest)
             + after_issues
         )
-        result["warnings"] = []
+        result["warnings"] = _legacy_emotion_state_warnings(target_dir)
         result["ok"] = not result["issues"]
     elif issues and fix and not source:
         result["warnings"].append({
             "id": "emotion_engine_source_required_for_fix",
             "message": "diagnosis completed without upstream source; pass --emotion-engine-source to refresh managed runtime files",
         })
+    result["provenance"] = _target_provenance(target_dir, _load_manifest(target_dir))
     return result
+
+
+def _target_provenance(target_dir, manifest):
+    target_dir = Path(target_dir)
+    install = _read_install_provenance(target_dir)
+    if install and install.get("source_pack_path"):
+        install = dict(install)
+        install["source_pack_available"] = Path(install["source_pack_path"]).is_dir()
+    spec_path = target_dir / SPEC_PATH
+    lock_path = target_dir / LOCK_PATH
+    return {
+        "character_slug": manifest.get("character", {}).get("slug"),
+        "source_provenance": copy.deepcopy(manifest.get("source_provenance")),
+        "install_provenance": install,
+        "installed_spec_sha256": _file_sha256(spec_path) if spec_path.is_file() else None,
+        "installed_lock_sha256": _file_sha256(lock_path) if lock_path.is_file() else None,
+    }
+
+
+def _legacy_emotion_state_warnings(target_dir):
+    target_dir = Path(target_dir)
+    canonical_present = (target_dir / EMOTION_ENGINE_STATE_PATH).is_file()
+    warnings_list = []
+    for rel_path in EMOTION_ENGINE_LEGACY_STATE_PATHS:
+        if not (target_dir / rel_path).is_file():
+            continue
+        warnings_list.append({
+            "id": "emotion_engine_legacy_state_present",
+            "path": rel_path,
+            "message": (
+                "legacy Emotion Engine state remains beside the canonical state; "
+                "review it and use --retire-legacy-state during an Emotion Engine install or refresh to rename it as a backup"
+                if canonical_present
+                else "legacy Emotion Engine state is present without the canonical state"
+            ),
+        })
+    return warnings_list
 
 
 def migrate_target(
@@ -655,6 +1092,12 @@ def apply_migration(plan, accept_degraded=False):
             emotion_state_source=plan.emotion_state_source,
             emotion_style=plan.emotion_style,
             emotion_engine_mode=plan.emotion_engine_mode,
+            provenance={
+                "operation": "migration",
+                "source_pack_path": str(plan.pack_dir.resolve()) if plan.pack_dir else None,
+                "source_target_dir": str(plan.source_target_dir.resolve()),
+                "from_adapter": plan.from_adapter,
+            },
         )
         portable_result = _copy_migrated_portable_state(
             plan.source_target_dir,
@@ -741,8 +1184,14 @@ def plan_reconcile(target_dir, mechanism_path, parameters=None):
         "git_commit": desired_commit,
     }
     pack["manifest.json"] = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    pack = _augment_reconcile_pack_with_installed_sidecars(
+        pack,
+        target_dir,
+        installed_manifest,
+    )
     planned_score = _score_migration_pack(resolved, pack, adapter)
     pack = embed_pack_metadata(pack, resolved, planned_score)
+    pack = _normalize_reconcile_pack_lock(pack)
     installed_spec_path = resolve_source_path(target_dir, SPEC_PATH, "installed canonical spec")
     from_spec_hash = _sha256_bytes(installed_spec_path.read_bytes())
     to_spec_hash = _sha256_bytes(pack[SPEC_PATH].encode("utf-8"))
@@ -806,17 +1255,15 @@ def apply_reconcile(plan, accept_degraded=False):
             "canonical mechanism changed after reconcile planning; prepare a new plan"
         ])
 
-    apply_pack = _augment_reconcile_pack_with_installed_sidecars(
-        plan.pack, plan.target_dir, plan.installed_manifest
-    )
     with tempfile.TemporaryDirectory() as temp_dir:
         pack_dir = Path(temp_dir)
-        _write_pack_to_dir(apply_pack, pack_dir, force=True)
+        _write_pack_to_dir(plan.pack, pack_dir, force=True)
         install_result = install_pack(
             pack_dir,
             plan.target_dir,
             adapter=plan.report["adapter"],
             force=True,
+            persist_provenance=False,
         )
     if emotion_engine_expected(plan.installed_manifest):
         for rel_path in (EMOTION_ENGINE_WRAPPER_PATH, EMOTION_ENGINE_MCP_WRAPPER_PATH):
@@ -1041,16 +1488,40 @@ def _augment_reconcile_pack_with_installed_sidecars(pack, target_dir, installed_
         if key in installed_manifest.get("boundaries", {}):
             manifest.setdefault("boundaries", {})[key] = installed_manifest["boundaries"][key]
     manifest["artifacts"] = sorted(set(manifest.get("artifacts", [])) | set(sidecar_paths))
+    entry_path = adapter_entry(adapter)
+    if entry_path in enriched:
+        enriched[entry_path], _ = _render_emotion_section(
+            enriched[entry_path],
+            adapter,
+            _manifest_emotion_engine_mode(installed_manifest),
+        )
     enriched["manifest.json"] = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-    locked = {
-        path: hashlib.sha256(content.encode("utf-8")).hexdigest()
-        for path, content in sorted(enriched.items())
-        if path != LOCK_PATH
-    }
-    enriched[LOCK_PATH] = json.dumps(
-        {"schema": "packwright-lock/v1", "artifacts": locked}, indent=2, sort_keys=True
-    ) + "\n"
     return enriched
+
+
+def _normalize_reconcile_pack_lock(pack):
+    normalized = dict(pack)
+    manifest = json.loads(normalized["manifest.json"])
+    artifacts = {}
+    for rel_path in _manifest_artifacts(manifest):
+        if rel_path in {LOCK_PATH, EMOTION_ENGINE_STATE_PATH}:
+            continue
+        content = normalized.get(rel_path)
+        if content is None:
+            continue
+        if is_managed_automation_config(manifest, rel_path):
+            artifacts[rel_path] = {
+                "mode": "managed_json_hooks",
+                "sha256": managed_hook_fragment_digest(content),
+            }
+        else:
+            artifacts[rel_path] = _sha256_bytes(content.encode("utf-8"))
+    normalized[LOCK_PATH] = json.dumps(
+        {"schema": "packwright-lock/v1", "artifacts": artifacts},
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    return normalized
 
 
 def _plan_migration_changes(
@@ -1777,6 +2248,21 @@ def _write_pack_to_dir(pack, out_dir, force=False):
 
 
 def _remove_stale_manifest_artifacts(root_dir, next_artifacts, preserve_portable=False):
+    removed = []
+    for artifact in _stale_manifest_artifacts(
+        root_dir,
+        next_artifacts,
+        preserve_portable=preserve_portable,
+    ):
+        path = resolve_destination_path(root_dir, artifact, "stale artifact destination")
+        path.unlink()
+        removed.append(artifact)
+        _remove_empty_parents(path.parent, root_dir)
+    return removed
+
+
+def _stale_manifest_artifacts(root_dir, next_artifacts, preserve_portable=False):
+    root_dir = Path(root_dir)
     manifest_path = root_dir / "manifest.json"
     if not manifest_path.is_file():
         return []
@@ -1785,7 +2271,7 @@ def _remove_stale_manifest_artifacts(root_dir, next_artifacts, preserve_portable
         previous_artifacts = _manifest_artifacts(previous_manifest)
     except PackwrightValidationError:
         return []
-    removed = []
+    stale = []
     for artifact in sorted(set(previous_artifacts) - set(next_artifacts), key=lambda item: len(Path(item).parts), reverse=True):
         if preserve_portable and _is_portable_path(artifact):
             continue
@@ -1796,10 +2282,8 @@ def _remove_stale_manifest_artifacts(root_dir, next_artifacts, preserve_portable
             continue
         if path.is_dir():
             continue
-        path.unlink()
-        removed.append(artifact)
-        _remove_empty_parents(path.parent, root_dir)
-    return removed
+        stale.append(artifact)
+    return stale
 
 
 def _path_stays_in_root(path, root_dir):
@@ -2249,11 +2733,6 @@ def _prepare_emotion_engine_install(
     projection[EMOTION_ENGINE_MCP_WRAPPER_PATH] = _project_emotion_mcp_wrapper_text().encode("utf-8")
 
     existing = [path for path in projection if (target_dir / path).exists()]
-    if existing and not force:
-        raise PackwrightValidationError([
-            "target already contains Emotion Engine files; rerun with --force after reviewing them",
-            *[f"existing target artifact: {path}" for path in existing],
-        ])
 
     selected_state = _select_emotion_state_source(target_dir, explicit=state_source)
     if selected_state:
@@ -2267,6 +2746,7 @@ def _prepare_emotion_engine_install(
         "adapter": adapter,
         "source_root": source_root,
         "projection": projection,
+        "existing_projection": existing,
         "source_digest": source_digest,
         "state_file": target_dir / EMOTION_ENGINE_STATE_PATH,
         "state_source": selected_state,
@@ -2433,6 +2913,7 @@ exec python3 "$PROJECT_DIR/{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_
 def _prepare_emotion_engine_mcp_config(target_dir, adapter, force):
     rel_path = emotion_engine_mcp_config_path(adapter)
     path = target_dir / rel_path
+    original_sha256 = _file_sha256(path) if path.is_file() else None
     entry = {"command": "sh", "args": [EMOTION_ENGINE_MCP_WRAPPER_PATH]}
     if adapter == "codex":
         existing = path.read_text(encoding="utf-8") if path.is_file() else ""
@@ -2453,11 +2934,14 @@ def _prepare_emotion_engine_mcp_config(target_dir, adapter, force):
         conflict = current is not None and current != entry
         servers[EMOTION_ENGINE_SIDECAR] = entry
         rendered = json.dumps(data, indent=2, sort_keys=True) + "\n"
-    if conflict and not force:
-        raise PackwrightValidationError([
-            f"MCP config already contains a different {EMOTION_ENGINE_SIDECAR!r} entry: {rel_path}; rerun with --force after review"
-        ])
-    return {"path": rel_path, "destination": path, "entry": entry, "rendered": rendered}
+    return {
+        "path": rel_path,
+        "destination": path,
+        "entry": entry,
+        "rendered": rendered,
+        "conflict": bool(conflict),
+        "original_sha256": original_sha256,
+    }
 
 
 def _prepare_installed_emotion_engine_plan(target_dir, adapter, mode, manifest):
@@ -2922,6 +3406,15 @@ def _ensure_emotion_section(target_dir, adapter, mode):
     if not entry_path.exists():
         return False
     text = entry_path.read_text(encoding="utf-8")
+    updated, changed = _render_emotion_section(text, adapter, mode)
+    if changed:
+        entry_path.write_text(updated, encoding="utf-8")
+    return changed
+
+
+def _render_emotion_section(text, adapter, mode):
+    if adapter == "cursor":
+        return text, False
     section = EMOTION_ENGINE_SECTION.format(
         mode=mode,
         skill_path=emotion_engine_skill_path(adapter),
@@ -2937,12 +3430,8 @@ def _ensure_emotion_section(target_dir, adapter, mode):
             updated = text[:marker].rstrip() + "\n\n" + section
         else:
             updated = text[:marker].rstrip() + "\n\n" + section.rstrip() + "\n" + text[next_heading:]
-        if updated != text:
-            entry_path.write_text(updated, encoding="utf-8")
-            return True
-        return False
+        return updated, updated != text
     if text and not text.endswith("\n"):
         text += "\n"
-    text += "\n" + section
-    entry_path.write_text(text, encoding="utf-8")
-    return True
+    updated = text + "\n" + section
+    return updated, updated != text

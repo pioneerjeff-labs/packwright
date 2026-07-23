@@ -461,7 +461,6 @@ def _validate_memory(data, issues):
             "todos",
             "project_template",
             "relationship_state",
-            "emotion_state",
         ):
             if required not in ids:
                 issues.append(f"memory.local_files must include {required}")
@@ -584,7 +583,6 @@ def _validate_outputs(data, issues):
                 "memory/projects/_template.md",
                 "memory/todos.md",
                 "memory/relationship-state.md",
-                "memory/emotion-state.json.example",
                 *knowledge_artifacts(),
                 *workspace_artifacts(),
             )
@@ -605,7 +603,6 @@ def _validate_outputs(data, issues):
                 "memory/projects/_template.md",
                 "memory/todos.md",
                 "memory/relationship-state.md",
-                "memory/emotion-state.json.example",
                 *knowledge_artifacts(),
                 *workspace_artifacts(),
             )
@@ -627,7 +624,6 @@ def _validate_outputs(data, issues):
                 "memory/projects/_template.md",
                 "memory/todos.md",
                 "memory/relationship-state.md",
-                "memory/emotion-state.json.example",
                 *knowledge_artifacts(),
                 *HANDOFF_ARTIFACTS,
                 *workspace_artifacts(),

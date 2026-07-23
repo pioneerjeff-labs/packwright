@@ -55,6 +55,7 @@ packwright init --template code --name Nova --user-name Morgan -o work/nova
 packwright init --template work --name 小北 --slug xiaobei --user-name 老登 --locale zh-CN -o work/xiaobei
 
 packwright build work/nova --adapter claude-code -o pack/nova-claude
+packwright install pack/nova-claude --adapter claude-code --target project/nova-claude --dry-run
 packwright install pack/nova-claude --adapter claude-code --target project/nova-claude
 packwright migrate project/nova-claude --to codex --target project/nova-codex --json --dry-run
 packwright migrate project/nova-claude --to codex --target project/nova-codex --json --yes
@@ -110,6 +111,20 @@ explicitly supplied. `install --force` replaces Packwright-managed runtime
 projections while preserving existing `memory/`, `workspace/`, `knowledge/`,
 and `sources/` state.
 
+Before forcing an existing target, preview the exact forced operation with the
+same arguments:
+
+```bash
+packwright install pack/nova-claude --target project/nova-claude --force --dry-run
+packwright install pack/nova-claude --target project/nova-claude --force
+```
+
+The `packwright-install/v1` plan reports files that would be added,
+overwritten, merged as managed hook configuration, removed as stale managed
+projection, or preserved as portable/live state. Dry-run writes neither the
+target nor its local provenance record. Apply rechecks the source pack, target
+managed-artifact set, and Emotion Engine MCP configuration before writing.
+
 Runtime-neutral mechanism 0.8 stores local `session_start` and `user_prompt`
 context automation under `automations`. Build projects those entries into
 `.claude/settings.json`, `.codex/hooks.json`, or `.cursor/hooks.json` plus a
@@ -126,7 +141,10 @@ machine's absolute source path.
 
 `doctor` consumes the artifact lock for Packwright-managed projections.
 Portable state and live Emotion Engine state are intentionally excluded from
-managed hash repair.
+managed hash repair. It also reports the installed spec/lock digests and the
+local source-pack record stored in `.packwright/install-provenance.json` when
+available; a moved or deleted source pack is reported as unavailable rather
+than inferred.
 
 See [Emotion Engine runtime](EMOTION_ENGINE.md) for the explicit multi-adapter
 install, MCP configuration, state-safety, refresh, and migration boundaries.
