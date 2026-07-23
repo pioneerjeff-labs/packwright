@@ -423,7 +423,6 @@ def _character_files(character, slug):
         "memory/todos.md": _todos_md(),
         "memory/knowledge_map.md": _knowledge_map_md(name),
         "memory/relationship-state.md": _relationship_state_md(),
-        "memory/emotion-state.json.example": _emotion_state_example_json(),
         "skills/save-context/SKILL.md": _save_context_skill_md(character),
     }
     files.update(knowledge_files())
@@ -556,11 +555,6 @@ def _mechanism_yaml(character, slug):
                     "path": "memory/relationship-state.md",
                     "track": "compatibility",
                 },
-                {
-                    "id": "emotion_state",
-                    "path": "memory/emotion-state.json.example",
-                    "track": "emotion_reserved",
-                },
             ],
             "durable_dirs": ["projects", "workstreams", "archive", "global", "context", "weekly", "groups", "assets"],
             "limits": {
@@ -667,7 +661,6 @@ def _default_automations():
         ("session-start-session-index", "memory/session-index.md"),
         ("session-start-source-map", "memory/source-map.md"),
         ("session-start-collaboration", "memory/collaboration.md"),
-        ("session-start-emotion-state", "memory/emotion-state.json.example"),
     ):
         automations.append(
             {
@@ -748,7 +741,7 @@ def _coverage():
             "workspace_artifacts": ["workspace", "memory.local_files"],
             "heavy_memory_track": ["mechanism.memory_policy_path", "skills"],
             "relationship_memory": ["identity.relationship_path", "memory.local_files"],
-            "emotion_state_schema": ["emotion.state_schema_path", "memory.local_files"],
+            "emotion_state_schema": ["emotion.state_schema_path"],
             "emotion_update_policy": ["emotion.update_policy_path"],
             "emotion_voice_modulation": ["emotion.voice_modulation_path"],
             "skill_modularity": ["skills"],
@@ -1003,11 +996,6 @@ def _memory_track_specs():
             "id": "relationship-state",
             "file": "memory/relationship-state.md",
             "purpose": "Compatibility alias for memory/collaboration.md.",
-        },
-        "emotion": {
-            "id": "emotion-state",
-            "file": "memory/emotion-state.json.example",
-            "purpose": "Reserve state shape; live state belongs in .emotion-engine/state.json only when enabled.",
         },
         "workspace": {
             "id": "workspace",
@@ -1508,16 +1496,6 @@ def _relationship_state_md():
         "- Do not store speculative feelings.\n"
         "- Do not override the user's current request with old compatibility notes.\n"
         "- Do not store live Emotion Engine runtime JSON here.\n"
-    )
-
-
-def _emotion_state_example_json():
-    return (
-        '{\n'
-        '  "_note": "Reserved example only. Live Emotion Engine state belongs in .emotion-engine/state.json when enabled.",\n'
-        '  "status": "example_not_live",\n'
-        '  "runtime": "not_implemented"\n'
-        '}\n'
     )
 
 

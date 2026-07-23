@@ -136,7 +136,6 @@ def _render_claude_md(mechanism):
             "- @memory/todos.md: action queues and active commitments.",
             "- @memory/collaboration.md: learned collaboration calibrations and repair notes.",
             "- @memory/pinned.md, @memory/recent-activity.md, @memory/knowledge_map.md, @memory/relationship-state.md: use only as compatibility files unless the memory index points to them.",
-            "- @memory/emotion-state.json.example: reserved Emotion Engine state shape only; do not treat it as live runtime state.",
             "",
         ]
     )

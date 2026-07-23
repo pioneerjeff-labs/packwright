@@ -16,6 +16,7 @@ from packwright.core import (
     PackwrightError,
     adopt_existing,
     apply_adoption_review,
+    apply_install,
     apply_migration,
     apply_reconcile,
     create_handoff,
@@ -26,6 +27,7 @@ from packwright.core import (
     load_character_intake,
     load_mechanism,
     normalize_mechanism,
+    plan_install,
     plan_migration,
     plan_reconcile,
     plan_adoption_review,
@@ -172,6 +174,11 @@ def _build_parser():
         help="overwrite managed target artifacts while preserving portable state",
     )
     install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the complete install plan without writing the target",
+    )
+    install.add_argument(
         "--include-emotion-engine",
         action="store_true",
         default=None,
@@ -200,6 +207,11 @@ def _build_parser():
         default=None,
         choices=["light", "always", "paused"],
         help="override the pack's recommended Emotion Engine runtime mode",
+    )
+    install.add_argument(
+        "--retire-legacy-state",
+        action="store_true",
+        help="after canonical state is verified, rename legacy Emotion Engine state files as .bak",
     )
     install.add_argument("--out", help="output install JSON path")
 
@@ -348,6 +360,11 @@ def _add_refresh_emotion_arguments(parser):
         default=None,
         choices=["light", "always", "paused"],
         help="override the target manifest's Emotion Engine runtime mode",
+    )
+    parser.add_argument(
+        "--retire-legacy-state",
+        action="store_true",
+        help="after canonical state is verified, rename legacy state files as .bak",
     )
     parser.add_argument("--out", help="output refresh JSON path")
 
@@ -572,7 +589,7 @@ def _cmd_install(args):
         "pack directory",
         "PACK_DIR or --pack-dir",
     )
-    result = install_pack(
+    plan = plan_install(
         pack_dir,
         args.target_dir,
         adapter=args.adapter,
@@ -583,7 +600,15 @@ def _cmd_install(args):
         emotion_engine_codex_source=args.emotion_engine_codex_source,
         emotion_style=args.emotion_style,
         emotion_engine_mode=args.emotion_engine_mode,
+        retire_legacy_state=args.retire_legacy_state,
     )
+    if args.dry_run:
+        result = plan.to_dict()
+        result["dry_run"] = True
+        _write_json_or_print(result, args.out)
+        return 0 if result["ready"] else 1
+    result = apply_install(plan)
+    result["dry_run"] = False
     _write_json_or_print(result, args.out)
     return 0
 
@@ -770,6 +795,7 @@ def _cmd_refresh_emotion_engine(args):
         emotion_engine_source=source,
         emotion_style=args.emotion_style,
         emotion_engine_mode=args.emotion_engine_mode,
+        retire_legacy_state=args.retire_legacy_state,
     )
     _write_json_or_print(result, args.out)
     return 0
@@ -1437,3 +1463,7 @@ def _write_json(data, path):
 def _write_yaml(data, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

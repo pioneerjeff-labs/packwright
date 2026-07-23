@@ -14,14 +14,17 @@ from .character_intake import (
 )
 from .handoff import create_handoff
 from .install import (
+    InstallPlan,
     MigrationPlan,
     ReconcilePlan,
+    apply_install,
     apply_migration,
     apply_reconcile,
     doctor_target,
     install_pack,
     migrate_target,
     plan_migration,
+    plan_install,
     plan_reconcile,
     refresh_emotion_engine,
     refresh_emotion_engine_codex,
@@ -35,10 +38,12 @@ from .validation import file_exists, path_exists, validate_mechanism
 __all__ = [
     "PackwrightError",
     "PackwrightValidationError",
+    "InstallPlan",
     "MigrationPlan",
     "ReconcilePlan",
     "adopt_existing",
     "apply_adoption_review",
+    "apply_install",
     "apply_migration",
     "apply_reconcile",
     "create_handoff",
@@ -56,6 +61,7 @@ __all__ = [
     "render_interviewer_prompt",
     "migrate_target",
     "plan_migration",
+    "plan_install",
     "plan_reconcile",
     "plan_adoption_review",
     "refresh_emotion_engine",

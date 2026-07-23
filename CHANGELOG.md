@@ -4,6 +4,31 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+### Added
+
+- Add a no-write `install --dry-run` plan with explicit add, overwrite,
+  managed-config merge, stale-removal, portable-state, Emotion Engine, and
+  required-`--force` reporting.
+- Persist local install provenance under `.packwright/install-provenance.json`
+  and expose source-pack, installed-spec, and installed-lock digests through
+  `doctor`.
+- Warn when canonical and legacy Emotion Engine state paths coexist, with an
+  explicit `--retire-legacy-state` option that verifies identical content and
+  renames legacy files as `.bak` backups.
+
+### Fixed
+
+- Stop generating and session-start injecting the obsolete
+  `memory/emotion-state.json.example` placeholder for new character sources,
+  while continuing to validate and project legacy mechanisms that contain it.
+- Make `python -m packwright.cli` execute the CLI instead of exiting silently
+  with status 0.
+- Make reconcile planning, application, scoring, entry guidance, sidecar
+  preservation, and artifact locking use the same final desired projection so
+  a successful apply converges to a zero-update re-plan.
+- Preserve an existing live `.emotion-engine/state.json` during forced
+  projection updates instead of rewriting it from a temporary reconcile pack.
+
 ## [0.2.0] - 2026-07-21
 
 ### Changed
