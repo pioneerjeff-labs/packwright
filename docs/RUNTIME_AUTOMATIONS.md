@@ -78,6 +78,8 @@ Packwright keeps four different kinds of files separate:
    - Claude Code uses project-local `.claude/**` files.
    - Codex uses project-local `.codex/**` files.
    - Cursor uses project-local `.cursor/**` files.
+   - Pi Core emits no executable automation projection; separately authored
+     Pi extensions live under project-local `.pi/extensions/**`.
 4. Portable instance state
    - `memory/`, `workspace/`, `knowledge/`, `sources/`, and unmanaged root
      `skills/` contain user or instance state under the existing portability
@@ -101,6 +103,7 @@ The adapter registry owns event and effect support. The first-slice contract is:
 | Claude Code | native | native | project hook remains subject to runtime review |
 | Codex | native | native | project hook may require project trust and hook review |
 | Cursor | native | unavailable | prompt hook can allow or block but cannot add model context |
+| Pi | extension required | extension required | Packwright does not generate executable project extensions |
 
 The projector returns one result for every canonical automation:
 
@@ -108,6 +111,7 @@ The projector returns one result for every canonical automation:
 - `projected_pending_user_review`
 - `unavailable_missing_event`
 - `unavailable_missing_effect`
+- `unavailable_requires_extension`
 - `unmanaged_requires_canonicalization`
 
 An unavailable result is not a static-rule fallback. The canonical intent is
@@ -206,11 +210,12 @@ A migration plan separately records:
 - `excluded`
 - `required_confirmations`
 
-Each degraded item records its source hash, source adapter, destination adapter,
-known lifecycle events, reason code, and required user decision. Applying the
-plan rechecks the source hash. The applied receipt records
-`accepted_degradations`; it never claims that degraded files exist or work in
-the destination.
+A path-backed degraded source item records its source hash, source adapter,
+destination adapter, known lifecycle events, reason code, and required user
+decision; apply rechecks that hash. A canonical destination capability gap
+instead records its automation id, event, status, reason, and required
+decision. The applied receipt records `accepted_degradations`; it never claims
+that absent behavior exists or works in the destination.
 
 ## Source history and upgrade discovery
 
@@ -240,9 +245,11 @@ No command auto-applies a reconcile merely because a newer source is visible.
 7. Run the Rebecca acceptance matrix before deciding the release version.
 
 All seven items are implemented in the current worktree. The acceptance matrix
-executes generated runners for all three adapters, verifies honest Cursor
-degradation, preserves user hook entries during install/reconcile, and exercises
-the evidence-only adopt draft flow.
+executes generated runners for the three hook-capable adapters, verifies honest
+Cursor degradation, preserves user hook entries during install/reconcile, and
+exercises the evidence-only adopt draft flow. Packwright 0.3 adds Pi Core as a
+fourth layout while leaving lifecycle automation as an explicit
+extension-required gap.
 
 Implementation batches and public releases are separate decisions. A small
 automation increment can wait for a later release; a confirmed data-loss fix is

@@ -58,7 +58,13 @@ def emotion_engine_mcp_config_path(adapter):
     return EMOTION_ENGINE_MCP_CONFIG_PATHS[adapter]
 
 
+def emotion_engine_runtime_supported(adapter):
+    return adapter in EMOTION_ENGINE_SKILL_PATHS and adapter in EMOTION_ENGINE_MCP_CONFIG_PATHS
+
+
 def emotion_engine_artifacts(adapter):
+    if not emotion_engine_runtime_supported(adapter):
+        return ()
     return (
         *EMOTION_ENGINE_COMMON_ARTIFACTS,
         EMOTION_ENGINE_WRAPPER_PATH,
@@ -79,6 +85,8 @@ def emotion_engine_feature(
     source_digest=None,
     mcp_status=None,
 ):
+    if installed and not emotion_engine_runtime_supported(adapter):
+        raise ValueError(f"Emotion Engine runtime is unavailable for adapter: {adapter}")
     feature = {
         "default_mode": "light",
         "mode": mode,

@@ -23,6 +23,12 @@ _ADAPTERS = {
         "events": {"session_start": "sessionStart"},
         "pending_review": False,
     },
+    "pi": {
+        "config_path": None,
+        "runner_path": None,
+        "events": {},
+        "pending_review": False,
+    },
 }
 
 
@@ -34,8 +40,12 @@ def project_runtime_automations(mechanism, adapter):
     for automation in mechanism.get("automations", []):
         event = automation.get("event")
         if event not in config["events"]:
-            reason = "destination event cannot add model context"
-            status = "unavailable_missing_effect" if adapter == "cursor" and event == "user_prompt" else "unavailable_missing_event"
+            if adapter == "pi":
+                reason = "Pi Core does not generate executable project extensions"
+                status = "unavailable_requires_extension"
+            else:
+                reason = "destination event cannot add model context"
+                status = "unavailable_missing_effect" if adapter == "cursor" and event == "user_prompt" else "unavailable_missing_event"
             records.append(_record(automation, adapter, status, reason=reason))
             continue
         status = "projected_pending_user_review" if config["pending_review"] else "projected"
@@ -60,13 +70,13 @@ def project_runtime_automations(mechanism, adapter):
         "canonical_source": "automations",
         "config": {
             "path": config["config_path"],
-            "ownership": "managed_hook_entries",
+            "ownership": "managed_hook_entries" if config["config_path"] else "not_projected",
             "managed_command_marker": MANAGED_RUNNER_NAME,
         },
         "runner": {
             "path": config["runner_path"],
-            "runtime": "python3",
-            "ownership": "managed_file",
+            "runtime": "python3" if config["runner_path"] else None,
+            "ownership": "managed_file" if config["runner_path"] else "not_projected",
         },
         "records": records,
         "summary": _summary(records),

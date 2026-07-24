@@ -2,8 +2,8 @@
   "use strict";
 
   const englishLines = [
-    { className: "cmd", text: "python -m pip install packwright==0.1.0" },
-    { className: "t-ok", text: "  ✓ installed packwright 0.1.0" },
+    { className: "cmd", text: "python -m pip install packwright==0.3.0" },
+    { className: "t-ok", text: "  ✓ installed packwright 0.3.0 · Pi Core included" },
     { className: "cmd", text: "packwright init --template code --name Nova -o work/nova" },
     { className: "cmd", text: "packwright build work/nova --adapter claude-code -o pack/nova-claude" },
     { className: "t-ok", text: "  ✓ pack compiled · checker score 100.0" },
@@ -15,11 +15,11 @@
     { className: "t-note", text: "  would exclude: CLAUDE.md · .claude/** · no files written" },
     { className: "cmd", text: "packwright migrate project/nova-claude --to codex --target project/nova-codex --yes" },
     { className: "t-ok", text: "  ✓ carried hashes verified · installed score 100.0" },
-    { className: "t-dim", text: "# native Codex target ready · portable state verified" },
+    { className: "t-dim", text: "# structure verified · operational readiness reported separately" },
   ];
   const chineseLines = [
-    { className: "cmd", text: "python -m pip install packwright==0.1.0" },
-    { className: "t-ok", text: "  ✓ 已安装 packwright 0.1.0" },
+    { className: "cmd", text: "python -m pip install packwright==0.3.0" },
+    { className: "t-ok", text: "  ✓ 已安装 packwright 0.3.0 · 已支持 Pi Core" },
     { className: "cmd", text: "packwright init --template code --name Nova -o work/nova" },
     { className: "cmd", text: "packwright build work/nova --adapter claude-code -o pack/nova-claude" },
     { className: "t-ok", text: "  ✓ pack 编译完成 · checker 评分 100.0" },
@@ -31,25 +31,31 @@
     { className: "t-note", text: "  计划排除：CLAUDE.md · .claude/** · 未写入任何文件" },
     { className: "cmd", text: "packwright migrate project/nova-claude --to codex --target project/nova-codex --yes" },
     { className: "t-ok", text: "  ✓ 携带文件哈希验证通过 · 安装后评分 100.0" },
-    { className: "t-dim", text: "# 原生 Codex target 就绪 · 可移植状态已验证" },
+    { className: "t-dim", text: "# 结构已验证 · 运行就绪度另行报告" },
   ];
   const isChinese = document.documentElement.lang.toLowerCase().startsWith("zh");
   const lines = isChinese ? chineseLines : englishLines;
   const quickstartCommands = {
+    pi: [
+      "python -m pip install packwright==0.3.0",
+      "packwright init --template code --name Nova -o work/nova",
+      "packwright build work/nova --adapter pi -o pack/nova-pi",
+      "packwright install pack/nova-pi --adapter pi --target project/nova-pi",
+    ].join("\n"),
     "claude-code": [
-      "python -m pip install packwright==0.1.0",
+      "python -m pip install packwright==0.3.0",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter claude-code -o pack/nova-claude",
       "packwright install pack/nova-claude --adapter claude-code --target project/nova-claude",
     ].join("\n"),
     codex: [
-      "python -m pip install packwright==0.1.0",
+      "python -m pip install packwright==0.3.0",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter codex -o pack/nova-codex",
       "packwright install pack/nova-codex --adapter codex --target project/nova-codex",
     ].join("\n"),
     cursor: [
-      "python -m pip install packwright==0.1.0",
+      "python -m pip install packwright==0.3.0",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter cursor -o pack/nova-cursor",
       "packwright install pack/nova-cursor --adapter cursor --target project/nova-cursor",

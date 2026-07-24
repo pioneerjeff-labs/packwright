@@ -2,6 +2,10 @@
 
 Packwright can install Emotion Engine v1.0.0 as an optional, project-local MCP runtime for Codex, Claude Code, or Cursor. The engine and live state are adapter-neutral; only the native guidance file and project MCP configuration vary by runtime.
 
+Pi Core is not in this list because Pi has no built-in MCP surface. Packwright
+rejects `--include-emotion-engine` for Pi and may carry existing state only as
+an inert recovery snapshot; see [Pi Core adapter](PI.md).
+
 New character sources use `emotion/state-schema.yaml` as the state-shape
 contract and `.emotion-engine/state.json` as the only live runtime state path.
 They do not generate or session-start inject the former
@@ -87,4 +91,7 @@ Migration always reports the state separately:
 - `snapshot_inert`: the state was carried for recovery, but no Emotion Engine source was supplied, so no runtime was activated;
 - `not_carried`: no state was found or `--no-emotion-state` was used.
 
-Supply `--emotion-engine-source` when migrating to any supported adapter to keep the state active. The deprecated Codex-specific flags and `refresh-emotion-engine-codex` alias remain accepted for one compatibility cycle.
+Supply `--emotion-engine-source` when migrating to any of the three
+MCP-capable adapters to keep the state active. The deprecated Codex-specific
+flags and `refresh-emotion-engine-codex` alias remain accepted for one
+compatibility cycle.

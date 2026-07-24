@@ -154,6 +154,7 @@ front matter, entry-file routing, and any explicit unavailable status:
 | Codex | `.agents/skills/<character>-research-brief/SKILL.md` |
 | Claude Code | `.claude/skills/<character>-research-brief/SKILL.md` |
 | Cursor | `.cursor/rules/<character>-research-brief.mdc` |
+| Pi | `.agents/skills/<character>-research-brief/SKILL.md` |
 
 Files users add directly under an installed target's root `skills/` directory
 remain unmanaged. Migration carries them unchanged and lists them separately

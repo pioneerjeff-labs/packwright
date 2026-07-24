@@ -32,13 +32,17 @@ AUTOMATION_PATTERNS = (
     ".codex/hooks/",
     ".cursor/hooks.json",
     ".cursor/hooks/",
+    ".pi/settings.json",
+    ".pi/extensions/",
 )
 RUNTIME_PATTERNS = (
     "AGENTS.md",
     "CLAUDE.md",
+    "SYSTEM.md",
     ".cursor/rules/",
     ".codex/",
     ".claude/",
+    ".pi/",
 )
 MEMORY_PATTERNS = (
     "memory/",

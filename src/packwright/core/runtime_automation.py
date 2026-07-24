@@ -16,12 +16,14 @@ LOCAL_AUTOMATION_CONFIGS = {
         (".codex/config.toml", "codex_toml"),
     ),
     "cursor": ((".cursor/hooks.json", "json_hooks"),),
+    "pi": ((".pi/settings.json", "pi_settings"),),
 }
 
 LOCAL_AUTOMATION_ASSET_ROOTS = {
     "claude-code": (".claude/hooks",),
     "codex": (".codex/hooks",),
     "cursor": (".cursor/hooks",),
+    "pi": (".pi/extensions",),
 }
 
 _KNOWN_EVENTS = (
@@ -84,7 +86,9 @@ def discover_unmanaged_runtime_automation_assets(target_dir, adapter, managed_pa
             )
         )
 
-    if not discovered:
+    # Pi project extensions are executable automation resources in their own
+    # right and are auto-discovered without a settings entry.
+    if not discovered and adapter != "pi":
         return []
 
     for rel_root in LOCAL_AUTOMATION_ASSET_ROOTS.get(adapter, ()):
@@ -116,6 +120,8 @@ def _inspect_automation_config(path, config_format):
         return {"declares_automation": True, "events": [], "parse_status": "unreadable"}
     if config_format == "codex_toml":
         return _inspect_codex_toml(text)
+    if config_format == "pi_settings":
+        return _inspect_pi_settings(text)
     return _inspect_json_config(text, settings=config_format == "json_settings")
 
 
@@ -166,6 +172,45 @@ def _inspect_codex_toml(text):
     declares = bool(_TOML_HOOK_MARKER_RE.search(searchable))
     events = sorted(set(_KNOWN_EVENT_RE.findall(searchable))) if declares else []
     return {"declares_automation": declares, "events": events, "parse_status": "marker_scan"}
+
+
+def _inspect_pi_settings(text):
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        declares = '"extensions"' in text or '"packages"' in text
+        return {
+            "declares_automation": declares,
+            "events": ["pi_extension"] if declares else [],
+            "parse_status": "invalid",
+        }
+    if not isinstance(data, dict):
+        return {"declares_automation": False, "events": [], "parse_status": "parsed"}
+
+    extensions = data.get("extensions")
+    declares_extensions = isinstance(extensions, list) and bool(extensions)
+    declares_extension_packages = False
+    packages = data.get("packages")
+    if isinstance(packages, list):
+        for package in packages:
+            if isinstance(package, str):
+                # Pi packages may contain executable extensions unless a
+                # resource filter explicitly disables them.
+                declares_extension_packages = True
+                break
+            if isinstance(package, dict):
+                extension_filter = package.get("extensions")
+                if extension_filter is None or (
+                    isinstance(extension_filter, list) and bool(extension_filter)
+                ):
+                    declares_extension_packages = True
+                    break
+    declares = declares_extensions or declares_extension_packages
+    return {
+        "declares_automation": declares,
+        "events": ["pi_extension"] if declares else [],
+        "parse_status": "parsed",
+    }
 
 
 def _toml_without_comments(text):

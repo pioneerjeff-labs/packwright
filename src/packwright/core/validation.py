@@ -567,7 +567,7 @@ def _validate_outputs(data, issues):
             issues.append(f"outputs.{adapter}.artifacts must be a non-empty list")
             continue
         skill_path = save_context_skill_path(data, adapter)
-        if adapter == "codex":
+        if adapter in {"codex", "pi"}:
             required = (
                 "AGENTS.md",
                 skill_path,

@@ -1,6 +1,6 @@
 # Packwright CLI contract
 
-This is the public command surface for Packwright 0.1. Commands not listed here
+This is the public command surface for Packwright 0.3. Commands not listed here
 are compatibility or development commands and are intentionally omitted from
 the default help screen.
 
@@ -130,7 +130,9 @@ context automation under `automations`. Build projects those entries into
 `.claude/settings.json`, `.codex/hooks.json`, or `.cursor/hooks.json` plus a
 bounded local Python runner. Cursor cannot inject dynamic context at
 `beforeSubmitPrompt`, so its `user_prompt` entries are reported as
-`unavailable_missing_effect` rather than mapped to a static rule.
+`unavailable_missing_effect` rather than mapped to a static rule. Pi Core does
+not emit executable extensions, so both lifecycle events are reported as
+`unavailable_requires_extension`.
 
 Packs built by Packwright and their installed targets include portable
 `.packwright/` metadata: a canonical spec/source snapshot, artifact lock, and
@@ -144,27 +146,38 @@ Portable state and live Emotion Engine state are intentionally excluded from
 managed hash repair. It also reports the installed spec/lock digests and the
 local source-pack record stored in `.packwright/install-provenance.json` when
 available; a moved or deleted source pack is reported as unavailable rather
-than inferred.
+than inferred. The backward-compatible `ok` field is limited to managed
+projection integrity. The separate `packwright-readiness/v1` result reports
+whether runtime activation or adoption review needs attention and keeps
+portable-state integrity, environment bindings, and workflow acceptance
+explicitly `not_evaluated` when there is no evidence.
+
+`score` is likewise scoped to `managed_structure`. A `100.0` score can pass
+while `readiness.operational_ready` is `null`; this means the generated
+structure passed, not that a live runtime or end-to-end workflow was verified.
 
 See [Emotion Engine runtime](EMOTION_ENGINE.md) for the explicit multi-adapter
 install, MCP configuration, state-safety, refresh, and migration boundaries.
 
 ## Adapter layout contract
 
-Packwright 0.1 emits one canonical repository layout per runtime:
+Packwright 0.3 emits one canonical repository layout per runtime:
 
 | Adapter | Entry | Reusable procedure |
 |---|---|---|
 | Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
 | Cursor | `.cursor/rules/<name>.mdc` | `.cursor/rules/<name>-save-context.mdc` |
+| Pi | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 
 New Codex packs do not emit `.codex/skills/`. `doctor` reports that legacy
 Packwright layout and `doctor --fix` moves it to `.agents/skills/`, updating
 managed manifest and routing references. If old and new copies both exist,
 doctor reports a conflict and does not overwrite either copy. Claude Code and
 Cursor already use their current canonical project layouts and require no path
-migration.
+migration. Pi uses the shared Agent Skills location and stores Packwright
+reference material under `.pi/<name>/references/`; see [Pi Core adapter](PI.md)
+for its trust and extension boundaries.
 
 ## Migration safety contract
 

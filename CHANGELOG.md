@@ -4,8 +4,17 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.3.0] - 2026-07-24
+
 ### Added
 
+- Add a Pi Core adapter that compiles `AGENTS.md`, project Agent
+  Skills, Pi-scoped reference files, install/doctor support, and all 12
+  directed migration plans across the four adapters.
+- Record Pi project trust as an activation requirement, detect unmanaged
+  `.pi/settings.json` and `.pi/extensions/**` automation resources, and require
+  explicit acceptance when canonical lifecycle automation needs a separately
+  reviewed Pi extension.
 - Add a no-write `install --dry-run` plan with explicit add, overwrite,
   managed-config merge, stale-removal, portable-state, Emotion Engine, and
   required-`--force` reporting.
@@ -18,6 +27,11 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ### Fixed
 
+- Make checker and doctor results distinguish managed structural integrity from
+  operational readiness. A score of `100.0` no longer presents runtime
+  activation, environment bindings, portable-state integrity, or workflow
+  acceptance as verified; doctor also surfaces Pi trust, canonical automation
+  gaps, and pending adoption-review items.
 - Stop generating and session-start injecting the obsolete
   `memory/emotion-state.json.example` placeholder for new character sources,
   while continuing to validate and project legacy mechanisms that contain it.
@@ -119,6 +133,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.3.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.2.0
 [0.1.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.2
 [0.1.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.1
