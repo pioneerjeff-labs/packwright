@@ -17,6 +17,7 @@ ALLOWED_PRIVATE_METADATA_COMMITS = frozenset(
         # commit-scoped so every later private metadata occurrence still fails.
         "c2b582ee8dfdb76a0d19c94215b6c0bfd08104d2",
         "cadaf11e7cee7e41389f89bb5f9db48dc0ec978c",
+        "4a979c09e24e47f1520987a486599f19918dee88",
     }
 )
 PATTERNS = {
