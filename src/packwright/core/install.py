@@ -29,6 +29,7 @@ from .emotion_engine_contract import (
     emotion_engine_feature,
     emotion_engine_manifest_diagnostics,
     emotion_engine_mcp_config_path,
+    emotion_engine_runtime_supported,
     emotion_engine_sidecar_record,
     emotion_engine_skill_path,
 )
@@ -61,6 +62,7 @@ from .naming import (
     normalize_slug,
 )
 from .resolver import resolve_mechanism
+from .readiness import target_readiness
 from .workspace_contract import workspace_artifacts, workspace_readme, workspace_required_dirs
 
 
@@ -217,6 +219,11 @@ def plan_install(
         include_emotion_engine_codex=include_emotion_engine_codex,
         emotion_engine_codex_source=emotion_engine_codex_source,
     )
+    if include_emotion_engine and not emotion_engine_runtime_supported(adapter):
+        raise PackwrightValidationError([
+            f"Emotion Engine runtime is unavailable for {adapter}; "
+            "install without --include-emotion-engine and retain any state as an inert snapshot"
+        ])
     if retire_legacy_state and not include_emotion_engine:
         raise PackwrightValidationError([
             "--retire-legacy-state requires --include-emotion-engine during install"
@@ -658,6 +665,10 @@ def refresh_emotion_engine(
     manifest_adapter = manifest.get("adapter")
     if manifest_adapter not in SUPPORTED_INSTALL_ADAPTERS:
         raise PackwrightValidationError([f"target adapter is unsupported: {manifest_adapter!r}"])
+    if not emotion_engine_runtime_supported(manifest_adapter):
+        raise PackwrightValidationError([
+            f"Emotion Engine runtime is unavailable for {manifest_adapter}"
+        ])
 
     resolved_emotion_engine_mode = emotion_engine_mode or _manifest_emotion_engine_mode(manifest)
     if resolved_emotion_engine_mode not in EMOTION_ENGINE_MODES:
@@ -733,10 +744,12 @@ def doctor_target(
     result = {
         "target_dir": str(target_dir),
         "adapter": adapter,
+        "scope": "managed_projection",
         "provenance": _target_provenance(target_dir, manifest),
         "ok": True,
         "issues": [],
-        "warnings": _legacy_emotion_state_warnings(target_dir),
+        "warnings": _legacy_emotion_state_warnings(target_dir)
+        + _adapter_activation_warnings(manifest),
         "fixes": [],
     }
 
@@ -768,7 +781,7 @@ def doctor_target(
     if not _emotion_engine_expected_in_target(manifest, target_dir):
         result["ok"] = not result["issues"]
         result["provenance"] = _target_provenance(target_dir, manifest)
-        return result
+        return _finalize_doctor_readiness(result, target_dir, manifest)
 
     mode = emotion_engine_mode or _manifest_emotion_engine_mode(manifest)
     plan = (
@@ -823,6 +836,21 @@ def doctor_target(
             "message": "diagnosis completed without upstream source; pass --emotion-engine-source to refresh managed runtime files",
         })
     result["provenance"] = _target_provenance(target_dir, _load_manifest(target_dir))
+    return _finalize_doctor_readiness(
+        result,
+        target_dir,
+        _load_manifest(target_dir),
+    )
+
+
+def _finalize_doctor_readiness(result, target_dir, manifest):
+    result["readiness"] = target_readiness(
+        target_dir,
+        manifest,
+        structural_ok=result["ok"],
+        issues=result["issues"],
+        warnings=result["warnings"],
+    )
     return result
 
 
@@ -861,6 +889,20 @@ def _legacy_emotion_state_warnings(target_dir):
             ),
         })
     return warnings_list
+
+
+def _adapter_activation_warnings(manifest):
+    if not isinstance(manifest, dict) or manifest.get("adapter") != "pi":
+        return []
+    return [
+        {
+            "id": "pi_project_trust_unverified",
+            "message": (
+                "Packwright cannot inspect Pi's user-scoped project trust decision; "
+                "open the target in Pi and confirm /trust before relying on project Agent Skills"
+            ),
+        }
+    ]
 
 
 def migrate_target(
@@ -932,6 +974,13 @@ def plan_migration(
         emotion_engine_source,
         emotion_engine_codex_source,
     )
+    if _migrate_should_include_emotion_engine(
+        resolved_emotion_engine_source
+    ) and not emotion_engine_runtime_supported(to_adapter):
+        raise PackwrightValidationError([
+            f"Emotion Engine runtime is unavailable for {to_adapter}; "
+            "omit --emotion-engine-source to carry state as an inert snapshot"
+        ])
     emotion_state_source = (
         _select_emotion_state_source(source_target_dir)
         if include_emotion_state
@@ -1047,7 +1096,7 @@ def apply_migration(plan, accept_degraded=False):
     degraded = plan.report["changes"].get("degraded", [])
     if degraded and not accept_degraded:
         raise PackwrightValidationError([
-            "migration contains unmanaged runtime automation that will not be reproduced in the destination",
+            "migration contains runtime automation behavior gaps that will not be reproduced in the destination",
             "review the degraded receipt and explicitly accept the behavior gap before applying",
         ])
     planned_score = plan.report["score"]["planned"]
@@ -1595,28 +1644,51 @@ def _plan_migration_changes(
                 }
             )
 
+    target_manifest = json.loads(pack["manifest.json"])
     degraded = _plan_runtime_automation_degradations(
         source_target_dir,
         source_manifest,
         from_adapter,
         to_adapter,
     )
-    if degraded:
+    source_degraded = list(degraded)
+    degraded.extend(
+        _plan_destination_runtime_capability_gaps(
+            target_manifest,
+            from_adapter,
+            to_adapter,
+        )
+    )
+    if source_degraded:
         warnings.append(
             {
                 "id": "runtime_automation_degraded",
-                "paths": [item["path"] for item in degraded],
+                "paths": [item["path"] for item in source_degraded],
                 "message": (
                     "unmanaged runtime automation is outside the installed canonical spec; "
                     "it will be left behind unless the user explicitly accepts the behavior gap"
                 ),
             }
         )
+    destination_gaps = [
+        item for item in degraded
+        if item.get("kind") == "canonical_runtime_capability_gap"
+    ]
+    if destination_gaps:
+        warnings.append(
+            {
+                "id": "destination_runtime_capability_gap",
+                "automations": [item["automation_id"] for item in destination_gaps],
+                "message": (
+                    f"{to_adapter} cannot implement these canonical automations without "
+                    "a separately reviewed runtime extension"
+                ),
+            }
+        )
 
     carried_paths = {item["path"] for item in carried}
     rewritten_paths = {item["path"] for item in rewritten}
-    degraded_paths = {item["path"] for item in degraded}
-    target_manifest = json.loads(pack["manifest.json"])
+    degraded_paths = {item["path"] for item in degraded if item.get("path")}
     generated_by_path = {}
     for rel_path in _manifest_artifacts(target_manifest):
         if rel_path in carried_paths or rel_path in rewritten_paths:
@@ -1777,18 +1849,52 @@ def _plan_runtime_automation_degradations(source_target_dir, source_manifest, fr
     ]
 
 
+def _plan_destination_runtime_capability_gaps(target_manifest, from_adapter, to_adapter):
+    if to_adapter != "pi":
+        return []
+    feature = target_manifest.get("features", {}).get("automations", {})
+    records = feature.get("records", []) if isinstance(feature, dict) else []
+    return [
+        {
+            "id": "destination_runtime_capability_gap",
+            "kind": "canonical_runtime_capability_gap",
+            "automation_id": record.get("id"),
+            "canonical_event": record.get("canonical_event"),
+            "effect": record.get("effect"),
+            "status": record.get("status"),
+            "reason_code": "destination_requires_reviewed_extension",
+            "reason": record.get(
+                "reason",
+                "Pi Core requires a separately reviewed extension for this behavior",
+            ),
+            "source_adapter": from_adapter,
+            "destination_adapter": to_adapter,
+            "required_decision": "accept_behavior_gap",
+        }
+        for record in records
+        if str(record.get("status", "")).startswith("unavailable_")
+    ]
+
+
 def _migration_required_confirmations(changes):
     degraded = changes.get("degraded", [])
     if not degraded:
         return []
+    paths = [item["path"] for item in degraded if item.get("path")]
+    automations = [
+        item.get("automation_id", item.get("id"))
+        for item in degraded
+        if item.get("kind") == "canonical_runtime_capability_gap"
+    ]
     return [
         {
             "id": "accept_degraded_runtime_automation",
             "kind": "degradation",
-            "paths": [item["path"] for item in degraded],
+            "paths": paths,
+            "automations": automations,
             "message": (
-                "accept that unmanaged source runtime automation will not be reproduced "
-                "in the destination"
+                "accept that listed source or canonical runtime automation will not be "
+                "reproduced in the destination"
             ),
         }
     ]
@@ -1849,6 +1955,8 @@ def _verify_migration_source(changes, source_target_dir):
         if not passed:
             issues.append({"path": item["path"], "message": f"source changed: {item['path']}"})
     for item in changes.get("degraded", []):
+        if not item.get("path"):
+            continue
         path = source_target_dir / item["path"]
         actual = _file_sha256(path) if path.is_file() else None
         passed = actual == item["sha256"]
@@ -2110,7 +2218,12 @@ def _artifact_lock_actual_digest(record, path):
 def _write_automation_baseline(target_dir, manifest):
     feature = manifest.get("features", {}).get("automations", {}) if isinstance(manifest, dict) else {}
     records = feature.get("records", []) if isinstance(feature, dict) else []
-    if not any(record.get("producer") == "relocation_guard" for record in records if isinstance(record, dict)):
+    if not any(
+        record.get("producer") == "relocation_guard"
+        and str(record.get("status", "")).startswith("projected")
+        for record in records
+        if isinstance(record, dict)
+    ):
         return False
     destination = resolve_destination_path(
         target_dir, ".packwright/baseline-path", "automation relocation baseline"

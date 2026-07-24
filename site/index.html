@@ -13,18 +13,18 @@
 <link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
 <title>Packwright — Build your agent once. Carry it everywhere.</title>
-<meta name="description" content="Packwright compiles one agent definition into native packs for Codex, Claude Code, and Cursor. Build your agent once. Carry it everywhere.">
+<meta name="description" content="Packwright 0.3 compiles one agent definition into native packs for Pi, Codex, Claude Code, and Cursor. Build your agent once. Carry it everywhere.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Packwright">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="zh_CN">
 <meta property="og:title" content="Packwright — Build your agent once. Carry it everywhere.">
-<meta property="og:description" content="Compile one agent definition into native packs for Codex, Claude Code, and Cursor.">
+<meta property="og:description" content="Now with Pi Core: compile one agent definition into native packs for Pi, Codex, Claude Code, and Cursor.">
 <meta property="og:url" content="https://pioneerjeff-labs.github.io/packwright/">
 <meta property="og:image" content="https://pioneerjeff-labs.github.io/packwright/assets/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Packwright — Build your agent once. Carry it everywhere.">
-<meta name="twitter:description" content="Compile one agent definition into native packs for Codex, Claude Code, and Cursor.">
+<meta name="twitter:description" content="Now with Pi Core: native packs and portable state across Pi, Codex, Claude Code, and Cursor.">
 <meta name="twitter:image" content="https://pioneerjeff-labs.github.io/packwright/assets/social-preview.png">
 <style>
   @font-face{font-family:"Fraunces";font-style:normal;font-weight:600;font-display:swap;src:url("../assets/fonts/fraunces-latin-600.woff2") format("woff2");}
@@ -181,8 +181,9 @@
 
   <header class="hero">
     <div>
+      <p class="section-kicker">New in 0.3 · Pi Core support</p>
       <h1>Build your agent once. Carry it everywhere.</h1>
-      <p class="sub">Packwright compiles one agent definition — rules, memory, skills, workspace — into native packs for Codex, Claude Code, and Cursor. When you migrate, its memory, workspace, knowledge, and sources move with it.</p>
+      <p class="sub">Packwright compiles one agent definition — rules, memory, skills, workspace — into native packs for Pi, Codex, Claude Code, and Cursor. When you migrate, its memory, workspace, knowledge, and sources move with it.</p>
       <p class="trust">Local-first. Zero telemetry. Packwright itself makes no network requests. Your coding runtime's data policy still applies.</p>
       <div class="cta">
         <a class="btn btn-accent" href="#start">Get started</a>
@@ -210,7 +211,7 @@
   <section class="sec-border" id="why">
     <h2>Why not just prompts?</h2>
     <p class="lede">Every AI coding tool wants its own instruction format. Packwright compiles one agent definition into native packs instead:</p>
-    <svg class="diagram" viewBox="0 0 660 240" role="img" aria-label="One agent definition compiles through Packwright into native packs for Codex, Claude Code, and Cursor">
+    <svg class="diagram" viewBox="0 0 660 260" role="img" aria-label="One agent definition compiles through Packwright into native packs for Pi, Codex, Claude Code, and Cursor">
       <rect x="16" y="60" width="160" height="120" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
       <text x="28" y="84" font-size="12.5" fill="currentColor">agent definition</text>
       <text x="28" y="106" font-size="11" fill="var(--pw-text-muted)">persona</text>
@@ -220,25 +221,30 @@
       <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">Packwright</text>
-      <line x1="354" y1="120" x2="450" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <line x1="354" y1="120" x2="450" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <line x1="354" y1="120" x2="450" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M442 42 L450 44 L444 50" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M443 115 L450 120 L443 125" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M444 190 L450 196 L442 198" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <rect x="452" y="16" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="466" y="38" font-size="12.5" fill="currentColor">Codex</text>
-      <text x="466" y="58" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
-      <rect x="452" y="92" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="466" y="114" font-size="12.5" fill="currentColor">Claude Code</text>
-      <text x="466" y="134" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
-      <rect x="452" y="168" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="466" y="190" font-size="12.5" fill="currentColor">Cursor</text>
-      <text x="466" y="210" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
+      <line x1="354" y1="120" x2="450" y2="31" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="93" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="155" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="217" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M442 29 L450 31 L444 37" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M443 88 L450 93 L443 98" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M443 150 L450 155 L443 160" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M444 211 L450 217 L442 219" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <rect x="452" y="8" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="27" font-size="12.5" fill="currentColor">Pi</text>
+      <text x="466" y="44" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
+      <rect x="452" y="70" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="89" font-size="12.5" fill="currentColor">Codex</text>
+      <text x="466" y="106" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
+      <rect x="452" y="132" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="151" font-size="12.5" fill="currentColor">Claude Code</text>
+      <text x="466" y="168" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
+      <rect x="452" y="194" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="213" font-size="12.5" fill="currentColor">Cursor</text>
+      <text x="466" y="230" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
     </svg>
     <div class="cols">
       <div class="card"><h3>Portable</h3><p>One agent definition projects into a native pack for each runtime.</p></div>
-      <div class="card"><h3>Checkable</h3><p><code>score</code> grades every pack — the rules are in the repo.</p></div>
+      <div class="card"><h3>Checkable</h3><p><code>score</code> grades structure; <code>doctor</code> reports runtime readiness separately.</p></div>
       <div class="card"><h3>Repairable</h3><p><code>doctor --fix</code> repairs drift without touching memory.</p></div>
     </div>
   </section>
@@ -253,9 +259,9 @@
           <div class="bub bub-u">Move my agent from Claude Code to Codex.</div>
           <div class="bub bub-a">Preview first — carrying <code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code>. Excluded: <code>CLAUDE.md</code> and Claude Code-only files. <em>Proceed?</em></div>
           <div class="bub bub-u">Go.</div>
-          <div class="bub bub-a">Done — <code>project/nova-codex</code> · installed score 100.0.</div>
+          <div class="bub bub-a">Done — <code>project/nova-codex</code> · structure score 100.0. Runtime readiness is reported separately.</div>
         </div>
-        <p class="foot">Paste one prompt into Claude Code, Codex, or Cursor: <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
+        <p class="foot">Paste one prompt into Pi, Codex, Claude Code, or Cursor: <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
       </div>
       <div class="panel">
         <span class="tag">by hand</span>
@@ -302,7 +308,7 @@ packwright migrate          # move it, state intact</div>
     <div class="steps">
       <div class="step"><span class="n">preview</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --dry-run</code><p>See the full carry/exclude report. Nothing is written.</p></div>
       <div class="step"><span class="n">migrate</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --yes</code><p><code>memory/</code>, <code>workspace/</code>, <code>knowledge/</code>, and <code>sources/</code> carry with hash verification.</p></div>
-      <div class="step"><span class="n">verify</span><code>packwright doctor project/nova-codex<br>packwright score project/nova-codex</code><p>The installed destination is checked and graded. Receipts included.</p></div>
+      <div class="step"><span class="n">verify</span><code>packwright doctor project/nova-codex<br>packwright score project/nova-codex</code><p>Structure and runtime-readiness evidence are reported separately. Receipts included.</p></div>
     </div>
   </section>
 
@@ -310,16 +316,17 @@ packwright migrate          # move it, state intact</div>
     <h2>Choose your runtime. Get started.</h2>
     <p class="lede">Install the current release, choose a preset and name, then build a native target.</p>
     <div class="runtime-tabs" role="tablist" aria-label="Choose a runtime">
-      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude Code</button>
+      <button class="runtime-tab" id="runtime-pi" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="pi">Pi</button>
+      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="claude-code" tabindex="-1">Claude Code</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
       <button class="runtime-tab" id="runtime-cursor" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="cursor" tabindex="-1">Cursor</button>
     </div>
-    <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
+    <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-pi">
       <button class="copybtn" id="copyqs" aria-label="Copy quickstart commands">copy</button>
-      <pre id="qs-code">python -m pip install packwright==0.1.0
+      <pre id="qs-code">python -m pip install packwright==0.3.0
 packwright init --template code --name Nova -o work/nova
-packwright build work/nova --adapter claude-code -o pack/nova-claude
-packwright install pack/nova-claude --adapter claude-code --target project/nova-claude</pre>
+packwright build work/nova --adapter pi -o pack/nova-pi
+packwright install pack/nova-pi --adapter pi --target project/nova-pi</pre>
     </div>
   </section>
 
@@ -334,7 +341,7 @@ packwright install pack/nova-claude --adapter claude-code --target project/nova-
     <div class="flinks">
       <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/CLI.md">Docs</a>
-      <a href="https://pypi.org/project/packwright/0.1.0/">PyPI</a>
+      <a href="https://pypi.org/project/packwright/0.3.0/">PyPI</a>
     </div>
   </footer>
 </div>

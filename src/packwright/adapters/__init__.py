@@ -1,12 +1,14 @@
 from .claude_code import compile_to_claude_code, compile_to_claude_code_pack
 from .codex import compile_to_codex_pack
 from .cursor import compile_to_cursor_pack
+from .pi import compile_to_pi_pack
 
 
 ADAPTER_COMPILERS = {
     "codex": compile_to_codex_pack,
     "claude-code": compile_to_claude_code_pack,
     "cursor": compile_to_cursor_pack,
+    "pi": compile_to_pi_pack,
 }
 
 
@@ -22,5 +24,6 @@ __all__ = [
     "compile_to_claude_code_pack",
     "compile_to_codex_pack",
     "compile_to_cursor_pack",
+    "compile_to_pi_pack",
     "compile_adapter_pack",
 ]

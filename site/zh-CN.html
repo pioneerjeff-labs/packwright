@@ -14,18 +14,18 @@
 <link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="../assets/fonts/ibm-plex-mono-latin-500.woff2" as="font" type="font/woff2" crossorigin>
 <title>Packwright — 一次构建 agent，随处皆可运行</title>
-<meta name="description" content="Packwright 可将单一 agent 定义编译为适配 Codex、Claude Code 和 Cursor 的原生 pack。一次构建，随处运行。">
+<meta name="description" content="Packwright 0.3 可将单一 agent 定义编译为适配 Pi、Codex、Claude Code 和 Cursor 的原生 pack。一次构建，随处运行。">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Packwright">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:locale:alternate" content="en_US">
 <meta property="og:title" content="Packwright — 一次构建 agent，随处皆可运行">
-<meta property="og:description" content="将单一 agent 定义编译为 Codex、Claude Code 与 Cursor 的原生 pack。">
+<meta property="og:description" content="现已支持 Pi Core：为 Pi、Codex、Claude Code 与 Cursor 编译原生 pack。">
 <meta property="og:url" content="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">
 <meta property="og:image" content="https://pioneerjeff-labs.github.io/packwright/assets/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Packwright — 一次构建 agent，随处皆可运行">
-<meta name="twitter:description" content="将单一 agent 定义编译为 Codex、Claude Code 与 Cursor 的原生 pack。">
+<meta name="twitter:description" content="现已支持 Pi Core：在 Pi、Codex、Claude Code 与 Cursor 之间携带 agent 状态。">
 <meta name="twitter:image" content="https://pioneerjeff-labs.github.io/packwright/assets/social-preview.png">
 <style>
   @font-face{font-family:"Fraunces";font-style:normal;font-weight:600;font-display:swap;src:url("../assets/fonts/fraunces-latin-600.woff2") format("woff2");}
@@ -184,8 +184,9 @@
 
   <header class="hero">
     <div>
+      <p class="section-kicker">0.3 新增 · Pi Core 支持</p>
       <h1>一次构建 agent，<br>随处皆可运行。</h1>
-      <p class="sub">Packwright 能将单一 agent 定义（包含规则、记忆、skills 与工作区）直接编译为 Codex、Claude Code 和 Cursor 的原生 pack。迁移时，记忆、工作区、知识与来源索引也会随 agent 一并带走。</p>
+      <p class="sub">Packwright 能将单一 agent 定义（包含规则、记忆、skills 与工作区）直接编译为 Pi、Codex、Claude Code 和 Cursor 的原生 pack。迁移时，记忆、工作区、知识与来源索引也会随 agent 一并带走。</p>
       <p class="trust">本地优先，零遥测。Packwright 自身不发起任何网络请求，你的 coding runtime 数据策略依然生效。</p>
       <div class="cta">
         <a class="btn btn-accent" href="#start">快速开始</a>
@@ -213,7 +214,7 @@
   <section class="sec-border" id="why">
     <h2>为何不只用 prompt？</h2>
     <p class="lede">每款 AI 编程工具都有各自的 instruction 格式要求。Packwright 另辟蹊径：将同一份 agent 定义直接编译为适配各 runtime 的原生 pack。</p>
-    <svg class="diagram" viewBox="0 0 660 240" role="img" aria-label="一份 agent 定义通过 Packwright 编译成 Codex、Claude Code 和 Cursor 的原生 pack">
+    <svg class="diagram" viewBox="0 0 660 260" role="img" aria-label="一份 agent 定义通过 Packwright 编译成 Pi、Codex、Claude Code 和 Cursor 的原生 pack">
       <rect x="16" y="60" width="160" height="120" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
       <text x="28" y="84" font-size="12.5" fill="currentColor">agent 定义</text>
       <text x="28" y="106" font-size="11" fill="var(--pw-text-muted)">角色设定</text>
@@ -223,25 +224,30 @@
       <line x1="176" y1="120" x2="246" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <rect x="246" y="105" width="108" height="30" rx="3" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
       <text x="300" y="124" font-size="12" fill="var(--pw-accent)" text-anchor="middle">Packwright</text>
-      <line x1="354" y1="120" x2="450" y2="44" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <line x1="354" y1="120" x2="450" y2="120" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <line x1="354" y1="120" x2="450" y2="196" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M442 42 L450 44 L444 50" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M443 115 L450 120 L443 125" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <path d="M444 190 L450 196 L442 198" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
-      <rect x="452" y="16" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="466" y="38" font-size="12.5" fill="currentColor">Codex</text>
-      <text x="466" y="58" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
-      <rect x="452" y="92" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="466" y="114" font-size="12.5" fill="currentColor">Claude Code</text>
-      <text x="466" y="134" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
-      <rect x="452" y="168" width="192" height="56" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="466" y="190" font-size="12.5" fill="currentColor">Cursor</text>
-      <text x="466" y="210" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
+      <line x1="354" y1="120" x2="450" y2="31" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="93" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="155" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <line x1="354" y1="120" x2="450" y2="217" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M442 29 L450 31 L444 37" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M443 88 L450 93 L443 98" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M443 150 L450 155 L443 160" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <path d="M444 211 L450 217 L442 219" fill="none" stroke="var(--pw-accent)" stroke-width="1.5"/>
+      <rect x="452" y="8" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="27" font-size="12.5" fill="currentColor">Pi</text>
+      <text x="466" y="44" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
+      <rect x="452" y="70" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="89" font-size="12.5" fill="currentColor">Codex</text>
+      <text x="466" y="106" font-size="10.5" fill="var(--pw-text-muted)">AGENTS.md · .agents/skills</text>
+      <rect x="452" y="132" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="151" font-size="12.5" fill="currentColor">Claude Code</text>
+      <text x="466" y="168" font-size="10.5" fill="var(--pw-text-muted)">CLAUDE.md · .claude/skills</text>
+      <rect x="452" y="194" width="192" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="466" y="213" font-size="12.5" fill="currentColor">Cursor</text>
+      <text x="466" y="230" font-size="10.5" fill="var(--pw-text-muted)">.cursor/rules/*.mdc</text>
     </svg>
     <div class="cols">
       <div class="card"><h3>可移植</h3><p>将单一 agent 定义映射为各 runtime 的原生 pack。</p></div>
-      <div class="card"><h3>可校验</h3><p>内置 <code>score</code> 命令为每个 pack 评分，校验规则与代码同源。</p></div>
+      <div class="card"><h3>可校验</h3><p><code>score</code> 检查结构，<code>doctor</code> 另外报告 runtime 就绪度。</p></div>
       <div class="card"><h3>可修复</h3><p>通过 <code>doctor --fix</code> 修复状态漂移，全程不触碰用户记忆。</p></div>
     </div>
   </section>
@@ -256,9 +262,9 @@
           <div class="bub bub-u">将我的 agent 从 Claude Code 迁移到 Codex。</div>
           <div class="bub bub-a">正在预览——将携带 <code>memory/</code>、<code>workspace/</code>、<code>knowledge/</code> 和 <code>sources/</code>。排除 <code>CLAUDE.md</code> 及 Claude Code 专属文件。<em>确认继续吗？</em></div>
           <div class="bub bub-u">继续。</div>
-          <div class="bub bub-a">迁移完成——<code>project/nova-codex</code> · 安装后评分 100.0。</div>
+          <div class="bub bub-a">迁移完成——<code>project/nova-codex</code> · 结构评分 100.0；runtime 就绪度另行报告。</div>
         </div>
-        <p class="foot">将以下 prompt 粘贴至 Claude Code、Codex 或 Cursor 即可：<a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
+        <p class="foot">将以下 prompt 粘贴至 Pi、Codex、Claude Code 或 Cursor 即可：<a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/USE_WITH_YOUR_AGENT.md">USE_WITH_YOUR_AGENT.md</a></p>
       </div>
       <div class="panel">
         <span class="tag">亲自掌舵</span>
@@ -305,7 +311,7 @@ packwright migrate          # 携带状态迁移</div>
     <div class="steps">
       <div class="step"><span class="n">预览</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --dry-run</code><p>查看完整的携带与排除报告，不执行任何写入。</p></div>
       <div class="step"><span class="n">迁移</span><code>packwright migrate project/nova-claude --to codex --target project/nova-codex --yes</code><p>携带 <code>memory/</code>、<code>workspace/</code>、<code>knowledge/</code> 与 <code>sources/</code>，并进行逐一哈希验证。</p></div>
-      <div class="step"><span class="n">验证</span><code>packwright doctor project/nova-codex<br>packwright score project/nova-codex</code><p>检查目标安装目录并进行评分，自动生成可核验的迁移记录。</p></div>
+      <div class="step"><span class="n">验证</span><code>packwright doctor project/nova-codex<br>packwright score project/nova-codex</code><p>分别报告结构检查与 runtime 就绪证据，并生成可核验的迁移记录。</p></div>
     </div>
   </section>
 
@@ -313,16 +319,17 @@ packwright migrate          # 携带状态迁移</div>
     <h2>选择 runtime，快速开始。</h2>
     <p class="lede">安装当前版本，选择 preset 和名字，再构建一个原生 target。</p>
     <div class="runtime-tabs" role="tablist" aria-label="选择 runtime">
-      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="claude-code">Claude Code</button>
+      <button class="runtime-tab" id="runtime-pi" type="button" role="tab" aria-selected="true" aria-controls="quickstart-panel" data-adapter="pi">Pi</button>
+      <button class="runtime-tab" id="runtime-claude" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="claude-code" tabindex="-1">Claude Code</button>
       <button class="runtime-tab" id="runtime-codex" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="codex" tabindex="-1">Codex</button>
       <button class="runtime-tab" id="runtime-cursor" type="button" role="tab" aria-selected="false" aria-controls="quickstart-panel" data-adapter="cursor" tabindex="-1">Cursor</button>
     </div>
-    <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-claude">
+    <div class="codeblock" id="quickstart-panel" role="tabpanel" aria-labelledby="runtime-pi">
       <button class="copybtn" id="copyqs" data-idle-label="复制" data-copied-label="已复制" aria-label="复制快速开始命令">复制</button>
-      <pre id="qs-code">python -m pip install packwright==0.1.0
+      <pre id="qs-code">python -m pip install packwright==0.3.0
 packwright init --template code --name Nova -o work/nova
-packwright build work/nova --adapter claude-code -o pack/nova-claude
-packwright install pack/nova-claude --adapter claude-code --target project/nova-claude</pre>
+packwright build work/nova --adapter pi -o pack/nova-pi
+packwright install pack/nova-pi --adapter pi --target project/nova-pi</pre>
     </div>
   </section>
 
@@ -337,7 +344,7 @@ packwright install pack/nova-claude --adapter claude-code --target project/nova-
     <div class="flinks">
       <a href="https://github.com/pioneerjeff-labs/packwright">GitHub</a>
       <a href="https://github.com/pioneerjeff-labs/packwright/blob/main/docs/CLI.md">文档</a>
-      <a href="https://pypi.org/project/packwright/0.1.0/">PyPI</a>
+      <a href="https://pypi.org/project/packwright/0.3.0/">PyPI</a>
     </div>
   </footer>
 </div>

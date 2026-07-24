@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "packwright"
-version = "0.2.0"
-description = "Build, install, and migrate portable agent packs across Codex, Claude Code, and Cursor."
+version = "0.3.0"
+description = "Build, install, and migrate portable agent packs across Codex, Claude Code, Cursor, and Pi."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
@@ -14,7 +14,7 @@ authors = [{name = "pioneerjeff-labs"}]
 dependencies = [
   "PyYAML>=6.0",
 ]
-keywords = ["agents", "codex", "claude-code", "cursor", "migration"]
+keywords = ["agents", "codex", "claude-code", "cursor", "pi", "migration"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

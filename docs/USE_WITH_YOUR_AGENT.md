@@ -1,13 +1,13 @@
 # Use Packwright with your coding agent
 
-Packwright's CLI is the deterministic engine. Codex, Claude Code, or Cursor can be the conversational interface: it can ask what you want, run the commands, explain the migration receipt, and stop before anything is written.
+Packwright's CLI is the deterministic engine. Codex, Claude Code, Cursor, or Pi can be the conversational interface: it can ask what you want, run the commands, explain the migration receipt, and stop before anything is written.
 
 ## Before you paste the prompt
 
 Install Packwright in the environment your coding agent can access:
 
 ```bash
-python -m pip install packwright==0.2.0
+python -m pip install packwright==0.3.0
 packwright --version
 ```
 
@@ -16,7 +16,7 @@ Use synthetic or reviewed files while evaluating Packwright. Do not give a codin
 ## Paste this prompt
 
 ```text
-Operate Packwright for me. First run `packwright --version`. Ask whether I want to create a new agent, adopt an existing local agent, or migrate an installed target. Ask for the destination adapter (`codex`, `claude-code`, or `cursor`) when build or migration begins, and use that same adapter for install.
+Operate Packwright for me. First run `packwright --version`. Ask whether I want to create a new agent, adopt an existing local agent, or migrate an installed target. Ask for the destination adapter (`codex`, `claude-code`, `cursor`, or `pi`) when build or migration begins, and use that same adapter for install. For Pi, explain that project Agent Skills require project trust, lifecycle automations require a separately reviewed extension, and Packwright's Emotion Engine MCP sidecar is unavailable in Pi Core.
 
 For a new agent, ask what I need it to do and what name I choose. Never invent or assign the character name. Run `packwright draft-character --user-name <user-name> --prompt-out <interviewer-prompt>` and use that contract to interview me. Ask one concise question at a time, show the completed canonical `CharacterIntake` YAML, and wait for my confirmation. Save the confirmed intake, run `packwright init <intake.yaml> -o <work-dir>`, then run `packwright build <work-dir> --adapter <adapter> -o <pack-dir>` and `packwright install <pack-dir> --adapter <adapter> --target <target-dir>`.
 

@@ -65,7 +65,7 @@ def _project_source_map(mechanism, adapter, text, emotion_engine_active=False):
     update_policy = f"{reference_prefix(mechanism, adapter)}/emotion/update-policy.yaml"
 
     text = re.sub(
-        r"- Current (Codex|Claude Code|Cursor) entry -> `[^`]+`",
+        r"- Current (Codex|Claude Code|Cursor|Pi) entry -> `[^`]+`",
         f"- Current {label} entry -> `{entry}`",
         text,
     )

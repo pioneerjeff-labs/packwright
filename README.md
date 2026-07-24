@@ -12,12 +12,12 @@
 
 <p align="center">
   Compile one agent definition—rules, memory, skills, and workspace—into native packs<br>
-  for Codex, Claude Code, and Cursor. Build, install, migrate, and verify with plain files.
+  for Codex, Claude Code, Cursor, and Pi. Build, install, migrate, and verify with plain files.
 </p>
 
 <p align="center">
   <strong><a href="https://pioneerjeff-labs.github.io/packwright/">Explore the live product website →</a></strong><br>
-  Watch the animated CLI, follow a Claude Code → Codex migration, and switch the Quickstart between Claude Code, Codex, and Cursor.<br>
+  Watch the animated CLI, follow a Claude Code → Codex migration, and start with Pi, Codex, Claude Code, or Cursor.<br>
   <a href="https://pioneerjeff-labs.github.io/packwright/">English</a> · <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a>
 </p>
 
@@ -36,15 +36,20 @@
 
 <p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
+> [!TIP]
+> **New in 0.3.0: Pi Core support.** Build native `AGENTS.md` and project Agent
+> Skills for Pi, or migrate portable state to and from Pi with explicit
+> capability-gap receipts.
+
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
 
 ## Start with your coding agent
 
-The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, or Cursor:
+The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, Cursor, or Pi:
 
 ```bash
-python -m pip install packwright==0.2.0
+python -m pip install packwright==0.3.0
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -125,14 +130,14 @@ packwright migrate project/nova-claude \
   --target project/nova-codex --dry-run
 ```
 
-The plan names four kinds of paths:
+The plan names five kinds of paths:
 
 | Receipt section | Meaning |
 |---|---|
 | `generated` | Files compiled for the destination runtime |
 | `carried` | Portable user files copied and SHA-256 verified |
 | `rewritten` | Packwright-managed routing lines changed for the destination |
-| `degraded` | Unmanaged runtime automation detected but not reproduced without explicit acceptance |
+| `degraded` | Unmanaged source automation or a destination capability gap that requires explicit acceptance |
 | `excluded` | Runtime-specific files deliberately left behind |
 
 After reviewing the receipt, apply that exact move and verify the result:
@@ -156,8 +161,9 @@ packwright reconcile --target project/nova-codex --mechanism work/nova --json --
 Mechanism 0.8 projects bounded local `session_start` and `user_prompt` context
 from canonical `automations`. Claude Code and Codex support both events. Cursor
 supports session-start context but reports prompt-time context as an explicit
-capability gap. Existing user settings and hook entries are preserved by
-entry-level managed merges.
+capability gap. Pi Core reports both events as requiring a separately reviewed
+project extension; it does not generate executable extension code. Existing
+user settings and hook entries are preserved by entry-level managed merges.
 
 Add `--json` to the dry run and confirmed run for a machine-readable `packwright-migration/v1` receipt. Packwright refuses to overwrite an existing target unless you separately opt into `--force`.
 
@@ -170,6 +176,7 @@ A working coding agent is more than its top-level instructions, and each runtime
 | Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
 | Cursor | `.cursor/rules/<name>.mdc` | `.cursor/rules/<name>-save-context.mdc` |
+| Pi | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 
 Packwright treats those files as compiled projections. Your editable source owns the behavior; adapters own the runtime layout; migration carries portable state and reports the seams instead of hiding them.
 
@@ -181,7 +188,8 @@ editable source
          │
          ├── packwright build --adapter codex       → AGENTS.md + .agents/skills/
          ├── packwright build --adapter claude-code → CLAUDE.md + .claude/skills/
-         └── packwright build --adapter cursor      → .cursor/rules/*.mdc
+         ├── packwright build --adapter cursor      → .cursor/rules/*.mdc
+         └── packwright build --adapter pi          → AGENTS.md + .agents/skills/ + .pi/<name>/references/
 ```
 
 Every pack and installed target includes self-contained `.packwright/` metadata: an embedded source snapshot, artifact lock, and checker receipt. You can relocate a target and still run `migrate`, `doctor`, and `score` without its original build directory. Edit the canonical source in the work directory, not the installed target or `.packwright/source`; reconcile refreshes the embedded snapshot and managed projections from that work directory.
@@ -192,15 +200,27 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## What the checks prove
 
-- `score` evaluates the public pack structure and artifact contract. `100.0` is a structural pass, not a promise that a runtime will behave perfectly.
-- `doctor` verifies Packwright-managed projection hashes and can repair reproducible drift without treating portable user state as generated output.
+- `score` evaluates the public pack structure and artifact contract. `100.0` is
+  a structural pass, not a runtime-ready claim. Its machine-readable
+  `readiness` block marks portable state, activation, bindings, and workflow
+  acceptance as `not_evaluated`.
+- `doctor` verifies Packwright-managed projection hashes and can repair
+  reproducible drift without treating portable user state as generated output.
+  It separately reports `readiness.operational_ready`, including Pi trust,
+  canonical automation gaps, and pending adoption-review items.
 - Migration verifies carried and rewritten files in the destination, rechecks detected degraded source files before writing, records planned and installed scores, and never silently treats runtime automation as portable. When degraded items exist, non-interactive apply also requires `--accept-degraded`.
 - Reconcile compares installed and desired canonical spec hashes, preserves instance state, and writes a local receipt without reverse-compiling another runtime's hooks.
-- Packwright ships six directed migration paths across the three current adapters. New adapters land when they pass the checker.
+- The release gate exercises all 12 directed migration paths across Codex,
+  Claude Code, Cursor, and Pi. Pi destinations require explicit acceptance of
+  canonical automation gaps.
 
 ## Current release boundary
 
-`0.2.0` is the current stable release; `0.1.0` remains the first stable baseline. The supported destination adapters are Codex, Claude Code, and Cursor. Packwright is local tooling, not cloud sync, and its plain-file structure score is separate from real runtime compatibility.
+`0.3.0` is the current stable release and the first release with Pi Core
+support; `0.1.0` remains the first stable baseline. Packwright is local tooling,
+not cloud sync, and its plain-file structure score is separate from real
+runtime compatibility. Pi project trust and lifecycle extensions remain
+explicit runtime activation steps rather than generated claims.
 
 ## Documentation
 
@@ -210,7 +230,9 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 - [Character drafting](docs/CHARACTER_DRAFTING.md)
 - [Agent archetypes](docs/AGENT_ARCHETYPES.md)
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
+- [Pi Core adapter](docs/PI.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.0 release notes](docs/releases/0.3.0.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.1.2 release notes](docs/releases/0.1.2.md)
 - [0.1.1 release notes](docs/releases/0.1.1.md)

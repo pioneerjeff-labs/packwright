@@ -1431,8 +1431,14 @@ def _confirm_degraded_reconcile(degraded):
 def _confirm_degraded_migration(degraded):
     print("Degraded runtime automation will not be reproduced in the destination:")
     for item in degraded:
-        events = ", ".join(item.get("events", [])) or "events unknown"
-        print(f"  - {item['path']} ({events})")
+        if item.get("path"):
+            events = ", ".join(item.get("events", [])) or "events unknown"
+            print(f"  - {item['path']} ({events})")
+        else:
+            print(
+                f"  - {item.get('automation_id', item.get('id'))} "
+                f"({item.get('canonical_event')}: {item.get('reason')})"
+            )
     try:
         answer = input("Accept these behavior gaps and continue? [y/N] ").strip().lower()
     except EOFError:

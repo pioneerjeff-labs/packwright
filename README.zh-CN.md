@@ -11,13 +11,13 @@
 <p align="center"><strong>一次构建 agent，随处皆可运行。</strong></p>
 
 <p align="center">
-  一次定义 agent 的规则、记忆、skills 与工作区，编译成 Codex、Claude Code 和 Cursor 的原生 pack；<br>
+  一次定义 agent 的规则、记忆、skills 与工作区，编译成 Codex、Claude Code、Cursor 和 Pi 的原生 pack；<br>
   构建并安装原生 pack；迁移时把记忆、工作区与知识状态一起带走。
 </p>
 
 <p align="center">
   <strong><a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">查看在线产品网站 →</a></strong><br>
-  看动画终端完整跑一遍 Claude Code → Codex 迁移，并在 Claude Code、Codex 与 Cursor 之间切换快速开始命令。<br>
+  看动画终端完整跑一遍 Claude Code → Codex 迁移，并从 Pi、Codex、Claude Code 或 Cursor 快速开始。<br>
   <a href="https://pioneerjeff-labs.github.io/packwright/zh-CN.html">简体中文</a> · <a href="https://pioneerjeff-labs.github.io/packwright/">English</a>
 </p>
 
@@ -36,15 +36,19 @@
 
 <p align="center"><strong>原生 pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
 
+> [!TIP]
+> **0.3.0 新增 Pi Core 支持。** 可为 Pi 构建原生 `AGENTS.md` 与 project
+> Agent Skills，也可在迁入、迁出 Pi 时携带可移植状态，并明确记录能力缺口。
+
 > [!NOTE]
 > Packwright 自身不会发起网络请求，也不会发送遥测数据。coding runtime 仍可能把它读取的文件发送给自己的模型服务商，其数据政策继续适用。
 
 ## 先交给 coding agent 代驾
 
-最短的使用界面是一段对话。安装 Packwright，然后把现成提示词粘贴给 Codex、Claude Code 或 Cursor：
+最短的使用界面是一段对话。安装 Packwright，然后把现成提示词粘贴给 Codex、Claude Code、Cursor 或 Pi：
 
 ```bash
-python -m pip install packwright==0.2.0
+python -m pip install packwright==0.3.0
 ```
 
 **[打开可直接粘贴的 agent 操作提示词 →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -108,14 +112,14 @@ packwright migrate project/nova-claude \
   --target project/nova-codex --dry-run
 ```
 
-迁移计划会明确列出四类路径：
+迁移计划会明确列出五类路径：
 
 | 收据分类 | 含义 |
 |---|---|
 | `generated` | 为目标 runtime 编译生成的文件 |
 | `carried` | 原样复制并用 SHA-256 验证的可移植文件 |
 | `rewritten` | 针对目标 runtime 改写的 Packwright 路由行 |
-| `degraded` | 已发现但未经显式接受、不会在目标端重现的非托管 runtime automation |
+| `degraded` | 非托管源端 automation，或必须显式接受的目标端能力缺口 |
 | `excluded` | 明确留在原 runtime 的专属文件 |
 
 审阅收据后，再应用同一迁移并验证结果：
@@ -139,19 +143,21 @@ packwright reconcile --target project/nova-codex --mechanism work/nova --json --
 机制 0.8 会从 canonical `automations` 投影有字节上限的本地
 `session_start` 与 `user_prompt` 上下文。Claude Code 和 Codex 支持两个事件；
 Cursor 只支持 session-start 上下文，prompt-time 能力缺口会明确出现在收据中。
-用户已有的 settings 与 hook 条目会按条目保留，不会被整份覆盖。
+Pi Core 会把两个事件都标记为需要单独审核的 project extension，不会擅自生成
+可执行 extension。用户已有的 settings 与 hook 条目会按条目保留，不会被整份覆盖。
 
 在预览和确认命令中加入 `--json`，即可得到机器可读的 `packwright-migration/v1` 收据。除非另行使用 `--force`，Packwright 不会覆盖已有 target。
 
 ## 为什么不只是提示词
 
-一个正在工作的 coding agent 不只有顶层 instructions，而且三个 runtime 要求不同的原生文件布局：
+一个正在工作的 coding agent 不只有顶层 instructions，而且四个 runtime 要求不同的原生文件布局：
 
 | runtime | 原生入口 | 可复用流程 |
 |---|---|---|
 | Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
 | Cursor | `.cursor/rules/<name>.mdc` | `.cursor/rules/<name>-save-context.mdc` |
+| Pi | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
 
 Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，adapter 拥有 runtime 布局；迁移负责携带可移植状态，并公开说明接缝。
 
@@ -163,7 +169,8 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
          │
          ├── packwright build --adapter codex       → AGENTS.md + .agents/skills/
          ├── packwright build --adapter claude-code → CLAUDE.md + .claude/skills/
-         └── packwright build --adapter cursor      → .cursor/rules/*.mdc
+         ├── packwright build --adapter cursor      → .cursor/rules/*.mdc
+         └── packwright build --adapter pi          → AGENTS.md + .agents/skills/ + .pi/<name>/references/
 ```
 
 每个 pack 和已安装 target 都包含自包含的 `.packwright/` 元数据：内嵌 source snapshot、artifact lock 与 checker receipt。即使移动 target、删除原 build 目录，也能继续运行 `migrate`、`doctor` 与 `score`。定制应编辑 work directory 中的 canonical source，而不是 installed target 或 `.packwright/source`；reconcile 会从 work directory 刷新内嵌快照和 managed projection。
@@ -174,16 +181,23 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 ## 检查结果究竟证明什么
 
-- `score` 检查公开结构与 artifact contract。`100.0` 表示结构通过，不承诺 runtime 行为完美。
-- `doctor` 校验 Packwright 管理的投影哈希，并能修复可重建的漂移，不把可移植用户状态当成生成物。
+- `score` 检查公开结构与 artifact contract。`100.0` 只表示结构通过，不代表
+  runtime 已就绪；机器可读的 `readiness` 会把可移植状态、激活、bindings 与工作流
+  验收标记为 `not_evaluated`。
+- `doctor` 校验 Packwright 管理的投影哈希，并能修复可重建的漂移，不把可移植用户
+  状态当成生成物；它会另外报告 `readiness.operational_ready`，包括 Pi trust、
+  canonical automation 能力缺口与未完成的 adoption review。
 - 迁移会验证目标端的 carried 与 rewritten 文件，并在写入前重新核对 degraded 源文件，同时记录计划分数和安装后分数；runtime automation 不再被静默当作可移植能力。存在 degraded 项时，非交互应用还必须提供 `--accept-degraded`。
 - Reconcile 会比较 installed 与 desired canonical spec 哈希，保留实例状态并写入本地收据，不会反编译另一 runtime 的 hooks。
-- 当前三个 adapter 共覆盖六个有向迁移路径。新 adapter 只有通过 checker 才会加入。
+- 发布门禁已覆盖 Codex、Claude Code、Cursor 与 Pi 之间全部 12 条有向
+  迁移路径；迁往 Pi 时，canonical automation 能力缺口必须显式接受。
 
 ## 当前发布边界
 
-`0.2.0` 是当前稳定版本。当前支持 Codex、Claude Code 与 Cursor。Packwright 是本地工具，不是云
-同步服务；plain-file 结构分数与真实 runtime 兼容性是两件事。
+`0.3.0` 是当前稳定版本，也是首个支持 Pi Core 的版本；`0.1.0` 仍是首个稳定
+基线。Packwright 是本地工具，不是云同步服务；plain-file 结构分数与真实 runtime
+兼容性是两件事。Pi project trust 与生命周期 extension 仍是需要明确完成的
+runtime 激活步骤，不会被伪装成已自动就绪。
 
 ## 文档
 
@@ -193,7 +207,9 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [角色起草](docs/CHARACTER_DRAFTING.md)
 - [agent archetype](docs/AGENT_ARCHETYPES.md)
 - [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
+- [Pi Core adapter](docs/PI.md)
 - [本地 runtime automation](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.0 发布说明](docs/releases/0.3.0.md)
 - [0.2.0 发布说明](docs/releases/0.2.0.md)
 - [0.1.2 发布说明](docs/releases/0.1.2.md)
 - [0.1.1 发布说明](docs/releases/0.1.1.md)

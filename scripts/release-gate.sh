@@ -70,7 +70,7 @@ SDIR="$(find "$WORK/sdist" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 PW="$WORK/wheel-venv/bin/packwright"
 "$PW" --version
 "$PW" init --template code --name Nova -o "$WORK/work"
-for adapter in codex claude-code cursor; do
+for adapter in codex claude-code cursor pi; do
   "$PW" build "$WORK/work" --adapter "$adapter" -o "$WORK/pack-$adapter"
   "$PW" install "$WORK/pack-$adapter" --adapter "$adapter" --target "$WORK/target-$adapter"
   "$PW" doctor "$WORK/target-$adapter"
@@ -80,6 +80,10 @@ done
 "$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --yes
 "$PW" doctor "$WORK/migrated-cursor"
 "$PW" score "$WORK/migrated-cursor"
+"$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --dry-run
+"$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --yes --accept-degraded
+"$PW" doctor "$WORK/migrated-pi"
+"$PW" score "$WORK/migrated-pi"
 
 "$PYTHON" - "$DIST" "$DIST/release-artifacts.json" <<'PY'
 import hashlib, json, pathlib, sys

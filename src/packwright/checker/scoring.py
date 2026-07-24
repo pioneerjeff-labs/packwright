@@ -52,6 +52,7 @@ from packwright.core.naming import (
     reference_prefix,
     save_context_skill_path,
 )
+from packwright.core.readiness import score_readiness
 from packwright.core.validation import file_exists, path_exists, validate_mechanism
 from packwright.core.workspace_contract import (
     WORKSPACE_INDEX_OWNER,
@@ -172,7 +173,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         "entry_uses_runtime_appropriate_links",
         _entry_uses_runtime_appropriate_links(entry, adapter, skill_path, locale),
         10,
-        "entry file uses Codex plain paths or Claude Code @path syntax as appropriate",
+        "entry file uses Codex/Pi plain paths or Claude Code @path syntax as appropriate",
     )
     _add(
         checks,
@@ -217,7 +218,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         save_context_neutrality_violation is None,
         10,
         (
-            "save-context skill avoids Codex, Claude Code, and adapter-specific projection wording"
+            "save-context skill avoids runtime-specific projection wording"
             if save_context_neutrality_violation is None
             else f"{save_context_source_path} contains runtime-specific token "
             f"{save_context_neutrality_violation!r}; keep the canonical source body "
@@ -290,6 +291,21 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
             "live Emotion Engine state" not in entry,
             10,
             "Codex daily entry keeps live Emotion Engine state out of normal operating prompts",
+        )
+    if adapter == "pi":
+        _add(
+            checks,
+            "pi_project_trust_declared",
+            _pi_project_trust_declared(manifest),
+            10,
+            "Pi pack declares project trust as an explicit runtime activation step",
+        )
+        _add(
+            checks,
+            "reserved_emotion_not_in_daily_pi_entry",
+            "live Emotion Engine state" not in entry,
+            10,
+            "Pi daily entry keeps unavailable Emotion Engine runtime state out of normal operating prompts",
         )
     _add(
         checks,
@@ -552,7 +568,16 @@ def _semantic_skills_projected(mechanism, adapter_pack, manifest, entry, adapter
 
 
 def _semantic_skill_projection_neutral(mechanism, adapter_pack, adapter):
-    forbidden = ("Codex", "Claude Code", "Cursor", ".codex/", ".claude/", ".cursor/")
+    forbidden = (
+        "Codex",
+        "Claude Code",
+        "Cursor",
+        "Pi",
+        ".codex/",
+        ".claude/",
+        ".cursor/",
+        ".pi/",
+    )
     for skill in mechanism.get("skills", []):
         if skill.get("id") == "save-context":
             continue
@@ -575,7 +600,7 @@ def _entry_uses_runtime_appropriate_links(entry, adapter, skill_path, locale):
         "memory/todos.md",
         "memory/collaboration.md",
     )
-    if adapter == "codex":
+    if adapter in {"codex", "pi"}:
         return (
             section_heading(locale, "use_when_needed") in entry
             and f"`{skill_path}`" in entry
@@ -640,11 +665,13 @@ def _save_context_skill_projection_neutrality_violation(skill):
         "Codex",
         "Claude",
         "Cursor",
+        "Pi",
         "Projection Notes",
         "adapter pack",
         ".codex",
         ".claude",
         ".cursor",
+        ".pi",
     )
     body = skill_projection_body(skill)
     return next((item for item in forbidden if item in body), None)
@@ -832,10 +859,28 @@ def _emotion_reserved_not_runtime(mechanism, manifest):
             False,
             "optional_project_mcp_sidecar",
             "spec_guided_behavior_only",
+            "unavailable_no_builtin_mcp",
             EMOTION_ENGINE_AVAILABLE_RUNTIME,
             EMOTION_ENGINE_RUNTIME,
             EMOTION_ENGINE_CLAUDE_RUNTIME,
         }
+    )
+
+
+def _pi_project_trust_declared(manifest):
+    feature = (
+        manifest.get("features", {}).get("project_trust", {})
+        if isinstance(manifest, dict)
+        else {}
+    )
+    boundaries = manifest.get("boundaries", {}) if isinstance(manifest, dict) else {}
+    return (
+        feature.get("required_for_project_resources") is True
+        and feature.get("status") == "requires_runtime_confirmation"
+        and feature.get("interactive_activation") == "/trust"
+        and feature.get("non_interactive_activation") == "pi --approve"
+        and boundaries.get("pi_extensions") == "not_projected"
+        and boundaries.get("mcp") == "unavailable_no_builtin_mcp"
     )
 
 
@@ -1004,9 +1049,12 @@ def _result(checks, threshold):
     total = sum(check["weight"] for check in checks)
     earned = sum(check["weight"] for check in checks if check["passed"])
     score = round((earned / total) * 100, 2) if total else 0.0
+    passed = score >= threshold and all(check["passed"] for check in checks)
     return {
         "score": score,
         "threshold": threshold,
-        "passed": score >= threshold and all(check["passed"] for check in checks),
+        "passed": passed,
+        "scope": "managed_structure",
+        "readiness": score_readiness(passed),
         "checks": checks,
     }

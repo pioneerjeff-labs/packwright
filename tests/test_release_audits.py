@@ -248,27 +248,35 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertNotIn("actions/checkout", publish_job)
 
     def test_public_quickstart_and_migration_paths_share_one_contract(self):
-        documents = [
-            ROOT / "README.md",
-            ROOT / "README.zh-CN.md",
-            ROOT / "site" / "index.html",
-            ROOT / "site" / "zh-CN.html",
-        ]
+        documents = {
+            ROOT / "README.md": "claude-code",
+            ROOT / "README.zh-CN.md": "claude-code",
+            ROOT / "site" / "index.html": "pi",
+            ROOT / "site" / "zh-CN.html": "pi",
+        }
         required = (
             "packwright init --template code --name Nova",
-            "packwright build work/nova --adapter claude-code -o pack/nova-claude",
-            "packwright install pack/nova-claude --adapter claude-code --target project/nova-claude",
             "packwright migrate project/nova-claude",
             "--target project/nova-codex --dry-run",
             "--target project/nova-codex --yes",
             "packwright doctor project/nova-codex",
             "packwright score project/nova-codex",
         )
-        for path in documents:
+        for path, quickstart_adapter in documents.items():
             text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8").replace("\\", " "))
             with self.subTest(path=path.name):
                 for command in required:
                     self.assertIn(command, text)
+                suffix = "claude" if quickstart_adapter == "claude-code" else "pi"
+                self.assertIn(
+                    f"packwright build work/nova --adapter {quickstart_adapter} -o pack/nova-{suffix}",
+                    text,
+                )
+                self.assertIn(
+                    f"packwright install pack/nova-{suffix} --adapter {quickstart_adapter} "
+                    f"--target project/nova-{suffix}",
+                    text,
+                )
                 self.assertIsNone(re.search(r"packwright migrate project/nova(?!-claude)", text))
                 self.assertNotIn("--template creator", text)
 
@@ -300,6 +308,10 @@ class PublicTreeAuditTest(unittest.TestCase):
 
         readme = readmes[0].read_text(encoding="utf-8")
         chinese_readme = readmes[1].read_text(encoding="utf-8")
+        self.assertIn("python -m pip install packwright==0.3.0", readme)
+        self.assertIn("python -m pip install packwright==0.3.0", chinese_readme)
+        self.assertIn("The plan names five kinds of paths:", readme)
+        self.assertIn("迁移计划会明确列出五类路径：", chinese_readme)
         self.assertIn("Build your agent once. Carry it everywhere.", readme)
         self.assertIn("Explore the live product website", readme)
         self.assertIn("一次构建 agent，随处皆可运行。", chinese_readme)
@@ -345,6 +357,7 @@ class PublicTreeAuditTest(unittest.TestCase):
 
         social_preview = (ROOT / "assets" / "social-preview.svg").read_text(encoding="utf-8")
         self.assertIn(">Packwright</text>", social_preview)
+        self.assertIn("Pi  ·  Codex  ·  Claude Code  ·  Cursor", social_preview)
         self.assertIn("NATIVE PACKS · PORTABLE STATE · MIGRATION RECEIPTS", social_preview)
 
         self.assertIn(
@@ -369,9 +382,13 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertIn('data-adapter="claude-code"', document)
             self.assertIn('data-adapter="codex"', document)
             self.assertIn('data-adapter="cursor"', document)
-            self.assertIn('id="runtime-claude"', document)
-            self.assertIn('id="runtime-claude" type="button" role="tab" aria-selected="true"', document)
-            self.assertIn('data-adapter="claude-code">Claude Code</button>', document)
+            self.assertIn('data-adapter="pi"', document)
+            self.assertIn('id="runtime-pi"', document)
+            self.assertIn('id="runtime-pi" type="button" role="tab" aria-selected="true"', document)
+            self.assertIn('data-adapter="claude-code"', document)
+            self.assertIn('>Claude Code</button>', document)
+            self.assertLess(document.index('data-adapter="pi"'), document.index('data-adapter="claude-code"'))
+            self.assertIn("python -m pip install packwright==0.3.0", document)
 
         demo = (ROOT / "site" / "demo.js").read_text(encoding="utf-8")
         self.assertIn("const englishLines = [", demo)
@@ -379,9 +396,10 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertIn('startsWith("zh")', demo)
         self.assertIn("pack compiled · checker score 100.0", demo)
         self.assertIn("pack 编译完成 · checker 评分 100.0", demo)
-        self.assertIn("native Codex target ready · portable state verified", demo)
-        self.assertIn("原生 Codex target 就绪 · 可移植状态已验证", demo)
+        self.assertIn("structure verified · operational readiness reported separately", demo)
+        self.assertIn("结构已验证 · 运行就绪度另行报告", demo)
         self.assertNotIn("the output is files you can read", demo)
+        self.assertIn('"packwright build work/nova --adapter pi -o pack/nova-pi"', demo)
         self.assertIn('"packwright build work/nova --adapter codex -o pack/nova-codex"', demo)
         self.assertIn('"packwright build work/nova --adapter cursor -o pack/nova-cursor"', demo)
         self.assertIn("packwright init --template code --name Nova", demo)
