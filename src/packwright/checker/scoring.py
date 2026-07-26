@@ -1,4 +1,5 @@
 import json
+import re
 
 from packwright.core.adapter_layout import (
     adapter_entry,
@@ -282,7 +283,7 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         "empty_memory_skeleton_is_user_ready",
         _empty_memory_skeleton_is_user_ready(adapter_pack),
         10,
-        "empty memory skeleton files avoid template placeholders and read as usable empty state",
+        "memory files avoid template placeholders and accept usable empty or live state",
     )
     if adapter == "codex":
         _add(
@@ -583,9 +584,7 @@ def _semantic_skill_projection_neutral(mechanism, adapter_pack, adapter):
             continue
         path = projected_skill_path(mechanism, adapter, skill)
         text = adapter_pack.get(path)
-        if text is not None and any(
-            item in skill_projection_body(text) for item in forbidden
-        ):
+        if text is not None and _projection_neutrality_violation(text, forbidden):
             return False
     return True
 
@@ -673,8 +672,21 @@ def _save_context_skill_projection_neutrality_violation(skill):
         ".cursor",
         ".pi",
     )
+    return _projection_neutrality_violation(skill, forbidden)
+
+
+def _projection_neutrality_violation(skill, forbidden):
     body = skill_projection_body(skill)
-    return next((item for item in forbidden if item in body), None)
+    for token in forbidden:
+        if token.isalpha():
+            if re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])",
+                body,
+            ):
+                return token
+        elif token in body:
+            return token
+    return None
 
 
 def _empty_memory_skeleton_is_user_ready(adapter_pack):
@@ -714,16 +726,21 @@ def _empty_memory_skeleton_is_user_ready(adapter_pack):
     required = (
         "This is the default memory router.",
         "This file stores stable profile facts",
-        "No pinned memory has been recorded yet.",
         "domain router",
         "Agent Promotion",
-        "No pickup entries have been recorded yet.",
         "newest 20",
-        "No current todos have been recorded yet.",
         "not a knowledge base by itself",
         "No project state has been recorded yet.",
         "No relationship continuity notes have been recorded yet.",
         "Use this directory for generated work products",
+    )
+    mutable_state_ready = all(
+        _memory_file_has_empty_or_live_state(text, empty_marker)
+        for text, empty_marker in (
+            (pinned, "No pinned memory has been recorded yet."),
+            (recent, "No pickup entries have been recorded yet."),
+            (todos, "No current todos have been recorded yet."),
+        )
     )
     usable_state = (
         ("No active projects have been recorded yet." in index or "## Active Projects" in index)
@@ -738,8 +755,19 @@ def _empty_memory_skeleton_is_user_ready(adapter_pack):
     )
     return (
         all(item in memory_text for item in required)
+        and mutable_state_ready
         and usable_state
         and not any(item in memory_text for item in forbidden)
+    )
+
+
+def _memory_file_has_empty_or_live_state(text, empty_marker):
+    if empty_marker in text:
+        return True
+    lines = (line.strip() for line in text.splitlines())
+    return any(
+        line.startswith(("- ", "* ", "+ ")) and empty_marker not in line
+        for line in lines
     )
 
 

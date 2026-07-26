@@ -19,8 +19,8 @@ The Pi pack uses Pi's native project discovery:
 | Purpose | Path |
 |---|---|
 | Project context | `AGENTS.md` |
-| Reusable procedures | `.agents/skills/<name>-<skill>/SKILL.md` |
-| Packwright projection references | `.pi/<name>/references/**` |
+| Reusable procedures | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
+| Packwright projection references | `.pi/<slug>/references/**` |
 | Portable instance state | `memory/`, `workspace/`, `knowledge/`, `sources/` |
 
 Packwright does not generate `.pi/settings.json` or `.pi/extensions/**` for Pi
@@ -36,7 +36,8 @@ depending on Packwright skills:
 ```bash
 cd project/nova-pi
 pi
-# confirm the trust prompt, or use /trust in the session
+# confirm the startup trust prompt, or use /trust to save a future decision
+# /trust does not reload the current session; restart pi before relying on project skills
 ```
 
 For a one-run non-interactive check, Pi exposes `--approve`. Trust is stored in

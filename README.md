@@ -173,10 +173,10 @@ A working coding agent is more than its top-level instructions, and each runtime
 
 | Runtime | Native entry | Reusable procedures |
 |---|---|---|
-| Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
+| Codex | `AGENTS.md` | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
 | Cursor | `.cursor/rules/<name>.mdc` | `.cursor/rules/<name>-save-context.mdc` |
-| Pi | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
+| Pi | `AGENTS.md` | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
 
 Packwright treats those files as compiled projections. Your editable source owns the behavior; adapters own the runtime layout; migration carries portable state and reports the seams instead of hiding them.
 
@@ -189,7 +189,7 @@ editable source
          ├── packwright build --adapter codex       → AGENTS.md + .agents/skills/
          ├── packwright build --adapter claude-code → CLAUDE.md + .claude/skills/
          ├── packwright build --adapter cursor      → .cursor/rules/*.mdc
-         └── packwright build --adapter pi          → AGENTS.md + .agents/skills/ + .pi/<name>/references/
+         └── packwright build --adapter pi          → AGENTS.md + .agents/skills/ + .pi/<slug>/references/
 ```
 
 Every pack and installed target includes self-contained `.packwright/` metadata: an embedded source snapshot, artifact lock, and checker receipt. You can relocate a target and still run `migrate`, `doctor`, and `score` without its original build directory. Edit the canonical source in the work directory, not the installed target or `.packwright/source`; reconcile refreshes the embedded snapshot and managed projections from that work directory.

@@ -154,10 +154,10 @@ Pi Core 会把两个事件都标记为需要单独审核的 project extension，
 
 | runtime | 原生入口 | 可复用流程 |
 |---|---|---|
-| Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
+| Codex | `AGENTS.md` | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
 | Cursor | `.cursor/rules/<name>.mdc` | `.cursor/rules/<name>-save-context.mdc` |
-| Pi | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
+| Pi | `AGENTS.md` | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
 
 Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，adapter 拥有 runtime 布局；迁移负责携带可移植状态，并公开说明接缝。
 
@@ -170,7 +170,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
          ├── packwright build --adapter codex       → AGENTS.md + .agents/skills/
          ├── packwright build --adapter claude-code → CLAUDE.md + .claude/skills/
          ├── packwright build --adapter cursor      → .cursor/rules/*.mdc
-         └── packwright build --adapter pi          → AGENTS.md + .agents/skills/ + .pi/<name>/references/
+         └── packwright build --adapter pi          → AGENTS.md + .agents/skills/ + .pi/<slug>/references/
 ```
 
 每个 pack 和已安装 target 都包含自包含的 `.packwright/` 元数据：内嵌 source snapshot、artifact lock 与 checker receipt。即使移动 target、删除原 build 目录，也能继续运行 `migrate`、`doctor` 与 `score`。定制应编辑 work directory 中的 canonical source，而不是 installed target 或 `.packwright/source`；reconcile 会从 work directory 刷新内嵌快照和 managed projection。

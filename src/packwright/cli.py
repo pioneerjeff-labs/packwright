@@ -1378,17 +1378,40 @@ def _migration_path_summary(items, exact=False):
     if not items:
         return "none"
     if exact:
-        return ", ".join(item["path"] for item in items)
+        return ", ".join(_migration_item_summary_label(item, exact=True) for item in items)
     groups = {}
     for item in items:
-        path = item["path"]
-        parts = Path(path).parts
-        label = f"{parts[0]}/**" if len(parts) > 1 else path
+        label = _migration_item_summary_label(item)
         groups[label] = groups.get(label, 0) + 1
     return " | ".join(
-        f"{label} ({count} files)" if label.endswith("/**") else label
+        (
+            f"{label} ({count} files)"
+            if label.endswith("/**")
+            else f"{label} ({count} items)"
+            if count > 1
+            else label
+        )
         for label, count in sorted(groups.items())
     )
+
+
+def _migration_item_summary_label(item, exact=False):
+    path = item.get("path")
+    if path:
+        if exact:
+            return path
+        parts = Path(path).parts
+        return f"{parts[0]}/**" if len(parts) > 1 else path
+    automation_id = item.get("automation_id")
+    if automation_id:
+        behavior = " -> ".join(
+            str(value)
+            for value in (item.get("canonical_event"), item.get("effect"))
+            if value
+        )
+        suffix = f" ({behavior})" if behavior else ""
+        return f"automation:{automation_id}{suffix}"
+    return str(item.get("id") or "unidentified change")
 
 
 def _migration_conflict_summary(conflicts):

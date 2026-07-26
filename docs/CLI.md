@@ -165,10 +165,10 @@ Packwright 0.3 emits one canonical repository layout per runtime:
 
 | Adapter | Entry | Reusable procedure |
 |---|---|---|
-| Codex | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
+| Codex | `AGENTS.md` | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
 | Claude Code | `CLAUDE.md` | `.claude/skills/<name>/SKILL.md` |
 | Cursor | `.cursor/rules/<name>.mdc` | `.cursor/rules/<name>-save-context.mdc` |
-| Pi | `AGENTS.md` | `.agents/skills/<name>/SKILL.md` |
+| Pi | `AGENTS.md` | `.agents/skills/<slug>-<skill-id>/SKILL.md` |
 
 New Codex packs do not emit `.codex/skills/`. `doctor` reports that legacy
 Packwright layout and `doctor --fix` moves it to `.agents/skills/`, updating
@@ -176,7 +176,7 @@ managed manifest and routing references. If old and new copies both exist,
 doctor reports a conflict and does not overwrite either copy. Claude Code and
 Cursor already use their current canonical project layouts and require no path
 migration. Pi uses the shared Agent Skills location and stores Packwright
-reference material under `.pi/<name>/references/`; see [Pi Core adapter](PI.md)
+reference material under `.pi/<slug>/references/`; see [Pi Core adapter](PI.md)
 for its trust and extension boundaries.
 
 ## Migration safety contract
