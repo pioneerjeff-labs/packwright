@@ -4,13 +4,25 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${PYTHON:-python3}"
 TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-QUICK=false
+MODE=""
 LOCAL_PREPUBLISH=false
 OUTPUT_DIR=""
 
+set_mode() {
+  if [[ -n "$MODE" ]]; then
+    echo "release gate modes cannot be combined" >&2
+    exit 2
+  fi
+  MODE="$1"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --quick) QUICK=true ;;
+    --quick) set_mode quick ;;
+    --unit) set_mode unit ;;
+    --audit) set_mode audit ;;
+    --package-only) set_mode package ;;
+    --build-only) set_mode build ;;
     --local-prepublish) LOCAL_PREPUBLISH=true ;;
     --output-dir)
       shift
@@ -22,6 +34,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+MODE="${MODE:-full}"
+
 cd "$ROOT"
 mkdir -p "$TEMP_ROOT"
 export PYTHONPYCACHEPREFIX="$TEMP_ROOT/packwright-pycache"
@@ -31,14 +45,43 @@ if [[ "$LOCAL_PREPUBLISH" == true ]]; then
   test -z "$(git tag --list)"
 fi
 
-git diff --check
-"$PYTHON" -m compileall -q src tests scripts
-"$PYTHON" -m unittest discover -s tests
-"$PYTHON" scripts/audit_zero_network.py
-"$PYTHON" scripts/audit_public_tree.py
+run_unit_checks() {
+  git diff --check
+  "$PYTHON" -m compileall -q src tests scripts
+  "$PYTHON" -m unittest discover -s tests
+}
 
-if [[ "$QUICK" == true ]]; then
-  exit 0
+run_audits() {
+  git diff --check
+  "$PYTHON" scripts/audit_zero_network.py
+  "$PYTHON" scripts/audit_public_tree.py
+}
+
+case "$MODE" in
+  unit)
+    run_unit_checks
+    exit 0
+    ;;
+  audit)
+    run_audits
+    exit 0
+    ;;
+  quick)
+    run_unit_checks
+    "$PYTHON" scripts/audit_zero_network.py
+    "$PYTHON" scripts/audit_public_tree.py
+    exit 0
+    ;;
+  full)
+    run_unit_checks
+    "$PYTHON" scripts/audit_zero_network.py
+    "$PYTHON" scripts/audit_public_tree.py
+    ;;
+esac
+
+if [[ "$MODE" != "full" && "$MODE" != "package" && "$MODE" != "build" ]]; then
+  echo "unsupported release gate mode: $MODE" >&2
+  exit 2
 fi
 
 WORK="$(mktemp -d "$TEMP_ROOT/packwright-release.XXXXXX")"
@@ -47,14 +90,51 @@ cleanup() {
 }
 trap cleanup EXIT
 
+QUIET_INDEX=0
+run_quiet() {
+  local label="$1"
+  local log
+  shift
+  QUIET_INDEX=$((QUIET_INDEX + 1))
+  log="$WORK/command-$QUIET_INDEX.log"
+  if "$@" >"$log" 2>&1; then
+    echo "$label passed"
+    return 0
+  fi
+  echo "$label failed" >&2
+  cat "$log" >&2
+  return 1
+}
+
 if [[ -n "$OUTPUT_DIR" ]]; then
   DIST="$(mkdir -p "$OUTPUT_DIR" && cd "$OUTPUT_DIR" && pwd)"
 else
   DIST="$WORK/dist"
 fi
 
-"$PYTHON" -m build --outdir "$DIST"
-"$PYTHON" -m twine check "$DIST"/*
+write_receipt() {
+  "$PYTHON" - "$DIST" "$DIST/release-artifacts.json" <<'PY'
+import hashlib, json, pathlib, sys
+sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
+from packwright import __version__
+dist = pathlib.Path(sys.argv[1])
+items = []
+for path in sorted(dist.iterdir()):
+    if path.name == "release-artifacts.json" or not path.is_file():
+        continue
+    items.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size})
+pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": __version__, "artifacts": items}, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+run_quiet "distribution build" "$PYTHON" -m build --outdir "$DIST"
+run_quiet "distribution metadata check" "$PYTHON" -m twine check "$DIST"/*
+
+if [[ "$MODE" == "build" ]]; then
+  write_receipt
+  echo "release artifacts: $DIST"
+  exit 0
+fi
 
 SDIST="$(find "$DIST" -name 'packwright-*.tar.gz' -print -quit)"
 WHEEL="$(find "$DIST" -name 'packwright-*.whl' -print -quit)"
@@ -68,33 +148,22 @@ SDIR="$(find "$WORK/sdist" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 "$PYTHON" -m venv "$WORK/wheel-venv"
 "$WORK/wheel-venv/bin/python" -m pip install -q "$WHEEL"
 PW="$WORK/wheel-venv/bin/packwright"
-"$PW" --version
-"$PW" init --template code --name Nova -o "$WORK/work"
+run_quiet "wheel version smoke" "$PW" --version
+run_quiet "starter initialization smoke" "$PW" init --template code --name Nova -o "$WORK/work"
 for adapter in codex claude-code cursor pi; do
-  "$PW" build "$WORK/work" --adapter "$adapter" -o "$WORK/pack-$adapter"
-  "$PW" install "$WORK/pack-$adapter" --adapter "$adapter" --target "$WORK/target-$adapter"
-  "$PW" doctor "$WORK/target-$adapter"
-  "$PW" score "$WORK/target-$adapter"
+  run_quiet "$adapter build smoke" "$PW" build "$WORK/work" --adapter "$adapter" -o "$WORK/pack-$adapter"
+  run_quiet "$adapter install smoke" "$PW" install "$WORK/pack-$adapter" --adapter "$adapter" --target "$WORK/target-$adapter"
+  run_quiet "$adapter doctor smoke" "$PW" doctor "$WORK/target-$adapter"
+  run_quiet "$adapter score smoke" "$PW" score "$WORK/target-$adapter"
 done
-"$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --dry-run
-"$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --yes --accept-degraded
-"$PW" doctor "$WORK/migrated-cursor"
-"$PW" score "$WORK/migrated-cursor"
-"$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --dry-run
-"$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --yes --accept-degraded
-"$PW" doctor "$WORK/migrated-pi"
-"$PW" score "$WORK/migrated-pi"
+run_quiet "Cursor migration plan smoke" "$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --dry-run
+run_quiet "Cursor migration apply smoke" "$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --yes --accept-degraded
+run_quiet "Cursor migration doctor smoke" "$PW" doctor "$WORK/migrated-cursor"
+run_quiet "Cursor migration score smoke" "$PW" score "$WORK/migrated-cursor"
+run_quiet "Pi migration plan smoke" "$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --dry-run
+run_quiet "Pi migration apply smoke" "$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --yes --accept-degraded
+run_quiet "Pi migration doctor smoke" "$PW" doctor "$WORK/migrated-pi"
+run_quiet "Pi migration score smoke" "$PW" score "$WORK/migrated-pi"
 
-"$PYTHON" - "$DIST" "$DIST/release-artifacts.json" <<'PY'
-import hashlib, json, pathlib, sys
-sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
-from packwright import __version__
-dist = pathlib.Path(sys.argv[1])
-items = []
-for path in sorted(dist.iterdir()):
-    if path.name == "release-artifacts.json" or not path.is_file():
-        continue
-    items.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size})
-pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": __version__, "artifacts": items}, indent=2) + "\n", encoding="utf-8")
-PY
+write_receipt
 echo "release artifacts: $DIST"
