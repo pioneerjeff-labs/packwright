@@ -132,6 +132,70 @@ class ZeroNetworkAuditTest(unittest.TestCase):
 
 
 class PublicTreeAuditTest(unittest.TestCase):
+    def test_pi_docs_use_exact_skill_layout_and_trust_reload_caveat(self):
+        release_notes = (
+            ROOT / "docs" / "releases" / "0.3.0.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            ".agents/skills/<slug>-<skill-id>/SKILL.md",
+            release_notes,
+        )
+        self.assertNotIn(
+            ".agents/skills/<name>/SKILL.md",
+            release_notes,
+        )
+        cli_docs = (ROOT / "docs" / "CLI.md").read_text(encoding="utf-8")
+        self.assertEqual(
+            cli_docs.count(".agents/skills/<slug>-<skill-id>/SKILL.md"),
+            2,
+        )
+        self.assertNotIn(
+            ".agents/skills/<name>/SKILL.md",
+            cli_docs,
+        )
+        for readme_path in (ROOT / "README.md", ROOT / "README.zh-CN.md"):
+            readme = readme_path.read_text(encoding="utf-8")
+            self.assertEqual(
+                readme.count(".agents/skills/<slug>-<skill-id>/SKILL.md"),
+                2,
+            )
+            self.assertNotIn(
+                ".agents/skills/<name>/SKILL.md",
+                readme,
+            )
+
+        pi_docs = (ROOT / "docs" / "PI.md").read_text(encoding="utf-8")
+        self.assertIn(
+            ".agents/skills/<slug>-<skill-id>/SKILL.md",
+            pi_docs,
+        )
+        self.assertIn(
+            "/trust does not reload the current session",
+            pi_docs,
+        )
+        self.assertIn(
+            "restart pi before relying on project skills",
+            pi_docs,
+        )
+        public_docs = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (
+                ROOT / "README.md",
+                ROOT / "README.zh-CN.md",
+                ROOT / "docs" / "CLI.md",
+                ROOT / "docs" / "PI.md",
+                ROOT / "docs" / "releases" / "0.3.0.md",
+            )
+        )
+        self.assertNotIn(
+            ".pi/<name>/references",
+            public_docs,
+        )
+        self.assertIn(
+            ".pi/<slug>/references",
+            public_docs,
+        )
+
     def test_private_metadata_exception_is_commit_scoped(self):
         private_metadata = "person" + "@" + "gmail.com"
         allowed_revision = next(iter(public_audit.ALLOWED_PRIVATE_METADATA_COMMITS))

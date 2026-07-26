@@ -56,7 +56,11 @@ from packwright.core.adapter_layout import (
     adapter_skill_root,
     projected_skill_artifact,
 )
-from packwright.core.install import _update_existing_emotion_state
+from packwright.core.install import (
+    _emotion_legacy_retirement_plan,
+    _retire_legacy_emotion_states,
+    _update_existing_emotion_state,
+)
 from packwright.core.naming import character_user_name, slugify
 from packwright.core.pack_metadata import embed_pack_metadata
 from packwright.core.workspace_contract import (
@@ -362,6 +366,26 @@ class MvpChainTest(unittest.TestCase):
             self.assertIn("'Claude'", failed["message"])
             self.assertIn("runtime-neutral", failed["message"])
 
+    def test_projection_neutrality_allows_words_that_contain_pi(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            shutil.copytree(MECHANISM_PATH.parent, source_dir)
+            skill_path = source_dir / "skills" / "save-context" / "SKILL.md"
+            skill_path.write_text(
+                skill_path.read_text(encoding="utf-8")
+                + "\n- Use Pinpoint analysis and a Picture when they clarify the work.\n",
+                encoding="utf-8",
+            )
+            resolved = resolve_mechanism(load_mechanism(source_dir / "mechanism.yaml"))
+            pack = compile_to_codex_pack(resolved)
+            result = score_mechanism(resolved, pack, adapter="codex")
+            neutrality = next(
+                check
+                for check in result["checks"]
+                if check["id"] == "save_context_skill_projection_neutral"
+            )
+            self.assertTrue(neutrality["passed"], neutrality)
+
     def test_character_intake_generates_template_that_compiles_and_scores(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -549,7 +573,12 @@ character:
                 for index, from_adapter in enumerate(adapters):
                     to_adapter = adapters[(index + 1) % len(adapters)]
                     target = root / locale / f"{from_adapter}-to-{to_adapter}"
-                    migrated = migrate_target(installed[from_adapter], target, to_adapter=to_adapter)
+                    migrated = migrate_target(
+                        installed[from_adapter],
+                        target,
+                        to_adapter=to_adapter,
+                        accept_degraded=to_adapter == "cursor",
+                    )
                     self.assertTrue(migrated["ok"], (locale, from_adapter, to_adapter, migrated))
                     self.assertEqual(migrated["score"]["planned"]["score"], 100.0)
                     self.assertEqual(migrated["score"]["installed"]["score"], 100.0)
@@ -937,6 +966,7 @@ character:
                 "--target",
                 str(cursor_target_dir),
                 "--yes",
+                "--accept-degraded",
             )
             self.assertEqual(migrated.returncode, 0, migrated.stderr + migrated.stdout)
             self.assertEqual(json.loads(migrated.stdout)["to_adapter"], "cursor")
@@ -1110,7 +1140,17 @@ character:
             self.assertEqual(dry_run.returncode, 0, dry_run.stderr + dry_run.stdout)
             self.assertTrue(json.loads(dry_run.stdout)["ready"])
             self.assertFalse(migrated.exists())
-            applied = run_cli("migrate", str(relocated), "--to", "cursor", "--target", str(migrated), "--yes", "--json")
+            applied = run_cli(
+                "migrate",
+                str(relocated),
+                "--to",
+                "cursor",
+                "--target",
+                str(migrated),
+                "--yes",
+                "--accept-degraded",
+                "--json",
+            )
             self.assertEqual(applied.returncode, 0, applied.stderr + applied.stdout)
             self.assertEqual(run_cli("doctor", str(relocated)).returncode, 0)
             score = run_cli("score", str(relocated))
@@ -1431,6 +1471,45 @@ character:
         ):
             self.assertNotIn("template skeleton", text)
 
+    def test_migration_with_live_memory_keeps_a_clean_installed_score(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "codex-pack"
+            source_target = root / "codex-target"
+            destination = root / "claude-target"
+            _write_pack(
+                compile_to_codex_pack(
+                    resolved,
+                    references={"source_mechanism": str(MECHANISM_PATH)},
+                ),
+                pack_dir,
+            )
+            install_pack(pack_dir, source_target)
+            live_memory = {
+                "memory/pinned.md": "# Pinned Memory\n\n## Pins\n\n- Keep receipts honest.\n",
+                "memory/recent-activity.md": (
+                    "# Recent Activity\n\n"
+                    "Keep the newest 20 milestone pickup entries here.\n\n"
+                    "<!-- entries -->\n\n"
+                    "- 2026-07-26: prepared the migration hotfix.\n"
+                ),
+                "memory/todos.md": "# Todos\n\n## Current\n\n- Ship the migration hotfix.\n",
+            }
+            for rel_path, content in live_memory.items():
+                (source_target / rel_path).write_text(content, encoding="utf-8")
+
+            plan = plan_migration(
+                source_target,
+                destination,
+                to_adapter="claude-code",
+            )
+            self.assertEqual(plan.to_dict()["score"]["planned"]["score"], 100.0)
+            result = apply_migration(plan)
+            self.assertTrue(result["integrity"]["passed"], result)
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["score"]["installed"]["score"], 100.0)
+
     def test_install_pack_copies_manifest_artifacts_only_and_refuses_overwrite(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
@@ -1492,6 +1571,8 @@ character:
             _write_pack(current_pack, current_pack_dir)
             install_pack(old_pack_dir, target_dir)
             before_entry = (target_dir / "AGENTS.md").read_bytes()
+            provenance_path = target_dir / ".packwright" / "install-provenance.json"
+            before_provenance = provenance_path.read_bytes()
 
             env = os.environ.copy()
             env["PYTHONPATH"] = str(PROJECT_ROOT / "src")
@@ -1520,6 +1601,7 @@ character:
             self.assertIn("AGENTS.md", report["changes"]["overwrite"])
             self.assertTrue((target_dir / stale_hook).is_file())
             self.assertEqual((target_dir / "AGENTS.md").read_bytes(), before_entry)
+            self.assertEqual(provenance_path.read_bytes(), before_provenance)
 
             applied = apply_install(plan_install(current_pack_dir, target_dir, force=True))
             self.assertIn(stale_hook, applied["stale_removed"])
@@ -1992,6 +2074,115 @@ character:
                 {warning["id"] for warning in doctor_target(target_dir)["warnings"]},
             )
 
+    def test_legacy_state_retirement_refuses_an_existing_backup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir)
+            legacy = target_dir / ".emotion-engine" / "codex-state.json"
+            backup = legacy.with_name(legacy.name + ".bak")
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text('{"session_count":1}\n', encoding="utf-8")
+            backup.write_text("preserve existing backup\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "backup already exists",
+            ):
+                _emotion_legacy_retirement_plan(target_dir)
+            self.assertTrue(legacy.is_file())
+            self.assertEqual(
+                backup.read_text(encoding="utf-8"),
+                "preserve existing backup\n",
+            )
+
+    def test_legacy_state_retirement_refuses_diverged_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir)
+            canonical = target_dir / ".emotion-engine" / "state.json"
+            legacy = target_dir / ".emotion-engine" / "codex-state.json"
+            canonical.parent.mkdir(parents=True)
+            canonical.write_text('{"session_count":2}\n', encoding="utf-8")
+            legacy.write_text('{"session_count":1}\n', encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "differs from canonical state",
+            ):
+                _retire_legacy_emotion_states(target_dir)
+            self.assertEqual(
+                canonical.read_text(encoding="utf-8"),
+                '{"session_count":2}\n',
+            )
+            self.assertEqual(
+                legacy.read_text(encoding="utf-8"),
+                '{"session_count":1}\n',
+            )
+            self.assertFalse(
+                legacy.with_name(legacy.name + ".bak").exists()
+            )
+
+    def test_emotion_engine_to_pi_reports_no_destination_runtime_projection(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "emotion-engine"
+            pack_dir = root / "codex-pack"
+            source_target = root / "codex-target"
+            pi_target = root / "pi-target"
+            _write_fake_emotion_engine_sidecar(source)
+            _write_pack(
+                compile_to_codex_pack(
+                    resolved,
+                    references={"source_mechanism": str(MECHANISM_PATH)},
+                ),
+                pack_dir,
+            )
+            install_pack(
+                pack_dir,
+                source_target,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+
+            plan = plan_migration(source_target, pi_target, to_adapter="pi")
+            report = plan.to_dict()
+            exclusions = [
+                item
+                for item in report["changes"]["excluded"]
+                if item["id"] == "source_emotion_engine_projection_excluded"
+            ]
+            self.assertTrue(exclusions)
+            self.assertEqual(
+                {item["reason"] for item in exclusions},
+                {
+                    "pi has no Emotion Engine runtime projection; "
+                    "the source runtime artifact is not copied"
+                },
+            )
+            self.assertEqual(
+                report["emotion_engine_state"]["status"],
+                "snapshot_inert",
+            )
+
+            result = apply_migration(plan, accept_degraded=True)
+            self.assertTrue(result["ok"], result)
+            runtime_exclusions = [
+                item
+                for item in result["runtime_exclusions"]
+                if item["id"] == "source_emotion_engine_projection_excluded"
+            ]
+            self.assertTrue(runtime_exclusions)
+            self.assertEqual(
+                {item["reason"] for item in runtime_exclusions},
+                {
+                    "pi has no Emotion Engine runtime projection; "
+                    "the source runtime artifact is not copied"
+                },
+            )
+            self.assertEqual(
+                result["emotion_engine_state"]["status"],
+                "snapshot_inert",
+            )
+
     def test_reconcile_with_installed_sidecar_converges_after_apply(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         compilers = {
@@ -2217,6 +2408,7 @@ character:
                 to_adapter="cursor",
                 pack_dir=cursor_pack_dir,
                 slug="system",
+                accept_degraded=True,
             )
 
             self.assertEqual(result["from_adapter"], "codex")

@@ -1,12 +1,15 @@
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import yaml
 
 from packwright.adapters import compile_adapter_pack
 from packwright.checker import score_mechanism
+from packwright.cli import _print_migration_report
 from packwright.core import (
     PackwrightValidationError,
     apply_migration,
@@ -174,6 +177,10 @@ class PiAdapterTest(unittest.TestCase):
                 report["required_confirmations"][0]["automations"],
                 [item["automation_id"] for item in degraded],
             )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                _print_migration_report(report)
+            self.assertIn("automation:", output.getvalue())
             with self.assertRaisesRegex(
                 PackwrightValidationError,
                 "explicitly accept the behavior gap",
@@ -198,6 +205,61 @@ class PiAdapterTest(unittest.TestCase):
                 "keep this through Pi",
                 (codex_roundtrip / "memory" / "todos.md").read_text(encoding="utf-8"),
                 )
+
+    def test_cursor_migration_requires_explicit_destination_gap_acceptance(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = _source(root)
+            _, codex_pack = _embedded_pack(source, "codex")
+            source_pack = root / "codex-pack"
+            source_target = root / "codex-target"
+            cursor_target = root / "cursor-target"
+            _write_pack(codex_pack, source_pack)
+            install_pack(source_pack, source_target)
+
+            plan = plan_migration(source_target, cursor_target, to_adapter="cursor")
+            report = plan.to_dict()
+            gaps = [
+                item
+                for item in report["changes"]["degraded"]
+                if item.get("kind") == "canonical_runtime_capability_gap"
+            ]
+            self.assertEqual(
+                [item["automation_id"] for item in gaps],
+                ["user-prompt-current-todos"],
+            )
+            self.assertEqual(
+                gaps[0]["reason_code"],
+                "destination_missing_runtime_capability",
+            )
+            self.assertTrue(all("path" not in item for item in gaps))
+            self.assertEqual(
+                report["required_confirmations"][0]["automations"],
+                ["user-prompt-current-todos"],
+            )
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                _print_migration_report(report)
+            self.assertIn(
+                "automation:user-prompt-current-todos (user_prompt -> add_context)",
+                output.getvalue(),
+            )
+
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "explicitly accept the behavior gap",
+            ):
+                apply_migration(plan)
+            self.assertFalse(cursor_target.exists())
+
+            result = apply_migration(plan, accept_degraded=True)
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["status"], "applied_with_degradations")
+            hooks = json.loads(
+                (cursor_target / ".cursor" / "hooks.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(set(hooks["hooks"]), {"sessionStart"})
 
     def test_doctor_surfaces_pending_adoption_without_changing_structural_ok(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -265,7 +327,7 @@ class PiAdapterTest(unittest.TestCase):
                 "supporting_asset_candidate",
             )
 
-    def test_all_twelve_directed_adapter_migrations_plan_at_full_score(self):
+    def test_all_twelve_directed_adapter_migrations_plan_apply_and_report_changes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             source = _source(root)
@@ -285,11 +347,12 @@ class PiAdapterTest(unittest.TestCase):
                     if from_adapter == to_adapter:
                         continue
                     destination = root / f"migrate-{from_adapter}-to-{to_adapter}"
-                    report = plan_migration(
+                    plan = plan_migration(
                         installed[from_adapter],
                         destination,
                         to_adapter=to_adapter,
-                    ).to_dict()
+                    )
+                    report = plan.to_dict()
                     paths.append((from_adapter, to_adapter))
                     self.assertTrue(report["ready"], report)
                     self.assertEqual(report["score"]["planned"]["score"], 100.0)
@@ -298,7 +361,43 @@ class PiAdapterTest(unittest.TestCase):
                         for item in report["changes"]["degraded"]
                         if item.get("kind") == "canonical_runtime_capability_gap"
                     ]
-                    self.assertEqual(bool(gaps), to_adapter == "pi")
+                    self.assertEqual(bool(gaps), to_adapter in {"cursor", "pi"})
+                    if to_adapter == "pi":
+                        self.assertIn(
+                            "memory/todos.md",
+                            {item["path"] for item in report["changes"]["carried"]},
+                            (from_adapter, to_adapter, report),
+                        )
+                        rewritten = {
+                            item["path"]
+                            for item in report["changes"]["rewritten"]
+                        }
+                        if from_adapter in {"claude-code", "cursor"}:
+                            self.assertIn(
+                                "memory/index.md",
+                                rewritten,
+                                (from_adapter, to_adapter, report),
+                            )
+                        else:
+                            self.assertEqual(
+                                rewritten,
+                                set(),
+                                (from_adapter, to_adapter, report),
+                            )
+                        self.assertIn(
+                            "manifest.json",
+                            {item["path"] for item in report["changes"]["excluded"]},
+                            (from_adapter, to_adapter, report),
+                        )
+
+                    result = apply_migration(
+                        plan,
+                        accept_degraded=bool(report["changes"]["degraded"]),
+                    )
+                    self.assertTrue(result["ok"], (from_adapter, to_adapter, result))
+                    self.assertTrue(result["integrity"]["passed"])
+                    self.assertEqual(result["score"]["installed"]["score"], 100.0)
+                    self.assertTrue((destination / "manifest.json").is_file())
 
             self.assertEqual(len(paths), 12)
 

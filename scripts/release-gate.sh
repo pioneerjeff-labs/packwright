@@ -77,7 +77,7 @@ for adapter in codex claude-code cursor pi; do
   "$PW" score "$WORK/target-$adapter"
 done
 "$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --dry-run
-"$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --yes
+"$PW" migrate "$WORK/target-codex" --to cursor --target "$WORK/migrated-cursor" --yes --accept-degraded
 "$PW" doctor "$WORK/migrated-cursor"
 "$PW" score "$WORK/migrated-cursor"
 "$PW" migrate "$WORK/target-codex" --to pi --target "$WORK/migrated-pi" --dry-run

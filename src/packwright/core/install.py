@@ -1680,8 +1680,8 @@ def _plan_migration_changes(
                 "id": "destination_runtime_capability_gap",
                 "automations": [item["automation_id"] for item in destination_gaps],
                 "message": (
-                    f"{to_adapter} cannot implement these canonical automations without "
-                    "a separately reviewed runtime extension"
+                    f"{to_adapter} cannot reproduce these canonical automations "
+                    "with its current projected runtime capabilities"
                 ),
             }
         )
@@ -1810,7 +1810,7 @@ def _plan_migration_exclusions(
             item = {
                 "id": "source_emotion_engine_projection_excluded",
                 "path": rel_path,
-                "reason": f"the {to_adapter} target receives its own runtime projection",
+                "reason": _emotion_engine_projection_exclusion_reason(to_adapter),
             }
         else:
             item = {
@@ -1850,8 +1850,6 @@ def _plan_runtime_automation_degradations(source_target_dir, source_manifest, fr
 
 
 def _plan_destination_runtime_capability_gaps(target_manifest, from_adapter, to_adapter):
-    if to_adapter != "pi":
-        return []
     feature = target_manifest.get("features", {}).get("automations", {})
     records = feature.get("records", []) if isinstance(feature, dict) else []
     return [
@@ -1862,10 +1860,14 @@ def _plan_destination_runtime_capability_gaps(target_manifest, from_adapter, to_
             "canonical_event": record.get("canonical_event"),
             "effect": record.get("effect"),
             "status": record.get("status"),
-            "reason_code": "destination_requires_reviewed_extension",
+            "reason_code": (
+                "destination_requires_reviewed_extension"
+                if record.get("status") == "unavailable_requires_extension"
+                else "destination_missing_runtime_capability"
+            ),
             "reason": record.get(
                 "reason",
-                "Pi Core requires a separately reviewed extension for this behavior",
+                f"{to_adapter} cannot reproduce this canonical automation",
             ),
             "source_adapter": from_adapter,
             "destination_adapter": to_adapter,
@@ -1874,6 +1876,15 @@ def _plan_destination_runtime_capability_gaps(target_manifest, from_adapter, to_
         for record in records
         if str(record.get("status", "")).startswith("unavailable_")
     ]
+
+
+def _emotion_engine_projection_exclusion_reason(to_adapter):
+    if not emotion_engine_runtime_supported(to_adapter):
+        return (
+            f"{to_adapter} has no Emotion Engine runtime projection; "
+            "the source runtime artifact is not copied"
+        )
+    return f"replaced by the {to_adapter} Emotion Engine runtime projection"
 
 
 def _migration_required_confirmations(changes):
@@ -2718,7 +2729,7 @@ def _migration_runtime_exclusions(source_target_dir, source_manifest, from_adapt
             exclusions.append({
                 "id": "source_emotion_engine_projection_excluded",
                 "path": rel_path,
-                "reason": f"{to_adapter} receives its own runtime projection",
+                "reason": _emotion_engine_projection_exclusion_reason(to_adapter),
             })
     return exclusions
 
