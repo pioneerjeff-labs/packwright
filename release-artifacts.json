@@ -1,15 +1,15 @@
 {
-  "version": "0.3.0",
+  "version": "0.3.1",
   "artifacts": [
     {
-      "file": "packwright-0.3.0-py3-none-any.whl",
-      "sha256": "6bae5cfff833467af298751a3d00f0c3095f614c0fba7b6cf68bec85ba1ef9ae",
-      "size": 141876
+      "file": "packwright-0.3.1-py3-none-any.whl",
+      "sha256": "53cec918949235a2ed6d7887a32376f93286387aa4ef17b25838be639bd25ad8",
+      "size": 142433
     },
     {
-      "file": "packwright-0.3.0.tar.gz",
-      "sha256": "30651489cd645b68f9d19cda63161289f212aeeed9d73e6ceb9277c445db10d7",
-      "size": 620752
+      "file": "packwright-0.3.1.tar.gz",
+      "sha256": "57dace95cc88538fda5f0ceb37b2338c469d717e9a1fe9bca5d1453e4258cf7f",
+      "size": 624499
     }
   ]
 }
