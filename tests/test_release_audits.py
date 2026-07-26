@@ -372,8 +372,8 @@ class PublicTreeAuditTest(unittest.TestCase):
 
         readme = readmes[0].read_text(encoding="utf-8")
         chinese_readme = readmes[1].read_text(encoding="utf-8")
-        self.assertIn("python -m pip install packwright==0.3.0", readme)
-        self.assertIn("python -m pip install packwright==0.3.0", chinese_readme)
+        self.assertIn("python -m pip install packwright==0.3.1", readme)
+        self.assertIn("python -m pip install packwright==0.3.1", chinese_readme)
         self.assertIn("The plan names five kinds of paths:", readme)
         self.assertIn("迁移计划会明确列出五类路径：", chinese_readme)
         self.assertIn("Build your agent once. Carry it everywhere.", readme)
@@ -452,7 +452,7 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertIn('data-adapter="claude-code"', document)
             self.assertIn('>Claude Code</button>', document)
             self.assertLess(document.index('data-adapter="pi"'), document.index('data-adapter="claude-code"'))
-            self.assertIn("python -m pip install packwright==0.3.0", document)
+            self.assertIn("python -m pip install packwright==0.3.1", document)
 
         demo = (ROOT / "site" / "demo.js").read_text(encoding="utf-8")
         self.assertIn("const englishLines = [", demo)
