@@ -37,9 +37,10 @@
 <p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
 > [!TIP]
-> **New in 0.3.0: Pi Core support.** Build native `AGENTS.md` and project Agent
-> Skills for Pi, or migrate portable state to and from Pi with explicit
-> capability-gap receipts.
+> **Current release: 0.3.1.** Migration now surfaces destination capability
+> gaps for Cursor as well as Pi, requires explicit degraded acceptance, and
+> renders pathless automation receipts without crashing. Pi Core support was
+> introduced in 0.3.0.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
@@ -49,7 +50,7 @@
 The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, Cursor, or Pi:
 
 ```bash
-python -m pip install packwright==0.3.0
+python -m pip install packwright==0.3.1
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
@@ -216,11 +217,12 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.3.0` is the current stable release and the first release with Pi Core
-support; `0.1.0` remains the first stable baseline. Packwright is local tooling,
-not cloud sync, and its plain-file structure score is separate from real
-runtime compatibility. Pi project trust and lifecycle extensions remain
-explicit runtime activation steps rather than generated claims.
+`0.3.1` is the current stable maintenance release; `0.3.0` was the first
+release with Pi Core support, and `0.1.0` remains the first stable baseline.
+Packwright is local tooling, not cloud sync, and its plain-file structure score
+is separate from real runtime compatibility. Pi project trust and lifecycle
+extensions remain explicit runtime activation steps rather than generated
+claims.
 
 ## Documentation
 
@@ -232,6 +234,7 @@ explicit runtime activation steps rather than generated claims.
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.1 release notes](docs/releases/0.3.1.md)
 - [0.3.0 release notes](docs/releases/0.3.0.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)
 - [0.1.2 release notes](docs/releases/0.1.2.md)

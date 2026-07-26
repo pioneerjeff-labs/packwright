@@ -4,6 +4,27 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.3.1] - 2026-07-26
+
+### Fixed
+
+- Treat unavailable destination automations as explicit migration capability
+  gaps for Cursor as well as Pi. Non-interactive apply now requires
+  `--accept-degraded` after review instead of silently dropping prompt-time
+  behavior.
+- Render pathless automation gaps as readable `automation:<id>` receipt items
+  instead of crashing the human-readable migration report after planning or
+  apply.
+- Accept populated pinned, recent-activity, and todo memory files as user-ready
+  state, while keeping placeholder detection and structural checks intact.
+- Match runtime names at token boundaries so ordinary words such as `Pinpoint`
+  and `Picture` do not create false Pi projection failures.
+- Report Emotion Engine migrations to Pi honestly: portable state remains inert,
+  and no Pi runtime projection is claimed.
+- Cover legacy Emotion Engine backup and diverged-state retirement guards,
+  applied receipts across all 12 directed migrations, dry-run provenance
+  preservation, and the exact Pi skill, reference, and trust-reload guidance.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added
@@ -133,6 +154,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.3.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.2.0
 [0.1.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.1.2
