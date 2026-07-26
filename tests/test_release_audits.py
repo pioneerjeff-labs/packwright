@@ -281,19 +281,32 @@ class PublicTreeAuditTest(unittest.TestCase):
     def test_ci_scans_pr_head_instead_of_github_synthetic_merge(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         self.assertIn(
-            "PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha }}",
+            "PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}",
             workflow,
         )
         self.assertEqual(
             workflow.count('git fetch --no-tags origin "pull/${{ github.event.number }}/head"'),
-            2,
+            1,
         )
 
     def test_release_gate_declares_portable_temp_and_output_dir(self):
         script = (ROOT / "scripts" / "release-gate.sh").read_text(encoding="utf-8")
         self.assertIn('TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"', script)
-        self.assertIn("--output-dir", script)
+        for mode in ("--unit", "--audit", "--package-only", "--build-only", "--output-dir"):
+            self.assertIn(mode, script)
+        self.assertIn("run_quiet()", script)
+        self.assertIn('echo "$label failed" >&2', script)
         self.assertNotIn("/private/tmp", script)
+
+    def test_ci_avoids_duplicate_branch_pushes_and_repeated_audits(self):
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("push:\n    branches: [main]", workflow)
+        self.assertIn("cancel-in-progress: true", workflow)
+        self.assertIn("scripts/release-gate.sh --unit", workflow)
+        self.assertEqual(workflow.count("scripts/release-gate.sh --audit"), 1)
+        self.assertEqual(workflow.count("scripts/release-gate.sh --package-only"), 1)
+        self.assertIn("name: packwright-${{ steps.package_version.outputs.value }}-${{ github.sha }}", workflow)
+        self.assertNotIn("name: packwright-0.2.0", workflow)
 
     def test_release_workflow_uses_isolated_trusted_publishing_job(self):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
@@ -301,11 +314,15 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertNotIn("workflow_dispatch", workflow)
         self.assertIn("Verify release tag matches package version", workflow)
         self.assertIn('test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION"', workflow)
-        self.assertIn('scripts/release-gate.sh --output-dir "$RUNNER_TEMP/packwright-dist"', workflow)
+        self.assertIn('scripts/release-gate.sh --build-only --output-dir "$RUNNER_TEMP/packwright-dist"', workflow)
         self.assertIn("needs: build", workflow)
         self.assertIn("name: pypi", workflow)
         self.assertIn("id-token: write", workflow)
         self.assertIn("pypa/gh-action-pypi-publish@release/v1", workflow)
+        self.assertIn("name: publication-receipt", workflow)
+        self.assertIn('gh release upload "$GITHUB_REF_NAME" receipt/release-artifacts.json', workflow)
+        self.assertIn("needs: publish", workflow)
+        self.assertFalse((ROOT / "release-artifacts.json").exists())
 
         build_job, publish_job = workflow.split("\n  publish:\n", 1)
         self.assertNotIn("id-token: write", build_job)

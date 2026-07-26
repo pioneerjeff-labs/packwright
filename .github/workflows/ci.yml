@@ -2,16 +2,23 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
-  PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha }}
+  PACKWRIGHT_PUBLIC_AUDIT_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   test:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -19,18 +26,16 @@ jobs:
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Fetch pull request head for public audit
-        if: github.event_name == 'pull_request'
-        run: git fetch --no-tags origin "pull/${{ github.event.number }}/head"
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install -e '.[test]'
-      - run: scripts/release-gate.sh --quick
+      - run: scripts/release-gate.sh --unit
 
-  package:
+  audit:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -42,12 +47,43 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
+      - run: scripts/release-gate.sh --audit
+
+  package:
+    if: github.event_name != 'push'
+    needs: [test, audit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install -e '.[test]'
-      - run: scripts/release-gate.sh --output-dir "$RUNNER_TEMP/packwright-dist"
+      - run: scripts/release-gate.sh --package-only --output-dir "$RUNNER_TEMP/packwright-dist"
+      - name: Read package version
+        id: package_version
+        run: echo "value=$(python -c 'import packwright; print(packwright.__version__)')" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: packwright-0.2.0
+          name: packwright-${{ steps.package_version.outputs.value }}-${{ github.sha }}
           path: |
             ${{ runner.temp }}/packwright-dist/*.whl
             ${{ runner.temp }}/packwright-dist/*.tar.gz
             ${{ runner.temp }}/packwright-dist/release-artifacts.json
+
+  main:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e '.[test]'
+      - run: scripts/release-gate.sh --quick
