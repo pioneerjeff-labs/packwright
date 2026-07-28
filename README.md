@@ -50,12 +50,28 @@
 The shortest interface is a conversation. Install Packwright, then paste the operating prompt into Codex, Claude Code, Cursor, or Pi:
 
 ```bash
-python -m pip install packwright==0.3.1
+python -m pip install packwright
+packwright --version
 ```
 
 **[Open the paste-ready agent prompt →](docs/USE_WITH_YOUR_AGENT.md)**
 
 For a new agent, describe what it should do and choose its name. The prompt makes your coding agent draft a canonical intake, confirm it with you, build the pack, and verify the installed target. For migration, it previews the receipt and waits for approval before writing.
+
+Prefer the direct CLI? This fresh-path sequence shows the preset, creates a
+Codex target, and verifies it:
+
+```bash
+packwright presets code
+packwright init --template code --name Nova --user-name Morgan -o work/nova
+packwright build work/nova --adapter codex -o pack/nova-codex
+packwright install pack/nova-codex --adapter codex --target project/nova-codex
+packwright doctor project/nova-codex
+packwright score project/nova-codex
+```
+
+Have a first-run receipt, an unexpected classification, or a rough edge?
+**[Share it in the Packwright feedback discussion →](https://github.com/pioneerjeff-labs/packwright/discussions/9)**
 
 ## Create your own
 
@@ -129,6 +145,21 @@ Preview a move from Claude Code to Codex. The destination is not created during 
 packwright migrate project/nova-claude \
   --to codex \
   --target project/nova-codex --dry-run
+```
+
+A real `0.3.1` Codex → Cursor dry run reports the destination capability gap
+instead of silently treating it as portable behavior (summary trimmed from the
+path-level receipt):
+
+```text
+Packwright migration planned: codex -> cursor
+  generated: 53 | .cursor/** (20 files) | .packwright/** (30 files) | manifest.json | scripts/** (2 files)
+  carried: 24 | knowledge/** (2 files) | memory/** (11 files) | sources/** (4 files) | workspace/** (7 files)
+  rewritten: 2 | memory/index.md, memory/pinned.md
+  degraded: 1 | automation:user-prompt-current-todos (user_prompt -> add_context)
+  excluded: 50 | .agents/** (1 files) | .codex/** (17 files) | .packwright/** (30 files) | AGENTS.md | manifest.json
+  score: planned 100.0 (pass)
+No files written. Use --json for the complete path-level receipt.
 ```
 
 The plan names five kinds of paths:

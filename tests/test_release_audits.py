@@ -389,8 +389,26 @@ class PublicTreeAuditTest(unittest.TestCase):
 
         readme = readmes[0].read_text(encoding="utf-8")
         chinese_readme = readmes[1].read_text(encoding="utf-8")
-        self.assertIn("python -m pip install packwright==0.3.1", readme)
-        self.assertIn("python -m pip install packwright==0.3.1", chinese_readme)
+        self.assertIn("python -m pip install packwright", readme)
+        self.assertIn("python -m pip install packwright", chinese_readme)
+        self.assertNotIn("python -m pip install packwright==", readme)
+        self.assertNotIn("python -m pip install packwright==", chinese_readme)
+        self.assertIn(
+            "https://github.com/pioneerjeff-labs/packwright/discussions/9",
+            readme,
+        )
+        self.assertIn(
+            "https://github.com/pioneerjeff-labs/packwright/discussions/9",
+            chinese_readme,
+        )
+        self.assertIn(
+            "degraded: 1 | automation:user-prompt-current-todos",
+            readme,
+        )
+        self.assertIn(
+            "degraded: 1 | automation:user-prompt-current-todos",
+            chinese_readme,
+        )
         self.assertIn("The plan names five kinds of paths:", readme)
         self.assertIn("迁移计划会明确列出五类路径：", chinese_readme)
         self.assertIn("Build your agent once. Carry it everywhere.", readme)

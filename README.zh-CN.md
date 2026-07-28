@@ -49,12 +49,28 @@
 最短的使用界面是一段对话。安装 Packwright，然后把现成提示词粘贴给 Codex、Claude Code、Cursor 或 Pi：
 
 ```bash
-python -m pip install packwright==0.3.1
+python -m pip install packwright
+packwright --version
 ```
 
 **[打开可直接粘贴的 agent 操作提示词 →](docs/USE_WITH_YOUR_AGENT.md)**
 
 创建新 agent 时，你只需描述它要做什么并亲自选名字。提示词会让 coding agent 起草 canonical intake、交给你确认、构建 pack，并验证最终 target；迁移时则会先预览收据，等待确认后再写入。
+
+更想直接使用 CLI？下面这条 fresh-path 路径会先展示 preset，再创建并验证
+Codex target：
+
+```bash
+packwright presets code
+packwright init --template code --name Nova --user-name Morgan -o work/nova
+packwright build work/nova --adapter codex -o pack/nova-codex
+packwright install pack/nova-codex --adapter codex --target project/nova-codex
+packwright doctor project/nova-codex
+packwright score project/nova-codex
+```
+
+跑出了第一份收据、意外分类或不顺手的步骤？
+**[到 Packwright 反馈讨论里告诉我 →](https://github.com/pioneerjeff-labs/packwright/discussions/9)**
 
 ## 创建你自己的 agent
 
@@ -111,6 +127,20 @@ packwright install pack/nova-claude --adapter claude-code --target project/nova-
 packwright migrate project/nova-claude \
   --to codex \
   --target project/nova-codex --dry-run
+```
+
+下面是一份真实的 `0.3.1` Codex → Cursor dry run。目标端能力缺口会明确
+标成 degraded，不会被静默当成可移植行为（从 path-level 收据中精简）：
+
+```text
+Packwright migration planned: codex -> cursor
+  generated: 53 | .cursor/** (20 files) | .packwright/** (30 files) | manifest.json | scripts/** (2 files)
+  carried: 24 | knowledge/** (2 files) | memory/** (11 files) | sources/** (4 files) | workspace/** (7 files)
+  rewritten: 2 | memory/index.md, memory/pinned.md
+  degraded: 1 | automation:user-prompt-current-todos (user_prompt -> add_context)
+  excluded: 50 | .agents/** (1 files) | .codex/** (17 files) | .packwright/** (30 files) | AGENTS.md | manifest.json
+  score: planned 100.0 (pass)
+No files written. Use --json for the complete path-level receipt.
 ```
 
 迁移计划会明确列出五类路径：
