@@ -4,6 +4,26 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+### Changed
+
+- Make canonical `operating/principles.md` the single source for entry-file
+  Working Rules across Codex, Claude Code, Cursor, and Pi. The compiler strips
+  the source H1, nests its remaining headings under Working Rules, and uses the
+  previous adapter defaults only when the canonical file is empty.
+- Report destination-only portable files that `migrate --force` will remove,
+  require an explicit removal confirmation in the plan, and reject apply when
+  those files change after planning.
+
+### Fixed
+
+- Accept populated session-index files as user-ready live memory, matching the
+  existing pinned, recent-activity, and todo behavior.
+- Mark truncated `memory_view` context with its byte budget and canonical source
+  path while keeping the complete producer payload within `budget_bytes`.
+- Score reconcile receipts from the installed live tree instead of re-scoring
+  the planned pack, so preserved portable-state failures cannot produce a false
+  green installed score.
+
 ## [0.3.1] - 2026-07-26
 
 ### Fixed

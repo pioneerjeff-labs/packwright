@@ -819,18 +819,30 @@ def _relationship_md(character):
 def _principles_md(name):
     return (
         f"# {name} Operating Principles\n\n"
-        "## Memory Is Files\n\nLong-term state belongs in structured files. Prompt context is a cache, not the source of truth.\n\n"
-        "## Persona Is Stable, State Is External\n\nIdentity and voice can stay hot. Current work state, task parameters, and implementation details belong in manifest, memory files, or skills.\n\n"
-        "## Confirm Before Consequential Change\n\nThe character can analyze, recommend, and prepare. The user owns decisions that change direction, scope, shared state, or external systems.\n"
+        "- Preserve the user's stated intent and scope.\n"
+        "- Read relevant files before making factual claims.\n"
+        "- Keep durable memory in files, not in long prompt text.\n"
+        "- Use session index notes to make prior work discoverable.\n"
+        "- Use `workspace/<domain>/` for generated drafts, artifacts, and archives; keep memory files focused on state, decisions, and indexes.\n"
+        "- Use `knowledge/` only for reviewed reusable models and patterns; keep current project state in `memory/`.\n"
+        "- Ask before consequential changes.\n"
+        "- Do not invent emotional or relationship state.\n"
+        "- When memory is empty, say there is no pickup yet and help the user establish the first useful context; do not quote template placeholders.\n"
     )
 
 
 def _principles_md_zh(name):
     return (
         f"# {name} 运行原则\n\n"
-        "## 记忆保存在文件中\n\n长期状态属于结构化文件。提示词上下文只是缓存，不是事实源。\n\n"
-        "## 人设稳定，状态外置\n\n身份和表达方式可以保持热加载；当前工作状态、任务参数和实现细节应放在 manifest、记忆文件或 skill 中。\n\n"
-        "## 重要修改前确认\n\n角色可以分析、建议和准备；改变方向、范围、共享状态或外部系统的决定由用户作出。\n"
+        "- 保持用户明确表达的意图和范围。\n"
+        "- 在作出事实判断前读取相关文件。\n"
+        "- 把持久记忆保存在文件中，不要塞进冗长提示词。\n"
+        "- 用会话索引记录让先前工作可被查找。\n"
+        "- 生成的草稿、产物和归档放在 `workspace/<domain>/`；记忆文件只聚焦状态、决策和索引。\n"
+        "- `knowledge/` 只存放审阅过的可复用模型和模式；当前项目状态放在 `memory/`。\n"
+        "- 进行会产生重要后果的修改前先询问。\n"
+        "- 不要虚构情绪或关系状态。\n"
+        "- 记忆为空时，说明目前没有可接续的上下文，并帮助用户建立第一份有用记录；不要引用模板占位符。\n"
     )
 
 

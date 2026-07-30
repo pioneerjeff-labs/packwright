@@ -65,6 +65,134 @@ def _write_pack(pack, directory):
 
 
 class RuntimeAutomationTest(unittest.TestCase):
+    def test_canonical_principles_are_the_single_entry_working_rules_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            principles = source / "operating" / "principles.md"
+            principles.write_text(
+                "# Rebecca Custom Principles\n\n"
+                "## Hard Rules\n\n"
+                "- CANONICAL-HOT-RULE\n"
+                "- Run `packwright reconcile` when the installed projection is stale.\n",
+                encoding="utf-8",
+            )
+            resolved = resolve_mechanism(load_mechanism(source))
+            entry_paths = {
+                "claude-code": "CLAUDE.md",
+                "codex": "AGENTS.md",
+                "cursor": ".cursor/rules/rebecca.mdc",
+                "pi": "AGENTS.md",
+            }
+            for adapter, entry_path in entry_paths.items():
+                with self.subTest(adapter=adapter):
+                    pack = compile_adapter_pack(adapter, resolved)
+                    entry = pack[entry_path]
+                    self.assertIn("## Working Rules", entry)
+                    self.assertIn("### Hard Rules", entry)
+                    self.assertIn("CANONICAL-HOT-RULE", entry)
+                    self.assertIn("`packwright reconcile`", entry)
+                    self.assertNotIn("# Rebecca Custom Principles", entry)
+                    self.assertNotIn(
+                        "- Preserve the user's stated intent and scope.",
+                        entry,
+                    )
+                    self.assertTrue(
+                        score_mechanism(resolved, pack, adapter=adapter)["passed"]
+                    )
+
+            principles.write_text("", encoding="utf-8")
+            fallback = compile_adapter_pack("codex", resolved)["AGENTS.md"]
+            self.assertIn(
+                "- Preserve the user's stated intent and scope.",
+                fallback,
+            )
+
+    def test_entry_implementation_scope_matching_keeps_exact_case_semantics(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            principles = source / "operating" / "principles.md"
+            resolved = resolve_mechanism(load_mechanism(source))
+            for token in ("Packwright", "MVP"):
+                with self.subTest(token=token):
+                    principles.write_text(
+                        f"# Rebecca Principles\n\n- {token} implementation detail.\n",
+                        encoding="utf-8",
+                    )
+                    pack = compile_adapter_pack("codex", resolved)
+                    result = score_mechanism(resolved, pack, adapter="codex")
+                    failed = {
+                        check["id"]
+                        for check in result["checks"]
+                        if not check["passed"]
+                    }
+                    self.assertIn("entry_excludes_implementation_scope", failed)
+
+    def test_memory_view_marks_utf8_truncation_within_budget_for_three_runners(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            resolved = resolve_mechanism(load_mechanism(source))
+            budget = 128
+            resolved["automations"] = [
+                {
+                    "id": "session-start-bounded-todos",
+                    "scope": "local",
+                    "event": "session_start",
+                    "effect": "add_context",
+                    "producer": {
+                        "kind": "memory_view",
+                        "source": "memory/todos.md",
+                        "select": {"max_bytes": budget},
+                    },
+                    "budget_bytes": budget,
+                }
+            ]
+            for adapter in ("claude-code", "codex", "cursor"):
+                with self.subTest(adapter=adapter):
+                    pack = compile_adapter_pack(adapter, resolved)
+                    manifest = json.loads(pack["manifest.json"])
+                    target = Path(tmpdir) / f"bounded-{adapter}"
+                    _write_pack(pack, target)
+                    todos = target / "memory" / "todos.md"
+                    todos.write_text(("待办事项🙂\n" * 200), encoding="utf-8")
+                    runner = target / manifest["features"]["automations"]["runner"]["path"]
+                    result = subprocess.run(
+                        ["python3", str(runner), "session_start"],
+                        cwd=target,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    context = (
+                        json.loads(result.stdout)["additional_context"]
+                        if adapter == "cursor"
+                        else result.stdout.rstrip("\n")
+                    )
+                    header = "[packwright:session-start-bounded-todos]\n"
+                    self.assertTrue(context.startswith(header), context)
+                    payload = context[len(header):]
+                    self.assertIn("[truncated: budget 128/", payload)
+                    self.assertIn(
+                        "read memory/todos.md for the rest]",
+                        payload,
+                    )
+                    self.assertLessEqual(len(payload.encode("utf-8")), budget)
+
+                    todos.write_text("short todo\n", encoding="utf-8")
+                    short_result = subprocess.run(
+                        ["python3", str(runner), "session_start"],
+                        cwd=target,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    short_context = (
+                        json.loads(short_result.stdout)["additional_context"]
+                        if adapter == "cursor"
+                        else short_result.stdout.rstrip("\n")
+                    )
+                    self.assertNotIn("[truncated", short_context)
+                    self.assertTrue(short_context.endswith("short todo"))
+
     def test_three_adapters_project_honest_local_capabilities_and_runners_execute(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             source = _source(tmpdir)
@@ -195,6 +323,32 @@ class RuntimeAutomationTest(unittest.TestCase):
             runner = target / ".codex" / "hooks" / "packwright_automation.py"
             self.assertIn("user-prompt-fresh-clock", runner.read_text(encoding="utf-8"))
             self.assertTrue(Path(receipt["receipt"]).is_file())
+
+    def test_reconcile_installed_score_reads_live_portable_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            _, pack = _embedded_pack(source, "codex")
+            pack_dir = Path(tmpdir) / "pack"
+            target = Path(tmpdir) / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+            (target / "memory" / "session-index.md").write_text(
+                "# Session Index\n\nNo usable empty or live state.\n",
+                encoding="utf-8",
+            )
+
+            plan = plan_reconcile(target, source)
+            self.assertTrue(plan.to_dict()["score"]["planned"]["passed"])
+            receipt = apply_reconcile(plan)
+            self.assertTrue(receipt["doctor"]["ok"], receipt)
+            self.assertFalse(receipt["score"]["installed"]["passed"], receipt)
+            self.assertFalse(receipt["ok"], receipt)
+            failed = {
+                check["id"]
+                for check in receipt["score"]["installed"]["checks"]
+                if not check["passed"]
+            }
+            self.assertIn("empty_memory_skeleton_is_user_ready", failed)
 
     def test_reconcile_applies_source_only_save_context_as_managed_update(self):
         with tempfile.TemporaryDirectory() as tmpdir:

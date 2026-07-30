@@ -1111,6 +1111,18 @@ def apply_migration(plan, accept_degraded=False):
                 *[issue["message"] for issue in source_integrity["issues"]],
             ]
         )
+    destination_integrity = _verify_migration_destination(
+        plan.report["changes"],
+        plan.source_target_dir,
+        plan.target_dir,
+    )
+    if not destination_integrity["passed"]:
+        raise PackwrightValidationError(
+            [
+                "migration destination changed after the plan was prepared; prepare a new plan before writing",
+                *[issue["message"] for issue in destination_integrity["issues"]],
+            ]
+        )
     conflicts = _migration_plan_conflicts(plan.target_dir, plan.pack_dir)
     if conflicts and not plan.force:
         raise PackwrightValidationError(
@@ -1174,6 +1186,7 @@ def apply_migration(plan, accept_degraded=False):
             "ok": integrity["passed"] and installed_score["passed"],
             "integrity": integrity,
             "source_integrity": source_integrity,
+            "destination_integrity": destination_integrity,
             "accepted_degradations": copy.deepcopy(degraded) if accept_degraded else [],
             "source_target_dir": str(plan.source_target_dir),
             "target_dir": str(plan.target_dir),
@@ -1326,8 +1339,11 @@ def apply_reconcile(plan, accept_degraded=False):
         )
         _refresh_artifact_lock(plan.target_dir)
 
+    installed_pack = _read_installed_pack(plan.target_dir)
     installed_score = _score_migration_pack(
-        plan.resolved, plan.pack, plan.report["adapter"]
+        plan.resolved,
+        installed_pack,
+        plan.report["adapter"],
     )
     installed_spec = resolve_source_path(
         plan.target_dir, SPEC_PATH, "reconciled canonical spec"
@@ -1624,6 +1640,11 @@ def _plan_migration_changes(
                 ),
             }
         )
+    removed_destination_state = _plan_destination_portable_state_removals(
+        source_target_dir,
+        target_dir,
+        source_files,
+    )
 
     warnings = []
     if include_emotion_state and emotion_state_source:
@@ -1741,6 +1762,7 @@ def _plan_migration_changes(
             "generated": sorted(generated_by_path.values(), key=lambda item: item["path"]),
             "carried": sorted(carried, key=lambda item: item["path"]),
             "rewritten": sorted(rewritten, key=lambda item: item["path"]),
+            "removed_destination_state": removed_destination_state,
             "degraded": degraded,
             "excluded": excluded,
         },
@@ -1768,6 +1790,53 @@ def _portable_source_files(source_target_dir):
             if resolved.is_file():
                 result[rel_path] = resolved
     return result
+
+
+def _plan_destination_portable_state_removals(
+    source_target_dir,
+    target_dir,
+    source_files,
+):
+    if not target_dir.is_dir():
+        return []
+    source_paths = set(source_files)
+    removed = []
+    for root_name in PORTABLE_STATE_DIRS:
+        source_root = source_target_dir / root_name
+        destination_root = target_dir / root_name
+        if not source_root.exists() or not destination_root.exists():
+            continue
+        resolve_source_path(
+            target_dir,
+            root_name,
+            "portable destination state root",
+            require_file=False,
+        )
+        if not destination_root.is_dir():
+            raise PackwrightValidationError(
+                [f"destination portable state path is not a directory: {destination_root}"]
+            )
+        for path in sorted(destination_root.rglob("*")):
+            rel_path = str(path.relative_to(target_dir))
+            resolved = resolve_source_path(
+                target_dir,
+                rel_path,
+                "portable destination state",
+                require_file=False,
+            )
+            if not resolved.is_file() or rel_path in source_paths:
+                continue
+            removed.append(
+                {
+                    "path": rel_path,
+                    "sha256": _file_sha256(resolved),
+                    "reason": (
+                        f"destination-only file removed when source {root_name}/ "
+                        "is mirrored into the destination"
+                    ),
+                }
+            )
+    return sorted(removed, key=lambda item: item["path"])
 
 
 def _plan_migration_exclusions(
@@ -1889,15 +1958,29 @@ def _emotion_engine_projection_exclusion_reason(to_adapter):
 
 def _migration_required_confirmations(changes):
     degraded = changes.get("degraded", [])
+    confirmations = []
+    removed = changes.get("removed_destination_state", [])
+    if removed:
+        confirmations.append(
+            {
+                "id": "accept_destination_portable_state_removal",
+                "kind": "removal",
+                "paths": [item["path"] for item in removed],
+                "message": (
+                    "accept removal of destination-only portable files when source state "
+                    "is mirrored into the destination"
+                ),
+            }
+        )
     if not degraded:
-        return []
+        return confirmations
     paths = [item["path"] for item in degraded if item.get("path")]
     automations = [
         item.get("automation_id", item.get("id"))
         for item in degraded
         if item.get("kind") == "canonical_runtime_capability_gap"
     ]
-    return [
+    confirmations.append(
         {
             "id": "accept_degraded_runtime_automation",
             "kind": "degradation",
@@ -1908,7 +1991,8 @@ def _migration_required_confirmations(changes):
                 "reproduced in the destination"
             ),
         }
-    ]
+    )
+    return confirmations
 
 
 def _migration_plan_conflicts(target_dir, pack_dir):
@@ -1951,6 +2035,29 @@ def _path_is_within(path, root):
 def _verify_migration_source(changes, source_target_dir):
     checks = []
     issues = []
+    planned_portable_paths = {
+        item["path"]
+        for category in ("carried", "rewritten")
+        for item in changes[category]
+        if _is_portable_path(item["path"])
+    }
+    actual_portable_paths = set(_portable_source_files(source_target_dir))
+    for rel_path in sorted(actual_portable_paths - planned_portable_paths):
+        checks.append({"path": rel_path, "passed": False})
+        issues.append(
+            {
+                "path": rel_path,
+                "message": f"source added after planning: {rel_path}",
+            }
+        )
+    for rel_path in sorted(planned_portable_paths - actual_portable_paths):
+        checks.append({"path": rel_path, "passed": False})
+        issues.append(
+            {
+                "path": rel_path,
+                "message": f"source removed after planning: {rel_path}",
+            }
+        )
     for item in changes["carried"]:
         path = source_target_dir / item.get("source_path", item["path"])
         actual = _file_sha256(path) if path.is_file() else None
@@ -1977,6 +2084,34 @@ def _verify_migration_source(changes, source_target_dir):
     return {"passed": not issues, "checked": len(checks), "issues": issues}
 
 
+def _verify_migration_destination(changes, source_target_dir, target_dir):
+    checks = []
+    issues = []
+    planned = {
+        item["path"]: item["sha256"]
+        for item in changes.get("removed_destination_state", [])
+    }
+    actual = {
+        item["path"]: item["sha256"]
+        for item in _plan_destination_portable_state_removals(
+            source_target_dir,
+            target_dir,
+            _portable_source_files(source_target_dir),
+        )
+    }
+    for rel_path in sorted(set(planned) | set(actual)):
+        passed = actual.get(rel_path) == planned.get(rel_path)
+        checks.append({"path": rel_path, "passed": passed})
+        if not passed:
+            issues.append(
+                {
+                    "path": rel_path,
+                    "message": f"destination changed: {rel_path}",
+                }
+            )
+    return {"passed": not issues, "checked": len(checks), "issues": issues}
+
+
 def _verify_migration_integrity(changes, target_dir):
     checks = []
     issues = []
@@ -1998,6 +2133,24 @@ def _verify_migration_integrity(changes, target_dir):
                     "path": rel_path,
                     "category": category,
                     "message": f"destination hash does not match the planned {category} content",
+                }
+            )
+    for item in changes.get("removed_destination_state", []):
+        path = target_dir / item["path"]
+        passed = not path.exists() and not path.is_symlink()
+        checks.append(
+            {
+                "path": item["path"],
+                "category": "removed_destination_state",
+                "passed": passed,
+            }
+        )
+        if not passed:
+            issues.append(
+                {
+                    "path": item["path"],
+                    "category": "removed_destination_state",
+                    "message": "destination-only portable file was not removed as planned",
                 }
             )
     return {"passed": not issues, "checked": len(checks), "issues": issues}

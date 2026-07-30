@@ -217,6 +217,27 @@ def clamp_utf8(text, limit):
     return encoded[:limit].decode("utf-8", errors="ignore")
 
 
+def clamp_memory_view(text, limit, source):
+    encoded = text.encode("utf-8")
+    total = len(encoded)
+    if total <= limit:
+        return text
+    markers = (
+        f"\\n[truncated: budget {limit}/{total} bytes — read {source} for the rest]",
+        "\\n[truncated]",
+        "[truncated]",
+        "~",
+    )
+    marker = next(
+        (candidate for candidate in markers if len(candidate.encode("utf-8")) <= limit),
+        "",
+    )
+    marker_bytes = marker.encode("utf-8")
+    content_limit = max(0, limit - len(marker_bytes))
+    content = encoded[:content_limit].decode("utf-8", errors="ignore")
+    return content + marker
+
+
 def project_root():
     for key in ("CLAUDE_PROJECT_DIR", "CURSOR_PROJECT_DIR"):
         value = os.environ.get(key)
@@ -272,7 +293,7 @@ def produce(automation, root):
             return ""
         selected = markdown_slice(text, producer.get("select", {}))
         limit = min(int(automation["budget_bytes"]), int(producer.get("select", {}).get("max_bytes", automation["budget_bytes"])))
-        return clamp_utf8(selected, limit)
+        return clamp_memory_view(selected, limit, producer["source"])
     if kind == "freshness_facts":
         now = datetime.now().astimezone()
         facts = []
