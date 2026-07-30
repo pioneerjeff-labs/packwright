@@ -1495,6 +1495,11 @@ character:
                     "- 2026-07-26: prepared the migration hotfix.\n"
                 ),
                 "memory/todos.md": "# Todos\n\n## Current\n\n- Ship the migration hotfix.\n",
+                "memory/session-index.md": (
+                    "# Session Index\n\n"
+                    "Keep the newest 20 session entries here.\n\n"
+                    "- 2026-07-29: audited the migration path.\n"
+                ),
             }
             for rel_path, content in live_memory.items():
                 (source_target / rel_path).write_text(content, encoding="utf-8")
@@ -1509,6 +1514,78 @@ character:
             self.assertTrue(result["integrity"]["passed"], result)
             self.assertTrue(result["ok"], result)
             self.assertEqual(result["score"]["installed"]["score"], 100.0)
+
+    def test_force_migration_reports_and_verifies_destination_only_state_removal(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_pack = root / "source-pack"
+            source_target = root / "source-target"
+            destination = root / "destination"
+            _write_pack(
+                compile_to_codex_pack(
+                    resolved,
+                    references={"source_mechanism": str(MECHANISM_PATH)},
+                ),
+                source_pack,
+            )
+            install_pack(source_pack, source_target)
+            destination_only = destination / "memory" / "destination-only.md"
+            destination_only.parent.mkdir(parents=True)
+            destination_only.write_text("preserve unless explicitly reported\n", encoding="utf-8")
+
+            plan = plan_migration(
+                source_target,
+                destination,
+                to_adapter="claude-code",
+                force=True,
+            )
+            report = plan.to_dict()
+            removals = {
+                item["path"]: item
+                for item in report["changes"]["removed_destination_state"]
+            }
+            self.assertIn("memory/destination-only.md", removals)
+            self.assertEqual(len(removals["memory/destination-only.md"]["sha256"]), 64)
+            self.assertEqual(
+                report["required_confirmations"][0]["id"],
+                "accept_destination_portable_state_removal",
+            )
+
+            destination_only.write_text("changed after planning\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "migration destination changed after the plan was prepared",
+            ):
+                apply_migration(plan)
+
+            destination_only.unlink()
+            empty_target_plan = plan_migration(
+                source_target,
+                root / "late-destination",
+                to_adapter="claude-code",
+                force=True,
+            )
+            late_file = root / "late-destination" / "workspace" / "late.md"
+            late_file.parent.mkdir(parents=True)
+            late_file.write_text("created after planning\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "migration destination changed after the plan was prepared",
+            ):
+                apply_migration(empty_target_plan)
+
+            destination_only.write_text("changed after planning\n", encoding="utf-8")
+            plan = plan_migration(
+                source_target,
+                destination,
+                to_adapter="claude-code",
+                force=True,
+            )
+            result = apply_migration(plan)
+            self.assertTrue(result["destination_integrity"]["passed"], result)
+            self.assertTrue(result["integrity"]["passed"], result)
+            self.assertFalse(destination_only.exists())
 
     def test_install_pack_copies_manifest_artifacts_only_and_refuses_overwrite(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))

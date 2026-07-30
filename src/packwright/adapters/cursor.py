@@ -12,6 +12,7 @@ from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_MODES,
     emotion_engine_feature,
 )
+from packwright.core.entry_principles import entry_working_rule_lines
 from packwright.core.handoff import handoff_feature, target_handoff_artifacts
 from packwright.core.knowledge_contract import knowledge_feature, knowledge_files
 from packwright.core.locale import (
@@ -92,6 +93,20 @@ def _render_main_rule(mechanism, memory_rule_path, save_context_path):
         for record in skill_projection_records(mechanism, ADAPTER_NAME)
         if record["id"] != "save-context" and record["status"] == "projected"
     ]
+    working_rules = entry_working_rule_lines(
+        mechanism,
+        [
+            "- Preserve the user's stated intent and scope.",
+            "- Read relevant files before making factual claims.",
+            "- Keep durable memory in files, not in long prompt text.",
+            "- Use session index notes to make prior work discoverable.",
+            "- Use `workspace/<domain>/` for generated drafts, artifacts, and archives; keep memory files focused on state, decisions, and indexes.",
+            "- Use `knowledge/` only for reviewed reusable models and patterns; keep current project state in `memory/`.",
+            "- Ask before consequential changes.",
+            "- Do not invent emotional or relationship state.",
+            f"- When memory is empty, say there is no pickup yet and help {user_name} establish the first useful context; do not quote template placeholders.",
+        ],
+    )
     lines = [
         "---",
         f"description: Core behavior and working rules for {name}.",
@@ -123,15 +138,11 @@ def _render_main_rule(mechanism, memory_rule_path, save_context_path):
             "- When corrected, restate the corrected model and adjust without defensiveness.",
             "",
             "## Working Rules",
-            "- Preserve the user's stated intent and scope.",
-            "- Read relevant files before making factual claims.",
-            "- Keep durable memory in files, not in long prompt text.",
-            "- Use session index notes to make prior work discoverable.",
-            "- Use `workspace/<domain>/` for generated drafts, artifacts, and archives; keep memory files focused on state, decisions, and indexes.",
-            "- Use `knowledge/` only for reviewed reusable models and patterns; keep current project state in `memory/`.",
-            "- Ask before consequential changes.",
-            "- Do not invent emotional or relationship state.",
-            f"- When memory is empty, say there is no pickup yet and help {user_name} establish the first useful context; do not quote template placeholders.",
+        ]
+    )
+    lines.extend(working_rules)
+    lines.extend(
+        [
             "",
             "## Use When Needed",
             f"- Use `{save_context_path}` for milestone handoff, session close, or explicit context-save requests.",

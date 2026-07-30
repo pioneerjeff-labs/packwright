@@ -744,7 +744,10 @@ def _empty_memory_skeleton_is_user_ready(adapter_pack):
     )
     usable_state = (
         ("No active projects have been recorded yet." in index or "## Active Projects" in index)
-        and ("No session index entries have been recorded yet." in session_index or "<!-- entries -->" in session_index)
+        and _memory_file_has_empty_or_live_state(
+            session_index,
+            "No session index entries have been recorded yet.",
+        )
         and (
             "No source mappings have been recorded yet." in source_map
             or "## Sources" in source_map
