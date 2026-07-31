@@ -201,9 +201,12 @@ packwright verify-activation project/nova-codex --adapter codex
 packwright doctor project/nova-codex
 ```
 
-Changing the managed hook fragment invalidates the old receipt. Packwright
-returns runtime readiness to attention-required until the current
-`SessionStart` and `UserPromptSubmit` hooks run and are verified again.
+On the current unreleased `main`, changing either the managed hook fragment or
+runner invalidates the old receipt. Packwright returns runtime readiness to
+attention-required until the current `SessionStart` and `UserPromptSubmit`
+contexts are found intact as Codex developer messages and verified again. The
+published `0.3.2` receipt proves hook execution but does not yet inspect model
+delivery.
 
 Mechanism 0.8 projects bounded local `session_start` and `user_prompt` context
 from canonical `automations`. Claude Code and Codex support both events. Cursor

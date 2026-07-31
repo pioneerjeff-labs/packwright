@@ -164,7 +164,10 @@ def _runtime_activation_layer(target_dir, manifest, warnings):
     if activation and activation["receipt_verified"]:
         return {
             "status": "passed",
-            "message": "current managed Codex hooks have digest-bound live activation evidence",
+            "message": (
+                "current managed Codex hooks have transcript-verified developer-context "
+                "delivery bound to the hook and runner digests"
+            ),
             "evidence": activation,
         }
     return {

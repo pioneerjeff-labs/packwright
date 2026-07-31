@@ -2,11 +2,14 @@ import json
 import shlex
 from pathlib import Path
 
+from .errors import PackwrightValidationError
 from .path_safety import resolve_destination_path
 
 
 AUTOMATION_FEATURE_SCHEMA = "packwright-runtime-automations/v1"
 MANAGED_RUNNER_NAME = "packwright_automation.py"
+CODEX_ADDITIONAL_CONTEXT_LIMIT = 100_000
+CODEX_EVENT_CONTEXT_MAX_BYTES = 96_000
 
 _ADAPTERS = {
     "claude-code": {
@@ -62,6 +65,9 @@ def project_runtime_automations(mechanism, adapter):
             )
         )
         projected.append(automation)
+
+    if adapter == "codex":
+        _validate_codex_event_context_budgets(projected)
 
     files = {}
     if projected:
@@ -236,6 +242,30 @@ def _summary(records):
     return summary
 
 
+def _validate_codex_event_context_budgets(projected):
+    """Keep each Codex envelope safely below its configured token threshold."""
+    for event in ("session_start", "user_prompt"):
+        matching = [item for item in projected if item.get("event") == event]
+        if not matching:
+            continue
+        payload_bytes = sum(
+            int(item["budget_bytes"])
+            + len(f"[packwright:{item['id']}]\n".encode("utf-8"))
+            for item in matching
+        )
+        separator_bytes = max(0, len(matching) - 1) * len("\n\n".encode("utf-8"))
+        delivery_proof_reserve = 128
+        maximum_bytes = payload_bytes + separator_bytes + delivery_proof_reserve
+        if maximum_bytes > CODEX_EVENT_CONTEXT_MAX_BYTES:
+            raise PackwrightValidationError(
+                [
+                    f"codex {event} context budget is {maximum_bytes} bytes; "
+                    f"reduce aggregate automation budget_bytes so the complete event "
+                    f"including headers is at most {CODEX_EVENT_CONTEXT_MAX_BYTES} bytes"
+                ]
+            )
+
+
 def _render_config(projected, adapter, config):
     native_events = sorted({config["events"][item["event"]] for item in projected})
     command = _command(adapter, config["runner_path"])
@@ -245,7 +275,7 @@ def _render_config(projected, adapter, config):
         if adapter in {"claude-code", "codex"}:
             handler = {"type": "command", "command": f"{command} {canonical_event}"}
             if adapter == "codex":
-                handler["additionalContextLimit"] = 0
+                handler["additionalContextLimit"] = CODEX_ADDITIONAL_CONTEXT_LIMIT
             group = {"hooks": [handler]}
             if adapter == "codex" and native_event == "SessionStart":
                 group["matcher"] = "startup|resume|clear|compact"
@@ -275,6 +305,7 @@ import json
 import hashlib
 import os
 import re
+import secrets
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -282,7 +313,7 @@ from pathlib import Path
 ADAPTER = __ADAPTER__
 AUTOMATIONS = json.loads(__AUTOMATIONS__)
 MANAGED_RUNNER_NAME = "packwright_automation.py"
-ACTIVATION_SCHEMA = "packwright-runtime-activation-stamp/v1"
+ACTIVATION_SCHEMA = "packwright-runtime-activation-stamp/v2"
 
 
 def clamp_utf8(text, limit):
@@ -340,12 +371,41 @@ def managed_fragment_digest(text):
     return hashlib.sha256(payload).hexdigest()
 
 
-def record_activation(root, event, context):
+def read_hook_input():
+    if sys.stdin.isatty():
+        return {}
+    try:
+        raw = sys.stdin.read()
+    except (OSError, UnicodeError):
+        return {}
+    if not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def record_activation(root, event, context, hook_input, delivery_marker):
     if ADAPTER != "codex":
         return
     try:
+        native_event = {
+            "session_start": "SessionStart",
+            "user_prompt": "UserPromptSubmit",
+        }.get(event)
+        if hook_input.get("hook_event_name") != native_event:
+            return
+        session_id = hook_input.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            return
+        transcript_path = hook_input.get("transcript_path")
+        if transcript_path is not None and not isinstance(transcript_path, str):
+            transcript_path = None
         config_path = root / ".codex" / "hooks.json"
         hook_digest = managed_fragment_digest(config_path.read_text(encoding="utf-8"))
+        runner_digest = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         stamp_path = root / ".packwright" / "activation" / "codex-hooks.json"
         data = {}
         if stamp_path.is_file():
@@ -354,6 +414,7 @@ def record_activation(root, event, context):
             not isinstance(data, dict)
             or data.get("schema") != ACTIVATION_SCHEMA
             or data.get("hook_digest") != hook_digest
+            or data.get("runner_digest") != runner_digest
             or data.get("target_dir") != str(root.resolve())
         ):
             data = {
@@ -361,6 +422,7 @@ def record_activation(root, event, context):
                 "adapter": "codex",
                 "target_dir": str(root.resolve()),
                 "hook_digest": hook_digest,
+                "runner_digest": runner_digest,
                 "events": {},
             }
         automation_ids = sorted(
@@ -371,7 +433,12 @@ def record_activation(root, event, context):
         data["events"][event] = {
             "executed_at": datetime.now().astimezone().isoformat(),
             "context_bytes": len(context.encode("utf-8")),
+            "context_sha256": hashlib.sha256(context.encode("utf-8")).hexdigest(),
+            "delivery_marker": delivery_marker,
             "automation_ids": automation_ids,
+            "native_event": native_event,
+            "session_id": session_id,
+            "transcript_path": transcript_path,
         }
         stamp_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = stamp_path.with_name(
@@ -462,6 +529,7 @@ def produce(automation, root):
 def main():
     event = sys.argv[1] if len(sys.argv) > 1 else ""
     root = project_root()
+    hook_input = read_hook_input() if ADAPTER == "codex" else {}
     chunks = []
     for automation in AUTOMATIONS:
         if automation.get("event") != event:
@@ -472,11 +540,34 @@ def main():
     context = "\\n\\n".join(chunks)
     if ADAPTER == "cursor":
         print(json.dumps({"additional_context": context} if context else {}), flush=True)
+    elif ADAPTER == "codex":
+        native_event = {
+            "session_start": "SessionStart",
+            "user_prompt": "UserPromptSubmit",
+        }.get(event)
+        if native_event:
+            delivery_marker = f"[packwright:delivery:{secrets.token_hex(16)}]"
+            context = delivery_marker + ("\\n" + context if context else "")
+            print(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": native_event,
+                            "additionalContext": context,
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+        else:
+            delivery_marker = ""
+            sys.stdout.flush()
     elif context:
         print(context, flush=True)
     else:
         sys.stdout.flush()
-    record_activation(root, event, context)
+    record_activation(root, event, context, hook_input, delivery_marker if ADAPTER == "codex" else "")
 
 
 if __name__ == "__main__":

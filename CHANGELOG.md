@@ -4,6 +4,18 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+### Changed
+
+- Emit Codex `SessionStart` and `UserPromptSubmit` context through the explicit
+  `hookSpecificOutput.additionalContext` JSON envelope. Codex handlers use a
+  `100000` token threshold and reject projected per-event byte budgets above a
+  conservative 96000-byte transport ceiling; Claude Code and Cursor output
+  protocols are unchanged.
+- Upgrade Codex activation stamps and receipts to v2. Verification now requires
+  the exact emitted context to appear as a developer message in the Codex
+  transcript, binds evidence to both the managed hook and runner digests, and
+  rejects manual runner invocations or execution-only v1 evidence.
+
 ## [0.3.2] - 2026-07-31
 
 ### Added

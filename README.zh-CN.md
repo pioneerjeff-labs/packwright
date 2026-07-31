@@ -181,9 +181,10 @@ packwright verify-activation project/nova-codex --adapter codex
 packwright doctor project/nova-codex
 ```
 
-managed hook 发生变化会让旧收据失效；当前 `SessionStart` 与
-`UserPromptSubmit` 重新运行并验证前，runtime readiness 会回到
-attention-required。
+当前尚未发布的 `main` 会在 managed hook 或 runner 任一变化时让旧收据失效；
+只有当前 `SessionStart` 与 `UserPromptSubmit` 上下文完整出现在 Codex 的
+developer message 中并重新验证后，runtime readiness 才会恢复。已发布的
+`0.3.2` 收据只证明 hook 执行，尚未检查模型送达。
 
 机制 0.8 会从 canonical `automations` 投影有字节上限的本地
 `session_start` 与 `user_prompt` 上下文。Claude Code 和 Codex 支持两个事件；

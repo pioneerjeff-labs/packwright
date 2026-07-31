@@ -1,10 +1,12 @@
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -66,7 +68,57 @@ def _write_pack(pack, directory):
         path.write_text(text, encoding="utf-8")
 
 
+def _runner_context(adapter, stdout):
+    if adapter == "cursor":
+        return json.loads(stdout)["additional_context"]
+    if adapter == "codex":
+        return json.loads(stdout)["hookSpecificOutput"]["additionalContext"]
+    return stdout.rstrip("\n")
+
+
+def _codex_hook_input(target, transcript, native_event):
+    return json.dumps(
+        {
+            "session_id": "test-session",
+            "transcript_path": str(transcript),
+            "cwd": str(target),
+            "hook_event_name": native_event,
+            "model": "test-model",
+        }
+    )
+
+
+def _append_developer_context(transcript, context):
+    transcript.parent.mkdir(parents=True, exist_ok=True)
+    with transcript.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [{"type": "input_text", "text": context}],
+                    },
+                }
+            )
+            + "\n"
+        )
+
+
 class RuntimeAutomationTest(unittest.TestCase):
+    def test_codex_rejects_unbounded_aggregate_event_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            resolved = resolve_mechanism(load_mechanism(source))
+            resolved["automations"][0]["budget_bytes"] = 96_000
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "codex session_start context budget",
+            ):
+                compile_adapter_pack("codex", resolved)
+            compile_adapter_pack("claude-code", resolved)
+
     def test_codex_context_limit_and_installed_absolute_command(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             source = _source(tmpdir)
@@ -88,7 +140,7 @@ class RuntimeAutomationTest(unittest.TestCase):
                         ]
                         self.assertTrue(handlers)
                         self.assertTrue(
-                            all(handler["additionalContextLimit"] == 0 for handler in handlers)
+                            all(handler["additionalContextLimit"] == 100000 for handler in handlers)
                         )
                     else:
                         self.assertNotIn("additionalContextLimit", config_text)
@@ -116,6 +168,11 @@ class RuntimeAutomationTest(unittest.TestCase):
                 text=True,
             )
             self.assertIn("[packwright:session-start-current-time]", result.stdout)
+            output = json.loads(result.stdout)
+            self.assertEqual(
+                output["hookSpecificOutput"]["hookEventName"],
+                "SessionStart",
+            )
 
     def test_codex_activation_receipt_tracks_current_hook_digest(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -126,6 +183,8 @@ class RuntimeAutomationTest(unittest.TestCase):
             _write_pack(pack, pack_dir)
             install_pack(pack_dir, target)
             runner = target / ".codex" / "hooks" / "packwright_automation.py"
+            codex_home = Path(tmpdir) / "codex-home"
+            transcript = codex_home / "sessions" / "2026" / "07" / "test.jsonl"
 
             before = doctor_target(target)
             self.assertFalse(before["readiness"]["operational_ready"])
@@ -136,28 +195,68 @@ class RuntimeAutomationTest(unittest.TestCase):
                 ),
             )
 
-            subprocess.run(
+            manual = subprocess.run(
                 ["python3", str(runner), "session_start"],
                 cwd=target,
                 check=True,
                 capture_output=True,
                 text=True,
             )
+            self.assertEqual(
+                json.loads(manual.stdout)["hookSpecificOutput"]["hookEventName"],
+                "SessionStart",
+            )
             incomplete = verify_runtime_activation(target, adapter="codex")
             self.assertFalse(incomplete["ok"], incomplete)
-            self.assertIn("user_prompt", incomplete["reasons"][0])
+            self.assertFalse(
+                (target / ".packwright" / "activation" / "codex-hooks.json").exists()
+            )
+            self.assertIn("activation stamp", incomplete["reasons"][0])
 
-            subprocess.run(
+            session_start = subprocess.run(
+                ["python3", str(runner), "session_start"],
+                cwd=target,
+                check=True,
+                capture_output=True,
+                text=True,
+                input=_codex_hook_input(target, transcript, "SessionStart"),
+            )
+            session_context = _runner_context("codex", session_start.stdout)
+            executed_only = verify_runtime_activation(target, adapter="codex")
+            self.assertFalse(executed_only["ok"], executed_only)
+            self.assertIn("user_prompt", executed_only["reasons"][0])
+
+            prompt = subprocess.run(
                 ["python3", str(runner), "user_prompt"],
                 cwd=target,
                 check=True,
                 capture_output=True,
                 text=True,
+                input=_codex_hook_input(target, transcript, "UserPromptSubmit"),
             )
-            verified = verify_runtime_activation(target, adapter="codex")
+            prompt_context = _runner_context("codex", prompt.stdout)
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                not_delivered = verify_runtime_activation(target, adapter="codex")
+            self.assertFalse(not_delivered["ok"], not_delivered)
+            self.assertTrue(not_delivered["execution_verified"])
+            self.assertFalse(not_delivered["delivery_verified"])
+            self.assertIn("transcript does not exist", not_delivered["reasons"][0])
+
+            _append_developer_context(transcript, session_context)
+            _append_developer_context(transcript, prompt_context + " truncated")
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                changed_delivery = verify_runtime_activation(target, adapter="codex")
+            self.assertFalse(changed_delivery["ok"], changed_delivery)
+            self.assertIn("changed, truncated, or spilled", changed_delivery["reasons"][0])
+
+            _append_developer_context(transcript, prompt_context)
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                verified = verify_runtime_activation(target, adapter="codex")
             self.assertTrue(verified["ok"], verified)
+            self.assertTrue(verified["delivery_verified"])
             self.assertTrue(Path(verified["receipt"]).is_file())
-            after = doctor_target(target)
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                after = doctor_target(target)
             self.assertEqual(
                 after["readiness"]["layers"]["runtime_activation"]["status"],
                 "passed",
@@ -170,7 +269,8 @@ class RuntimeAutomationTest(unittest.TestCase):
                 json.dumps(hooks, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            still_verified = doctor_target(target)
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                still_verified = doctor_target(target)
             self.assertEqual(
                 still_verified["readiness"]["layers"]["runtime_activation"]["status"],
                 "passed",
@@ -182,10 +282,32 @@ class RuntimeAutomationTest(unittest.TestCase):
                 json.dumps(hooks, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            changed = doctor_target(target)
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                changed = doctor_target(target)
             self.assertEqual(
                 changed["readiness"]["layers"]["runtime_activation"]["status"],
                 "attention_required",
+            )
+
+            hooks["hooks"]["SessionStart"][0]["hooks"][0][
+                "additionalContextLimit"
+            ] = 100000
+            hooks_path.write_text(
+                json.dumps(hooks, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            runner.write_text(runner.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                changed_runner = doctor_target(target)
+            self.assertEqual(
+                changed_runner["readiness"]["layers"]["runtime_activation"]["status"],
+                "attention_required",
+            )
+            self.assertIn(
+                "runner digest",
+                " ".join(
+                    changed_runner["readiness"]["layers"]["runtime_activation"]["reasons"]
+                ),
             )
 
     def test_canonical_principles_are_the_single_entry_working_rules_source(self):
@@ -285,11 +407,9 @@ class RuntimeAutomationTest(unittest.TestCase):
                         capture_output=True,
                         text=True,
                     )
-                    context = (
-                        json.loads(result.stdout)["additional_context"]
-                        if adapter == "cursor"
-                        else result.stdout.rstrip("\n")
-                    )
+                    context = _runner_context(adapter, result.stdout)
+                    if adapter == "codex":
+                        context = context.split("\n", 1)[1]
                     header = "[packwright:session-start-bounded-todos]\n"
                     self.assertTrue(context.startswith(header), context)
                     payload = context[len(header):]
@@ -308,11 +428,9 @@ class RuntimeAutomationTest(unittest.TestCase):
                         capture_output=True,
                         text=True,
                     )
-                    short_context = (
-                        json.loads(short_result.stdout)["additional_context"]
-                        if adapter == "cursor"
-                        else short_result.stdout.rstrip("\n")
-                    )
+                    short_context = _runner_context(adapter, short_result.stdout)
+                    if adapter == "codex":
+                        short_context = short_context.split("\n", 1)[1]
                     self.assertNotIn("[truncated", short_context)
                     self.assertTrue(short_context.endswith("short todo"))
 
