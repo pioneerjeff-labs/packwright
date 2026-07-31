@@ -247,7 +247,7 @@ def _build_parser():
 
     verify_activation = subparsers.add_parser(
         "verify-activation",
-        help="verify live Codex hooks and write a digest-bound activation receipt",
+        help="verify delivered Codex hook context and write a digest-bound activation receipt",
     )
     verify_activation.add_argument("target", metavar="TARGET")
     verify_activation.add_argument("--adapter", choices=["codex"])

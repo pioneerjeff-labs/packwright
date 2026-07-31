@@ -155,13 +155,15 @@ portable-state integrity, environment bindings, and workflow acceptance
 explicitly `not_evaluated` when there is no evidence.
 
 Codex hook records begin as `projected_pending_user_review`. Installed commands
-are bound to the target's absolute runner path, and add-context handlers rely on
-Packwright's declared producer byte budgets instead of Codex's secondary spill
-threshold. After install or reconcile, run `/hooks` in Codex CLI, trust the
-Packwright hooks, start a new session in the target, submit one prompt, then run
-`packwright verify-activation <target> --adapter codex`. The command writes a
-receipt only when both required events were observed under the current target
-and managed hook digest. A changed hook fragment invalidates earlier evidence.
+are bound to the target's absolute runner path. Add-context handlers return the
+structured Codex JSON envelope, use a 100000-token spill threshold, and enforce
+a smaller compiled event-byte ceiling. After install or reconcile, run `/hooks`
+in Codex CLI, trust the Packwright hooks, start a new session in the target,
+submit one prompt, then run `packwright verify-activation <target> --adapter
+codex`. The command writes a receipt only when both required events were
+executed by Codex and their exact full contexts appear as developer messages in
+the recorded transcript. Evidence is bound to the target plus the managed hook
+and runner digests; changing either managed artifact invalidates it.
 
 `score` is likewise scoped to `managed_structure`. A `100.0` score can pass
 while `readiness.operational_ready` is `null`; this means the generated

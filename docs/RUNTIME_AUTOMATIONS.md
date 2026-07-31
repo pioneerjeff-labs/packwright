@@ -119,23 +119,38 @@ preserved and the receipt explains which behavior is absent.
 
 ### Codex activation
 
-Codex add-context handlers set `additionalContextLimit: 0` so the runtime does
-not spill an already budgeted Packwright payload into a head/tail preview.
-Every producer still enforces its canonical `budget_bytes`; Cursor and Claude
-Code receive no Codex-only configuration field.
+Codex add-context handlers return the explicit
+`hookSpecificOutput.additionalContext` JSON envelope and set
+`additionalContextLimit: 100000`. Every producer still enforces its canonical
+`budget_bytes`, and Codex projection rejects a theoretical event payload above
+96000 bytes including Packwright headers and delivery proof. This keeps the
+complete envelope below the configured threshold instead of relying on
+unbounded pass-through. Cursor and Claude Code receive no Codex-only
+configuration field or output-protocol change.
 
 Install binds the Codex command to the target's absolute runner path. This keeps
 the hook stable when Codex starts from a nested non-Git directory. Moving a
 target is intentionally path-sensitive and reconcile reports both the hook
 update and any relocation-baseline re-anchor.
 
-After the runner flushes a successful Codex event output, it writes a local
-stamp under `.packwright/activation/`. The stamp is tied to the resolved target
-and current managed hook digest. `packwright verify-activation <target>
---adapter codex` requires stamps for both `session_start` and `user_prompt`,
-then writes a durable receipt under `.packwright/receipts/`. It does not scan
-conversation text or infer activation from a copied marker. Editing the managed
-hook fragment invalidates the previous receipt.
+After the runner flushes a successful Codex event envelope, it writes a local
+execution stamp under `.packwright/activation/` only when stdin contains a real
+Codex hook event and session id. Each event records a one-time delivery marker,
+the exact context hash, and Codex's transcript path. `packwright
+verify-activation <target> --adapter codex` requires both `session_start` and
+`user_prompt`, then verifies that each complete context is present as a
+developer message in the active Codex sessions directory. Only then does it
+write a durable receipt under `.packwright/receipts/`. Evidence is bound to the
+resolved target, managed hook digest, and generated runner digest, so changing
+either managed artifact invalidates the previous receipt. Unknown transcript
+formats fail closed instead of accepting execution as delivery.
+
+The published 0.3.2 handler used `additionalContextLimit: 0`, so an ordinary
+upgrade to this unreleased behavior changes the Codex hook definition and needs
+one new `/hooks` review. A target already patched to the byte-identical
+`100000` definition keeps its existing Codex trust hash. In both cases the
+runner digest changes, so Packwright still requires a new session, prompt, and
+delivery receipt even when Codex does not request another trust review.
 
 ## Command boundaries
 
