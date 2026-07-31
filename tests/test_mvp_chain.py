@@ -849,12 +849,12 @@ character:
 
         version = run_cli("--version")
         self.assertEqual(version.returncode, 0, version.stderr + version.stdout)
-        self.assertEqual(version.stdout.strip(), "packwright 0.3.1")
+        self.assertEqual(version.stdout.strip(), "packwright 0.3.2")
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
         self.assertIn(
-            "{new,init,draft-character,presets,adopt,build,install,migrate,reconcile,doctor,score}",
+            "{new,init,draft-character,presets,adopt,build,install,migrate,reconcile,verify-activation,doctor,score}",
             help_result.stdout,
         )
         self.assertIn("new", help_result.stdout)
@@ -3135,6 +3135,70 @@ character:
             self.assertIn("low-value duplicate compaction", agents)
             self.assertNotIn("stale section", agents)
 
+    def test_migration_no_emotion_state_explicitly_reports_fresh_reset(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        compiled = compile_to_codex_pack(resolved)
+        score = score_mechanism(resolved, compiled, adapter="codex")
+        pack = embed_pack_metadata(compiled, resolved, score)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            source_target = root / "source-target"
+            destination = root / "empty-destination"
+            sidecar_source = root / "emotion-engine"
+            _write_pack(pack, pack_dir)
+            _write_fake_emotion_engine_sidecar(sidecar_source)
+            install_pack(
+                pack_dir,
+                source_target,
+                adapter="codex",
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
+            )
+            state_path = source_target / ".emotion-engine" / "state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["trust"] = 0.45
+            state["trust_anchor"] = 0.45
+            state["trust_settlements"] = [{"reason": "preserve continuity"}]
+            state_path.write_text(
+                json.dumps(state, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            plan = plan_migration(
+                source_target,
+                destination,
+                to_adapter="claude-code",
+                include_emotion_state=False,
+                emotion_engine_source=sidecar_source,
+            )
+            report = plan.to_dict()
+            resets = report["changes"]["emotion_state_resets"]
+            self.assertEqual(len(resets), 1)
+            self.assertEqual(resets[0]["trust_anchor"], 0.1)
+            self.assertIn("--no-emotion-state", resets[0]["reason"])
+            self.assertEqual(
+                report["emotion_engine_state"]["status"],
+                "reset_to_fresh_state",
+            )
+            self.assertEqual(
+                report["emotion_engine_state"]["initialized_trust_anchor"],
+                0.1,
+            )
+            self.assertTrue(
+                any(
+                    item["id"] == "accept_emotion_state_reset"
+                    for item in report["required_confirmations"]
+                )
+            )
+
+            readiness = doctor_target(source_target)["readiness"]
+            bindings = readiness["layers"]["environment_bindings"]
+            self.assertEqual(bindings["status"], "not_evaluated")
+            self.assertIn(".codex/config.toml", bindings["declared_paths"])
+            self.assertIn("declares project MCP", bindings["message"])
+
     def test_refresh_emotion_engine_updates_runtime_without_resetting_state(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         pack = compile_to_codex_pack(resolved)
@@ -4179,7 +4243,7 @@ character:
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
-        self.assertIn('version = "0.3.1"', pyproject)
+        self.assertIn('version = "0.3.2"', pyproject)
         self.assertIn('packwright = "packwright.cli:main"', pyproject)
 
     def test_cli_handoff_export_writes_review_file(self):

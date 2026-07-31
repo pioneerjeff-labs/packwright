@@ -13,6 +13,7 @@ from .character_intake import (
     validate_character_intake,
 )
 from .handoff import create_handoff
+from .activation import verify_runtime_activation
 from .install import (
     InstallPlan,
     MigrationPlan,
@@ -73,5 +74,6 @@ __all__ = [
     "starter_character_template_names",
     "validate_character_intake",
     "validate_mechanism",
+    "verify_runtime_activation",
     "write_interviewer_prompt",
 ]

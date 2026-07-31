@@ -37,10 +37,10 @@
 <p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
 > [!TIP]
-> **Current release: 0.3.1.** Migration now surfaces destination capability
-> gaps for Cursor as well as Pi, requires explicit degraded acceptance, and
-> renders pathless automation receipts without crashing. Pi Core support was
-> introduced in 0.3.0.
+> **Current release: 0.3.2.** Codex targets now use absolute hook paths,
+> budget-bounded full context, and digest-bound activation receipts. Migration
+> and reconcile separately report successful application and installed-tree
+> verification attention. Pi Core support was introduced in 0.3.0.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
@@ -147,7 +147,7 @@ packwright migrate project/nova-claude \
   --target project/nova-codex --dry-run
 ```
 
-A real `0.3.1` Codex → Cursor dry run reports the destination capability gap
+A real `0.3.2` Codex → Cursor dry run reports the destination capability gap
 instead of silently treating it as portable behavior (summary trimmed from the
 path-level receipt):
 
@@ -158,6 +158,7 @@ Packwright migration planned: codex -> cursor
   rewritten: 2 | memory/index.md, memory/pinned.md
   degraded: 1 | automation:user-prompt-current-todos (user_prompt -> add_context)
   excluded: 50 | .agents/** (1 files) | .codex/** (17 files) | .packwright/** (30 files) | AGENTS.md | manifest.json
+  pending_activation: 0 | none
   score: planned 100.0 (pass)
 No files written. Use --json for the complete path-level receipt.
 ```
@@ -189,6 +190,20 @@ handoff or cross-runtime migration:
 packwright reconcile --target project/nova-codex --mechanism work/nova --json --dry-run
 packwright reconcile --target project/nova-codex --mechanism work/nova --json --yes
 ```
+
+Codex reviews project hooks by hash. After installing or reconciling a Codex
+target, run `/hooks` in Codex CLI, trust both Packwright hooks, start a new
+session in that target, submit one prompt, and persist the matching runtime
+evidence:
+
+```bash
+packwright verify-activation project/nova-codex --adapter codex
+packwright doctor project/nova-codex
+```
+
+Changing the managed hook fragment invalidates the old receipt. Packwright
+returns runtime readiness to attention-required until the current
+`SessionStart` and `UserPromptSubmit` hooks run and are verified again.
 
 Mechanism 0.8 projects bounded local `session_start` and `user_prompt` context
 from canonical `automations`. Claude Code and Codex support both events. Cursor
@@ -248,7 +263,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.3.1` is the current stable maintenance release; `0.3.0` was the first
+`0.3.2` is the current stable maintenance release; `0.3.0` was the first
 release with Pi Core support, and `0.1.0` remains the first stable baseline.
 Packwright is local tooling, not cloud sync, and its plain-file structure score
 is separate from real runtime compatibility. Pi project trust and lifecycle
@@ -265,6 +280,7 @@ claims.
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.2 release notes](docs/releases/0.3.2.md)
 - [0.3.1 release notes](docs/releases/0.3.1.md)
 - [0.3.0 release notes](docs/releases/0.3.0.md)
 - [0.2.0 release notes](docs/releases/0.2.0.md)

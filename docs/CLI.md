@@ -17,6 +17,7 @@ the default help screen.
 | `packwright install` | Install an adapter pack into a local runtime target. |
 | `packwright migrate` | Compile and install an existing target for another adapter. |
 | `packwright reconcile` | Upgrade one installed target from a newer canonical mechanism without mixing work-state into mechanism. |
+| `packwright verify-activation` | Verify live Codex hook evidence and persist a receipt bound to the current hook digest. |
 | `packwright doctor` | Diagnose and optionally repair deterministic target drift. |
 | `packwright score` | Score an adapter pack against its mechanism source. |
 
@@ -61,6 +62,7 @@ packwright migrate project/nova-claude --to codex --target project/nova-codex --
 packwright migrate project/nova-claude --to codex --target project/nova-codex --json --yes
 packwright reconcile --target project/nova-codex --mechanism work/nova --json --dry-run
 packwright reconcile --target project/nova-codex --mechanism work/nova --json --yes
+packwright verify-activation project/nova-codex --adapter codex
 packwright doctor project/nova-codex
 packwright score work/nova --adapter claude-code --pack-dir pack/nova-claude
 packwright score project/nova-codex
@@ -152,6 +154,15 @@ whether runtime activation or adoption review needs attention and keeps
 portable-state integrity, environment bindings, and workflow acceptance
 explicitly `not_evaluated` when there is no evidence.
 
+Codex hook records begin as `projected_pending_user_review`. Installed commands
+are bound to the target's absolute runner path, and add-context handlers rely on
+Packwright's declared producer byte budgets instead of Codex's secondary spill
+threshold. After install or reconcile, run `/hooks` in Codex CLI, trust the
+Packwright hooks, start a new session in the target, submit one prompt, then run
+`packwright verify-activation <target> --adapter codex`. The command writes a
+receipt only when both required events were observed under the current target
+and managed hook digest. A changed hook fragment invalidates earlier evidence.
+
 `score` is likewise scoped to `managed_structure`. A `100.0` score can pass
 while `readiness.operational_ready` is `null`; this means the generated
 structure passed, not that a live runtime or end-to-end workflow was verified.
@@ -185,8 +196,9 @@ for its trust and extension boundaries.
 
 1. Run with `--dry-run` to receive the complete path-level plan. Neither the
    destination target nor `--pack-dir` is created.
-2. Review `generated`, `carried`, `rewritten`, `degraded`, and `excluded`, plus the planned
-   checker score and any destination conflicts.
+2. Review `generated`, `carried`, `rewritten`, `degraded`, `excluded`, and
+   `pending_activation`, plus the planned checker score and any destination
+   conflicts.
 3. After confirmation, rerun the same command with `--yes`. If the plan lists
    degraded runtime automation, non-interactive apply also requires
    `--accept-degraded`; `--yes` alone does not accept missing behavior.
@@ -196,17 +208,26 @@ for its trust and extension boundaries.
 Use `--json` for the `packwright-migration/v1` receipt. Interactive terminals
 otherwise show a compact directory-level summary and prompt before applying.
 After apply, the receipt contains the planned score, installed-target score,
-and SHA-256 verification for every carried or rewritten destination file. It
-also rechecks every detected degraded source file before writing. Packwright may
+`installed_score_passed`, and SHA-256 verification for every carried or
+rewritten destination file. `ok` describes migration integrity rather than
+reusing the installed checker result as the operation exit status. It also
+rechecks every detected degraded source file before writing. Packwright may
 rewrite only adapter-routing lines in `memory/index.md`, `memory/pinned.md`,
 and `memory/source-map.md`; every actual rewrite is disclosed.
+
+When active Emotion Engine projection is requested for an empty destination,
+`--no-emotion-state` explicitly reports and confirms that source continuity is
+excluded and fresh state will initialize with `trust_anchor=0.1`.
 
 ## Reconcile safety contract
 
 `packwright reconcile --target <installed> --mechanism <canonical> --dry-run`
 compares installed and desired spec hashes and reports managed projection
 updates, preserved instance state, safe missing scaffolds, manual JSON merges,
-runtime capability gaps, and pending activation reviews. It never reads another
+runtime capability gaps, pending activation reviews, and `side_effect_writes`.
+The side-effect list includes the durable receipt and any relocation-baseline
+change; full managed JSON normalization is also reported before apply. A moved
+target therefore cannot be silently re-anchored. Reconcile never reads another
 runtime's generated hook as its source.
 
 After review, replace `--dry-run` with `--yes`. Capability gaps additionally
@@ -214,6 +235,8 @@ require `--accept-degraded`. Reconcile preserves existing portable state and
 merges only entries containing the Packwright runner marker in runtime JSON;
 unrelated user settings and hooks remain untouched. Its applied
 `packwright-reconcile/v1` receipt is stored under `.packwright/receipts/`.
+Its `ok` field records spec application, while `installed_score_passed` and
+`doctor_ok` keep post-apply verification results separate and visible.
 
 ## Compatibility commands
 

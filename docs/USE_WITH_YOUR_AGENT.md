@@ -7,7 +7,7 @@ Packwright's CLI is the deterministic engine. Codex, Claude Code, Cursor, or Pi 
 Install Packwright in the environment your coding agent can access:
 
 ```bash
-python -m pip install packwright==0.3.1
+python -m pip install packwright==0.3.2
 packwright --version
 ```
 
@@ -28,7 +28,7 @@ Before every migration run `packwright migrate <source> --to <adapter> --target 
 
 For a base mechanism upgrade in the same local instance, use `packwright reconcile --target <installed> --mechanism <canonical> --json --dry-run`. Show spec hashes, managed projection updates, preserved state, manual merges, degraded automations, and pending activation steps. Apply with `--yes` only after confirmation, adding `--accept-degraded` only for explicitly accepted capability gaps. Do not use handoff to move hooks, skills, schemas, or memory structure; handoff remains task continuity only.
 
-After build, install, or migrate, report the checker score. After install, read `.packwright/checker-receipt.json` in the target or run `packwright score <target>`. Before any install that uses `--force`, first run the exact same command with `--dry-run`, show every overwrite, managed-config merge, and stale removal, and wait for separate approval. Run `packwright doctor <target>` and `packwright score <target>` after migration. `doctor --fix` requires my separate approval, just like `--force`. If a command fails, show its real command and output. Never claim that a 100.0 structure score guarantees runtime behavior.
+After build, install, or migrate, report the checker score. After install, read `.packwright/checker-receipt.json` in the target or run `packwright score <target>`. Before any install that uses `--force`, first run the exact same command with `--dry-run`, show every overwrite, managed-config merge, and stale removal, and wait for separate approval. For a Codex target, explain that hooks are reviewed by hash: ask me to run `/hooks`, trust the Packwright SessionStart and UserPromptSubmit hooks, start a new session in that target, and submit one prompt; then run `packwright verify-activation <target> --adapter codex` and show whether the current digest was verified. Run `packwright doctor <target>` and `packwright score <target>` after migration. `doctor --fix` requires my separate approval, just like `--force`. If a command fails, show its real command and output. Never claim that a 100.0 structure score guarantees runtime behavior.
 
 Packwright itself makes no network requests and sends no telemetry. It reads and writes local files; the coding runtime's own data policy still applies to anything that runtime can access.
 ```
@@ -37,7 +37,7 @@ Packwright itself makes no network requests and sends no telemetry. It reads and
 
 1. The agent names the real command it is about to run.
 2. Migration starts with a zero-write dry run.
-3. The agent shows all five receipt sections: `generated`, `carried`, `rewritten`, `degraded`, and `excluded`.
+3. The agent shows all six receipt sections: `generated`, `carried`, `rewritten`, `degraded`, `excluded`, and `pending_activation`.
 4. The agent does not hand-edit user-authored `memory/` or `workspace/` content during migration.
 5. Writing waits for your confirmation; `--force` and `doctor --fix` require separate approval.
 6. The final target is checked with `doctor` and `score`.

@@ -37,9 +37,9 @@
 <p align="center"><strong>原生 pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
 
 > [!TIP]
-> **当前版本：0.3.1。** 迁移现在会同时公开 Cursor 与 Pi 的目标端能力缺口，
-> 要求显式接受降级，并能安全显示无路径的 automation 收据。Pi Core 支持始于
-> 0.3.0。
+> **当前版本：0.3.2。** Codex target 现在使用绝对 hook 路径、有预算上限的
+> 全量上下文，以及与 hook 摘要绑定的激活收据。迁移与 reconcile 会把写入成功
+> 和安装后验证待关注分开报告。Pi Core 支持始于 0.3.0。
 
 > [!NOTE]
 > Packwright 自身不会发起网络请求，也不会发送遥测数据。coding runtime 仍可能把它读取的文件发送给自己的模型服务商，其数据政策继续适用。
@@ -129,7 +129,7 @@ packwright migrate project/nova-claude \
   --target project/nova-codex --dry-run
 ```
 
-下面是一份真实的 `0.3.1` Codex → Cursor dry run。目标端能力缺口会明确
+下面是一份真实的 `0.3.2` Codex → Cursor dry run。目标端能力缺口会明确
 标成 degraded，不会被静默当成可移植行为（从 path-level 收据中精简）：
 
 ```text
@@ -139,6 +139,7 @@ Packwright migration planned: codex -> cursor
   rewritten: 2 | memory/index.md, memory/pinned.md
   degraded: 1 | automation:user-prompt-current-todos (user_prompt -> add_context)
   excluded: 50 | .agents/** (1 files) | .codex/** (17 files) | .packwright/** (30 files) | AGENTS.md | manifest.json
+  pending_activation: 0 | none
   score: planned 100.0 (pass)
 No files written. Use --json for the complete path-level receipt.
 ```
@@ -170,6 +171,19 @@ runtime；使用独立的 reconcile：
 packwright reconcile --target project/nova-codex --mechanism work/nova --json --dry-run
 packwright reconcile --target project/nova-codex --mechanism work/nova --json --yes
 ```
+
+Codex 会按 hash 审核 project hooks。安装或 reconcile Codex target 后，在 Codex
+CLI 里运行 `/hooks`，信任两条 Packwright hook；随后在该 target 开一个新会话并
+提交一次 prompt，再保存与当前 hook 摘要匹配的运行证据：
+
+```bash
+packwright verify-activation project/nova-codex --adapter codex
+packwright doctor project/nova-codex
+```
+
+managed hook 发生变化会让旧收据失效；当前 `SessionStart` 与
+`UserPromptSubmit` 重新运行并验证前，runtime readiness 会回到
+attention-required。
 
 机制 0.8 会从 canonical `automations` 投影有字节上限的本地
 `session_start` 与 `user_prompt` 上下文。Claude Code 和 Codex 支持两个事件；
@@ -225,7 +239,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 ## 当前发布边界
 
-`0.3.1` 是当前稳定维护版本；`0.3.0` 是首个支持 Pi Core 的版本，`0.1.0`
+`0.3.2` 是当前稳定维护版本；`0.3.0` 是首个支持 Pi Core 的版本，`0.1.0`
 仍是首个稳定基线。Packwright 是本地工具，不是云同步服务；plain-file 结构
 分数与真实 runtime 兼容性是两件事。Pi project trust 与生命周期 extension
 仍是需要明确完成的 runtime 激活步骤，不会被伪装成已自动就绪。
@@ -240,6 +254,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [本地 runtime automation](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.2 发布说明](docs/releases/0.3.2.md)
 - [0.3.1 发布说明](docs/releases/0.3.1.md)
 - [0.3.0 发布说明](docs/releases/0.3.0.md)
 - [0.2.0 发布说明](docs/releases/0.2.0.md)

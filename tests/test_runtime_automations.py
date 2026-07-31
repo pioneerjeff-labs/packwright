@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ from packwright.core import (
     load_mechanism,
     plan_reconcile,
     resolve_mechanism,
+    verify_runtime_activation,
 )
 from packwright.core.pack_metadata import embed_pack_metadata
 
@@ -65,6 +67,127 @@ def _write_pack(pack, directory):
 
 
 class RuntimeAutomationTest(unittest.TestCase):
+    def test_codex_context_limit_and_installed_absolute_command(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            resolved = resolve_mechanism(load_mechanism(source))
+            for adapter in ("claude-code", "codex", "cursor"):
+                with self.subTest(adapter=adapter):
+                    pack = compile_adapter_pack(adapter, resolved)
+                    config_path = json.loads(pack["manifest.json"])[
+                        "features"
+                    ]["automations"]["config"]["path"]
+                    config_text = pack[config_path]
+                    if adapter == "codex":
+                        config = json.loads(config_text)
+                        handlers = [
+                            handler
+                            for groups in config["hooks"].values()
+                            for group in groups
+                            for handler in group["hooks"]
+                        ]
+                        self.assertTrue(handlers)
+                        self.assertTrue(
+                            all(handler["additionalContextLimit"] == 0 for handler in handlers)
+                        )
+                    else:
+                        self.assertNotIn("additionalContextLimit", config_text)
+
+            _, pack = _embedded_pack(source, "codex")
+            pack_dir = Path(tmpdir) / "pack"
+            target = Path(tmpdir) / "target with spaces"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+            hooks = json.loads((target / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+            command = hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+            absolute_runner = str(
+                (target / ".codex" / "hooks" / "packwright_automation.py").resolve()
+            )
+            self.assertIn(shlex.quote(absolute_runner), command)
+            self.assertNotIn("git rev-parse", command)
+            nested = target / "nested" / "working"
+            nested.mkdir(parents=True)
+            result = subprocess.run(
+                command,
+                cwd=nested,
+                shell=True,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("[packwright:session-start-current-time]", result.stdout)
+
+    def test_codex_activation_receipt_tracks_current_hook_digest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            _, pack = _embedded_pack(source, "codex")
+            pack_dir = Path(tmpdir) / "pack"
+            target = Path(tmpdir) / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+            runner = target / ".codex" / "hooks" / "packwright_automation.py"
+
+            before = doctor_target(target)
+            self.assertFalse(before["readiness"]["operational_ready"])
+            self.assertIn(
+                "/hooks",
+                " ".join(
+                    before["readiness"]["layers"]["runtime_activation"]["reasons"]
+                ),
+            )
+
+            subprocess.run(
+                ["python3", str(runner), "session_start"],
+                cwd=target,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            incomplete = verify_runtime_activation(target, adapter="codex")
+            self.assertFalse(incomplete["ok"], incomplete)
+            self.assertIn("user_prompt", incomplete["reasons"][0])
+
+            subprocess.run(
+                ["python3", str(runner), "user_prompt"],
+                cwd=target,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            verified = verify_runtime_activation(target, adapter="codex")
+            self.assertTrue(verified["ok"], verified)
+            self.assertTrue(Path(verified["receipt"]).is_file())
+            after = doctor_target(target)
+            self.assertEqual(
+                after["readiness"]["layers"]["runtime_activation"]["status"],
+                "passed",
+            )
+
+            hooks_path = target / ".codex" / "hooks.json"
+            hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+            hooks["description"] = "user key outside the managed fragment"
+            hooks_path.write_text(
+                json.dumps(hooks, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            still_verified = doctor_target(target)
+            self.assertEqual(
+                still_verified["readiness"]["layers"]["runtime_activation"]["status"],
+                "passed",
+            )
+            hooks["hooks"]["SessionStart"][0]["hooks"][0][
+                "additionalContextLimit"
+            ] = 1024
+            hooks_path.write_text(
+                json.dumps(hooks, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            changed = doctor_target(target)
+            self.assertEqual(
+                changed["readiness"]["layers"]["runtime_activation"]["status"],
+                "attention_required",
+            )
+
     def test_canonical_principles_are_the_single_entry_working_rules_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             source = _source(tmpdir)
@@ -342,13 +465,89 @@ class RuntimeAutomationTest(unittest.TestCase):
             receipt = apply_reconcile(plan)
             self.assertTrue(receipt["doctor"]["ok"], receipt)
             self.assertFalse(receipt["score"]["installed"]["passed"], receipt)
-            self.assertFalse(receipt["ok"], receipt)
+            self.assertTrue(receipt["ok"], receipt)
+            self.assertFalse(receipt["installed_score_passed"], receipt)
+            self.assertTrue(receipt["doctor_ok"], receipt)
+            self.assertTrue(receipt["verification_attention"], receipt)
             failed = {
                 check["id"]
                 for check in receipt["score"]["installed"]["checks"]
                 if not check["passed"]
             }
             self.assertIn("empty_memory_skeleton_is_user_ready", failed)
+
+    def test_reconcile_dry_run_matches_hash_changed_write_set(self):
+        def hashes(root):
+            return {
+                path.relative_to(root).as_posix(): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in root.rglob("*")
+                if path.is_file()
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            _, pack = _embedded_pack(source, "claude-code")
+            pack_dir = Path(tmpdir) / "pack"
+            installed = Path(tmpdir) / "installed"
+            target = Path(tmpdir) / "moved"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, installed)
+            installed.rename(target)
+
+            settings_path = target / ".claude" / "settings.json"
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            settings["user_setting"] = {"preserve": True}
+            settings_path.write_text(
+                json.dumps(settings, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            before = hashes(target)
+            plan = plan_reconcile(target, source)
+            report = plan.to_dict()
+            managed = {
+                item["path"]
+                for item in report["changes"]["managed_projection_updates"]
+            }
+            structural = {
+                item["path"]
+                for item in report["changes"][
+                    "safe_structural_memory_migrations"
+                ]
+            }
+            removed = {
+                item["path"]
+                for item in report["changes"]["removed_managed_artifacts"]
+            }
+            side_effects = {
+                item["path"]
+                for item in report["changes"]["side_effect_writes"]
+            }
+            planned_changed = managed | structural | removed | side_effects
+            self.assertIn(".claude/settings.json", planned_changed)
+            self.assertIn(".packwright/baseline-path", planned_changed)
+            self.assertTrue(
+                any(
+                    item["reason"] == "reanchor_relocation_baseline"
+                    for item in report["changes"]["side_effect_writes"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    warning["id"] == "relocation_baseline_reanchor"
+                    for warning in report["warnings"]
+                )
+            )
+            receipt = apply_reconcile(plan)
+            self.assertTrue(receipt["ok"], receipt)
+            after = hashes(target)
+            actual_changed = {
+                path
+                for path in set(before) | set(after)
+                if before.get(path) != after.get(path)
+            }
+            self.assertEqual(planned_changed, actual_changed)
 
     def test_reconcile_applies_source_only_save_context_as_managed_update(self):
         with tempfile.TemporaryDirectory() as tmpdir:

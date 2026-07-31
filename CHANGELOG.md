@@ -4,6 +4,15 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.3.2] - 2026-07-31
+
+### Added
+
+- Add `packwright verify-activation TARGET --adapter codex`. Successful Codex
+  hook runs write local event evidence, and verification persists a receipt
+  bound to the current target, managed hook digest, and required lifecycle
+  events.
+
 ### Changed
 
 - Make canonical `operating/principles.md` the single source for entry-file
@@ -13,6 +22,14 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Report destination-only portable files that `migrate --force` will remove,
   require an explicit removal confirmation in the plan, and reject apply when
   those files change after planning.
+- Bind installed Codex hook commands to the target's absolute runner path, pass
+  budget-bounded additional context without Codex's secondary spill threshold,
+  and require fresh activation evidence whenever the managed hook digest
+  changes.
+- Separate successful migrate/reconcile application from installed-tree
+  checker attention. Applied receipts now expose `installed_score_passed`,
+  reconcile also exposes `doctor_ok`, and CLI exit status follows operation
+  integrity.
 
 ### Fixed
 
@@ -23,6 +40,14 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Score reconcile receipts from the installed live tree instead of re-scoring
   the planned pack, so preserved portable-state failures cannot produce a false
   green installed score.
+- Make reconcile dry-run report receipt writes, relocation-baseline changes,
+  and full managed-config normalization; explicitly warn before re-anchoring a
+  moved target.
+- Report that `--no-emotion-state` will initialize fresh continuity with
+  `trust_anchor=0.1` when the source has live state and the destination is
+  empty.
+- Describe declared Emotion Engine MCP configuration as unverified instead of
+  incorrectly claiming that the manifest declares no environment bindings.
 
 ## [0.3.1] - 2026-07-26
 
@@ -174,6 +199,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.3.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.0
 [0.2.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.2.0

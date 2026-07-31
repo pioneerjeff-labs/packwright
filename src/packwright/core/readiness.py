@@ -2,6 +2,8 @@ from pathlib import Path
 
 import yaml
 
+from .activation import runtime_activation_evidence
+
 
 READINESS_SCHEMA = "packwright-readiness/v1"
 ADOPTION_REVIEW_SCHEMA = "packwright-adoption-review/v1"
@@ -49,7 +51,7 @@ def target_readiness(target_dir, manifest, structural_ok, issues, warnings):
     """Aggregate honest target readiness without changing legacy doctor semantics."""
     target_dir = Path(target_dir)
     structural = _structural_layer(structural_ok, issues)
-    runtime = _runtime_activation_layer(manifest, warnings)
+    runtime = _runtime_activation_layer(target_dir, manifest, warnings)
     workflow = _workflow_acceptance_layer(target_dir)
     layers = {
         "structural_integrity": structural,
@@ -61,13 +63,7 @@ def target_readiness(target_dir, manifest, structural_ok, issues, warnings):
             ),
         },
         "runtime_activation": runtime,
-        "environment_bindings": {
-            "status": "not_evaluated",
-            "message": (
-                "the current manifest does not declare MCP, plugin, schedule, account, "
-                "or secret bindings"
-            ),
-        },
+        "environment_bindings": _environment_bindings_layer(manifest),
         "workflow_acceptance": workflow,
     }
     attention = [
@@ -115,7 +111,7 @@ def _structural_layer(structural_ok, issues):
     }
 
 
-def _runtime_activation_layer(manifest, warnings):
+def _runtime_activation_layer(target_dir, manifest, warnings):
     features = manifest.get("features", {}) if isinstance(manifest, dict) else {}
     automation = features.get("automations", {}) if isinstance(features, dict) else {}
     records = automation.get("records", []) if isinstance(automation, dict) else []
@@ -140,7 +136,12 @@ def _runtime_activation_layer(manifest, warnings):
         reasons.append(
             "canonical automations unavailable in this runtime: " + ", ".join(unavailable)
         )
-    if pending:
+    activation = None
+    if pending and manifest.get("adapter") == "codex":
+        activation = runtime_activation_evidence(target_dir, manifest)
+        if not activation["receipt_verified"]:
+            reasons.extend(activation["reasons"])
+    elif pending:
         reasons.append(
             "projected automations still require user review: " + ", ".join(pending)
         )
@@ -152,14 +153,56 @@ def _runtime_activation_layer(manifest, warnings):
     if "pi_project_trust_unverified" in warning_ids:
         reasons.append("Pi project trust has not been verified by Packwright")
     if reasons:
-        return {
+        layer = {
             "status": "attention_required",
             "reasons": reasons,
             "message": "runtime activation has unresolved or unverifiable steps",
         }
+        if activation:
+            layer["evidence"] = activation
+        return layer
+    if activation and activation["receipt_verified"]:
+        return {
+            "status": "passed",
+            "message": "current managed Codex hooks have digest-bound live activation evidence",
+            "evidence": activation,
+        }
     return {
         "status": "not_evaluated",
         "message": "managed files exist, but live runtime activation was not inspected",
+    }
+
+
+def _environment_bindings_layer(manifest):
+    features = manifest.get("features", {}) if isinstance(manifest, dict) else {}
+    emotion = features.get("emotion_engine", {}) if isinstance(features, dict) else {}
+    sidecars = manifest.get("sidecars", {}) if isinstance(manifest, dict) else {}
+    declared_paths = []
+    if isinstance(emotion, dict) and isinstance(emotion.get("mcp_config_path"), str):
+        declared_paths.append(emotion["mcp_config_path"])
+    if isinstance(sidecars, dict):
+        for sidecar in sidecars.values():
+            if not isinstance(sidecar, dict):
+                continue
+            path = sidecar.get("mcp_config")
+            if isinstance(path, str):
+                declared_paths.append(path)
+    declared_paths = sorted(set(declared_paths))
+    if declared_paths:
+        return {
+            "status": "not_evaluated",
+            "declared_paths": declared_paths,
+            "message": (
+                "the manifest declares project MCP configuration, but live client "
+                "availability and approval were not verified"
+            ),
+        }
+    return {
+        "status": "not_evaluated",
+        "message": (
+            "the current manifest does not declare MCP, plugin, schedule, account, "
+            "or secret bindings"
+        ),
     }
 
 
