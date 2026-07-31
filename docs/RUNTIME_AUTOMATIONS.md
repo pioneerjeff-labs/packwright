@@ -101,7 +101,7 @@ The adapter registry owns event and effect support. The first-slice contract is:
 | Adapter | `session_start` dynamic context | `user_prompt` dynamic context | Activation note |
 |---|---:|---:|---|
 | Claude Code | native | native | project hook remains subject to runtime review |
-| Codex | native | native | project hook may require project trust and hook review |
+| Codex | native | native | project hook requires hash-based review and a digest-bound Packwright activation receipt |
 | Cursor | native | unavailable | prompt hook can allow or block but cannot add model context |
 | Pi | extension required | extension required | Packwright does not generate executable project extensions |
 
@@ -116,6 +116,26 @@ The projector returns one result for every canonical automation:
 
 An unavailable result is not a static-rule fallback. The canonical intent is
 preserved and the receipt explains which behavior is absent.
+
+### Codex activation
+
+Codex add-context handlers set `additionalContextLimit: 0` so the runtime does
+not spill an already budgeted Packwright payload into a head/tail preview.
+Every producer still enforces its canonical `budget_bytes`; Cursor and Claude
+Code receive no Codex-only configuration field.
+
+Install binds the Codex command to the target's absolute runner path. This keeps
+the hook stable when Codex starts from a nested non-Git directory. Moving a
+target is intentionally path-sensitive and reconcile reports both the hook
+update and any relocation-baseline re-anchor.
+
+After the runner flushes a successful Codex event output, it writes a local
+stamp under `.packwright/activation/`. The stamp is tied to the resolved target
+and current managed hook digest. `packwright verify-activation <target>
+--adapter codex` requires stamps for both `session_start` and `user_prompt`,
+then writes a durable receipt under `.packwright/receipts/`. It does not scan
+conversation text or infer activation from a copied marker. Editing the managed
+hook fragment invalidates the previous receipt.
 
 ## Command boundaries
 
@@ -208,7 +228,13 @@ A migration plan separately records:
 - `rewritten`
 - `degraded`
 - `excluded`
+- `pending_activation`
 - `required_confirmations`
+
+Applied migration and reconcile receipts keep operation success separate from
+post-apply checker evidence. `ok` drives the command exit status;
+`installed_score_passed` remains visible without redefining a completed write
+as a failed migration. Reconcile additionally exposes `doctor_ok`.
 
 A path-backed degraded source item records its source hash, source adapter,
 destination adapter, known lifecycle events, reason code, and required user

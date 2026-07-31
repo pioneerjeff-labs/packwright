@@ -38,6 +38,7 @@ from packwright.core import (
     starter_character_preset,
     starter_character_preset_names,
     validate_mechanism,
+    verify_runtime_activation,
     write_interviewer_prompt,
 )
 from packwright.core.emotion_engine_contract import emotion_engine_artifacts
@@ -69,6 +70,8 @@ def main(argv=None):
             return _cmd_migrate_target(args)
         if args.command == "reconcile":
             return _cmd_reconcile(args)
+        if args.command == "verify-activation":
+            return _cmd_verify_activation(args)
         if args.command == "handoff-export":
             return _cmd_handoff_export(args)
         if args.command == "adopt":
@@ -102,7 +105,7 @@ def _build_parser():
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,reconcile,doctor,score}",
+        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,reconcile,verify-activation,doctor,score}",
     )
 
     new = subparsers.add_parser(
@@ -241,6 +244,14 @@ def _build_parser():
     )
     reconcile.add_argument("--json", action="store_true", help="emit the complete reconcile receipt as JSON")
     reconcile.add_argument("--out", help="output reconcile JSON path")
+
+    verify_activation = subparsers.add_parser(
+        "verify-activation",
+        help="verify live Codex hooks and write a digest-bound activation receipt",
+    )
+    verify_activation.add_argument("target", metavar="TARGET")
+    verify_activation.add_argument("--adapter", choices=["codex"])
+    verify_activation.add_argument("--out", help="output activation receipt JSON path")
 
     handoff = subparsers.add_parser(
         "handoff-export",
@@ -733,6 +744,12 @@ def _cmd_reconcile(args):
     result = apply_reconcile(plan, accept_degraded=accept_degraded)
     result["dry_run"] = False
     _emit_reconcile_report(result, args)
+    return 0 if result["ok"] else 1
+
+
+def _cmd_verify_activation(args):
+    result = verify_runtime_activation(args.target, adapter=args.adapter)
+    _write_json_or_print(result, args.out)
     return 0 if result["ok"] else 1
 
 
@@ -1343,7 +1360,25 @@ def _print_reconcile_report(report):
     for name, items in report["changes"].items():
         print(f"  {name}: {len(items)}")
     planned = report["score"]["planned"]
-    print(f"  score: {planned['score']:.1f} ({'pass' if planned['passed'] else 'fail'})")
+    score_line = f"  score: planned {planned['score']:.1f} ({'pass' if planned['passed'] else 'fail'})"
+    installed = report["score"].get("installed")
+    if installed:
+        score_line += f" | installed {installed['score']:.1f} ({'pass' if installed['passed'] else 'attention'})"
+    print(score_line)
+    for warning in report.get("warnings", []):
+        print(f"  warning: {warning.get('message')}")
+    pending = report["changes"].get("pending_activation", [])
+    if pending:
+        print(
+            "  pending activation: "
+            + ", ".join(item.get("id", "unknown") for item in pending)
+        )
+        print(
+            "  unlock: run /hooks in Codex CLI, trust Packwright hooks, start a new "
+            "session, then run packwright verify-activation"
+        )
+    for message in report.get("verification_attention", []):
+        print(f"  verification attention: {message}")
     if report.get("conflicts"):
         for conflict in report["conflicts"]:
             print(f"  conflict: {conflict.get('path')}: {conflict.get('message')}")
@@ -1356,21 +1391,38 @@ def _print_migration_report(report):
     destination = report["destination"]
     print(f"Packwright migration {report['status']}: {source['adapter']} -> {destination['adapter']}")
     print(f"  {source['target_dir']} -> {destination['target_dir']}")
-    for name in ("generated", "carried", "rewritten", "degraded", "excluded"):
+    for name in (
+        "generated",
+        "carried",
+        "rewritten",
+        "degraded",
+        "excluded",
+        "pending_activation",
+    ):
         items = report["changes"][name]
         print(f"  {name}: {len(items)} | {_migration_path_summary(items, exact=name == 'rewritten')}")
+    resets = report["changes"].get("emotion_state_resets", [])
+    if resets:
+        print(
+            "  emotion_state_reset: source continuity excluded; "
+            "fresh state will initialize with trust_anchor=0.1"
+        )
     planned = report["score"]["planned"]
     score_line = f"  score: planned {planned['score']:.1f} ({'pass' if planned['passed'] else 'fail'})"
     installed = report["score"].get("installed")
     if installed:
-        score_line += f" | installed {installed['score']:.1f} ({'pass' if installed['passed'] else 'fail'})"
+        score_line += f" | installed {installed['score']:.1f} ({'pass' if installed['passed'] else 'attention'})"
     integrity = report.get("integrity")
     if integrity:
         score_line += f" | hashes {integrity['checked']} ({'pass' if integrity['passed'] else 'fail'})"
     print(score_line)
+    for warning in report.get("warnings", []):
+        print(f"  warning: {warning.get('message')}")
+    for message in report.get("verification_attention", []):
+        print(f"  verification attention: {message}")
     if report.get("conflicts"):
         print(f"  conflicts: {_migration_conflict_summary(report['conflicts'])}")
-    if report["status"] != "applied":
+    if not str(report["status"]).startswith("applied"):
         print("No files written. Use --json for the complete path-level receipt.")
 
 

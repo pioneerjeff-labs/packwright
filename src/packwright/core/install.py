@@ -36,6 +36,8 @@ from .emotion_engine_contract import (
 from .adapter_layout import adapter_entry, adapter_skill_root, supported_adapters
 from .automation_projection import (
     automation_config_paths,
+    bind_managed_hook_config,
+    bind_pack_runtime_paths,
     is_managed_automation_config,
     managed_hook_fragment_digest,
     merge_managed_hook_config,
@@ -280,9 +282,14 @@ def plan_install(
             continue
         if force and artifact in automation_configs and destination.is_file():
             try:
+                desired_text = bind_managed_hook_config(
+                    source_path.read_text(encoding="utf-8"),
+                    target_dir,
+                    manifest,
+                )
                 merge_managed_hook_config(
                     destination.read_text(encoding="utf-8"),
-                    source_path.read_text(encoding="utf-8"),
+                    desired_text,
                 )
             except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
                 raise PackwrightValidationError([
@@ -452,18 +459,31 @@ def apply_install(plan):
         destination.parent.mkdir(parents=True, exist_ok=True)
         if plan.force and artifact in automation_configs and destination.is_file():
             try:
+                desired_text = bind_managed_hook_config(
+                    source_path.read_text(encoding="utf-8"),
+                    plan.target_dir,
+                    plan.manifest,
+                )
                 merged = merge_managed_hook_config(
                     destination.read_text(encoding="utf-8"),
-                    source_path.read_text(encoding="utf-8"),
+                    desired_text,
                 )
             except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
                 raise PackwrightValidationError([
                     f"cannot safely merge managed hook entries in {artifact}: {exc}"
                 ]) from exc
-            destination.write_text(merged, encoding="utf-8")
+            _write_text_if_changed(destination, merged)
             merged_managed_configs.append(artifact)
+        elif artifact in automation_configs:
+            desired_text = bind_managed_hook_config(
+                source_path.read_text(encoding="utf-8"),
+                plan.target_dir,
+                plan.manifest,
+            )
+            _write_text_if_changed(destination, desired_text)
         else:
-            shutil.copy2(source_path, destination)
+            if not destination.is_file() or destination.read_bytes() != source_path.read_bytes():
+                shutil.copy2(source_path, destination)
         if artifact in HANDOFF_EXECUTABLE_ARTIFACTS or artifact == automation_runner:
             _make_executable(destination)
         installed.append(artifact)
@@ -981,10 +1001,9 @@ def plan_migration(
             f"Emotion Engine runtime is unavailable for {to_adapter}; "
             "omit --emotion-engine-source to carry state as an inert snapshot"
         ])
+    available_emotion_state_source = _select_emotion_state_source(source_target_dir)
     emotion_state_source = (
-        _select_emotion_state_source(source_target_dir)
-        if include_emotion_state
-        else None
+        available_emotion_state_source if include_emotion_state else None
     )
 
     mechanism_file = _resolve_migration_mechanism_path(source_target_dir, source_manifest, mechanism_path)
@@ -1014,6 +1033,7 @@ def plan_migration(
             "migration_from_adapter": from_adapter,
         },
     )
+    pack = bind_pack_runtime_paths(pack, target_dir)
     initial_score = _score_migration_pack(resolved, pack, to_adapter)
     pack = embed_pack_metadata(pack, resolved, initial_score)
 
@@ -1031,6 +1051,39 @@ def plan_migration(
         emotion_style=emotion_style,
         emotion_engine_mode=emotion_engine_mode,
     )
+    emotion_state_reset = bool(
+        _migrate_should_include_emotion_engine(resolved_emotion_engine_source)
+        and available_emotion_state_source
+        and not include_emotion_state
+        and _directory_is_empty_or_missing(target_dir)
+    )
+    changes["emotion_state_resets"] = (
+        [
+            {
+                "path": EMOTION_ENGINE_STATE_PATH,
+                "source_path": str(available_emotion_state_source),
+                "operation": "initialize_fresh_state",
+                "trust_anchor": 0.1,
+                "reason": (
+                    "--no-emotion-state excludes existing source continuity while the "
+                    "destination runtime initializes a fresh state"
+                ),
+            }
+        ]
+        if emotion_state_reset
+        else []
+    )
+    if emotion_state_reset:
+        warnings.append(
+            {
+                "id": "emotion_state_reset",
+                "path": EMOTION_ENGINE_STATE_PATH,
+                "message": (
+                    "source Emotion Engine continuity is excluded; the empty destination "
+                    "will initialize fresh state with trust_anchor=0.1"
+                ),
+            }
+        )
     planned_score = _score_migration_pack(resolved, pack, to_adapter)
     conflicts = _migration_plan_conflicts(target_dir, resolved_pack_dir)
     ready = planned_score["passed"] and (force or not conflicts)
@@ -1062,6 +1115,8 @@ def plan_migration(
         "emotion_engine_state": _migration_emotion_state_report(
             emotion_state_source,
             runtime_active=_migrate_should_include_emotion_engine(resolved_emotion_engine_source),
+            reset=emotion_state_reset,
+            excluded_source=available_emotion_state_source if emotion_state_reset else None,
         ),
         "score": {
             "planned": planned_score,
@@ -1183,7 +1238,13 @@ def apply_migration(plan, accept_degraded=False):
         {
             "status": "applied_with_degradations" if degraded else "applied",
             "ready": True,
-            "ok": integrity["passed"] and installed_score["passed"],
+            "ok": integrity["passed"],
+            "installed_score_passed": bool(installed_score["passed"]),
+            "verification_attention": (
+                []
+                if installed_score["passed"]
+                else ["installed checker score did not pass; operation integrity still passed"]
+            ),
             "integrity": integrity,
             "source_integrity": source_integrity,
             "destination_integrity": destination_integrity,
@@ -1207,6 +1268,12 @@ def apply_migration(plan, accept_degraded=False):
             "emotion_engine_state": _migration_emotion_state_report(
                 plan.emotion_state_source,
                 runtime_active=_migrate_should_include_emotion_engine(plan.emotion_engine_source),
+                reset=bool(plan.report["changes"].get("emotion_state_resets")),
+                excluded_source=(
+                    plan.report["changes"]["emotion_state_resets"][0]["source_path"]
+                    if plan.report["changes"].get("emotion_state_resets")
+                    else None
+                ),
             ),
             "runtime_exclusions": _migration_runtime_exclusions(
                 plan.source_target_dir,
@@ -1246,6 +1313,7 @@ def plan_reconcile(target_dir, mechanism_path, parameters=None):
         "git_commit": desired_commit,
     }
     pack["manifest.json"] = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    pack = bind_pack_runtime_paths(pack, target_dir)
     pack = _augment_reconcile_pack_with_installed_sidecars(
         pack,
         target_dir,
@@ -1257,7 +1325,12 @@ def plan_reconcile(target_dir, mechanism_path, parameters=None):
     installed_spec_path = resolve_source_path(target_dir, SPEC_PATH, "installed canonical spec")
     from_spec_hash = _sha256_bytes(installed_spec_path.read_bytes())
     to_spec_hash = _sha256_bytes(pack[SPEC_PATH].encode("utf-8"))
-    changes, conflicts = _plan_reconcile_changes(target_dir, installed_manifest, pack)
+    changes, conflicts = _plan_reconcile_changes(
+        target_dir,
+        installed_manifest,
+        pack,
+        to_spec_hash,
+    )
     degraded = changes["degraded"]
     required_confirmations = []
     if degraded:
@@ -1267,6 +1340,20 @@ def plan_reconcile(target_dir, mechanism_path, parameters=None):
                 "kind": "degradation",
                 "automations": [item["id"] for item in degraded],
                 "message": "accept destination runtime automation capability gaps",
+            }
+        )
+    relocation_reanchors = [
+        item
+        for item in changes["side_effect_writes"]
+        if item.get("reason") == "reanchor_relocation_baseline"
+    ]
+    if relocation_reanchors:
+        required_confirmations.append(
+            {
+                "id": "accept_relocation_baseline_reanchor",
+                "kind": "relocation",
+                "paths": [item["path"] for item in relocation_reanchors],
+                "message": "accept rebinding path-sensitive automation to the current target",
             }
         )
     ready = planned_score["passed"] and not conflicts
@@ -1288,6 +1375,20 @@ def plan_reconcile(target_dir, mechanism_path, parameters=None):
         "conflicts": conflicts,
         "required_confirmations": required_confirmations,
         "score": {"planned": planned_score, "installed": None},
+        "warnings": (
+            [
+                {
+                    "id": "relocation_baseline_reanchor",
+                    "path": relocation_reanchors[0]["path"],
+                    "message": (
+                        "the installed relocation baseline differs from the current target; "
+                        "reconcile will explicitly re-anchor path-sensitive automation"
+                    ),
+                }
+            ]
+            if relocation_reanchors
+            else []
+        ),
     }
     return ReconcilePlan(
         target_dir=target_dir,
@@ -1350,16 +1451,25 @@ def apply_reconcile(plan, accept_degraded=False):
     )
     installed_spec_hash = _sha256_bytes(installed_spec.read_bytes())
     doctor = doctor_target(plan.target_dir)
-    ok = (
-        installed_score["passed"]
-        and installed_spec_hash == plan.report["spec"]["to_sha256"]
-        and doctor["ok"]
-    )
+    spec_applied = installed_spec_hash == plan.report["spec"]["to_sha256"]
+    verification_attention = []
+    if not installed_score["passed"]:
+        verification_attention.append(
+            "installed checker score did not pass; reconcile operation still applied the requested spec"
+        )
+    if not doctor["ok"]:
+        verification_attention.append(
+            "managed projection doctor found structural issues after reconcile"
+        )
     receipt = plan.to_dict()
     receipt.update(
         {
             "status": "applied_with_degradations" if degraded else "applied",
-            "ok": ok,
+            "ok": spec_applied,
+            "spec_applied": spec_applied,
+            "installed_score_passed": bool(installed_score["passed"]),
+            "doctor_ok": bool(doctor["ok"]),
+            "verification_attention": verification_attention,
             "accepted_degradations": copy.deepcopy(degraded) if accept_degraded else [],
             "installed_artifacts": install_result["installed_artifacts"],
             "preserved_instance_state": receipt["changes"]["preserved_instance_state"],
@@ -1377,7 +1487,7 @@ def apply_reconcile(plan, accept_degraded=False):
     return receipt
 
 
-def _plan_reconcile_changes(target_dir, installed_manifest, pack):
+def _plan_reconcile_changes(target_dir, installed_manifest, pack, to_spec_hash):
     desired_manifest = json.loads(pack["manifest.json"])
     desired_artifacts = set(_manifest_artifacts(desired_manifest))
     installed_artifacts = set(_manifest_artifacts(installed_manifest))
@@ -1405,8 +1515,8 @@ def _plan_reconcile_changes(target_dir, installed_manifest, pack):
         if rel_path in config_paths:
             try:
                 existing_text = target.read_text(encoding="utf-8")
-                merge_managed_hook_config(existing_text, desired)
-                same = managed_hook_fragment_digest(existing_text) == managed_hook_fragment_digest(desired)
+                merged_text = merge_managed_hook_config(existing_text, desired)
+                same = existing_text == merged_text
                 if _json_has_unmanaged_hook_entries(existing_text):
                     manual_merges.append(
                         {
@@ -1451,6 +1561,11 @@ def _plan_reconcile_changes(target_dir, installed_manifest, pack):
         for record in records
         if record.get("status") == "projected_pending_user_review"
     ]
+    side_effect_writes = _reconcile_side_effect_writes(
+        target_dir,
+        desired_manifest,
+        to_spec_hash,
+    )
     return (
         {
             "managed_projection_updates": managed_updates,
@@ -1461,9 +1576,58 @@ def _plan_reconcile_changes(target_dir, installed_manifest, pack):
             "preserved_sidecars": preserved_sidecars,
             "degraded": degraded,
             "pending_activation": pending_activation,
+            "side_effect_writes": side_effect_writes,
         },
         conflicts,
     )
+
+
+def _reconcile_side_effect_writes(target_dir, desired_manifest, to_spec_hash):
+    writes = []
+    feature = (
+        desired_manifest.get("features", {}).get("automations", {})
+        if isinstance(desired_manifest, dict)
+        else {}
+    )
+    records = feature.get("records", []) if isinstance(feature, dict) else []
+    needs_baseline = any(
+        isinstance(record, dict)
+        and record.get("producer") == "relocation_guard"
+        and str(record.get("status", "")).startswith("projected")
+        for record in records
+    )
+    if needs_baseline:
+        rel_path = ".packwright/baseline-path"
+        destination = target_dir / rel_path
+        desired = str(target_dir.resolve()) + "\n"
+        current = None
+        try:
+            current = destination.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            pass
+        if current != desired:
+            writes.append(
+                {
+                    "path": rel_path,
+                    "operation": "add" if current is None else "update",
+                    "reason": (
+                        "initialize_relocation_baseline"
+                        if current is None
+                        else "reanchor_relocation_baseline"
+                    ),
+                }
+            )
+    receipt_path = (
+        f".packwright/receipts/reconcile-{to_spec_hash[:12]}.json"
+    )
+    writes.append(
+        {
+            "path": receipt_path,
+            "operation": "update" if (target_dir / receipt_path).is_file() else "add",
+            "reason": "write_reconcile_receipt",
+        }
+    )
+    return writes
 
 
 def _json_has_unmanaged_hook_entries(text):
@@ -1666,6 +1830,18 @@ def _plan_migration_changes(
             )
 
     target_manifest = json.loads(pack["manifest.json"])
+    automation_feature = target_manifest.get("features", {}).get("automations", {})
+    automation_records = (
+        automation_feature.get("records", [])
+        if isinstance(automation_feature, dict)
+        else []
+    )
+    pending_activation = [
+        copy.deepcopy(record)
+        for record in automation_records
+        if isinstance(record, dict)
+        and record.get("status") == "projected_pending_user_review"
+    ]
     degraded = _plan_runtime_automation_degradations(
         source_target_dir,
         source_manifest,
@@ -1765,6 +1941,7 @@ def _plan_migration_changes(
             "removed_destination_state": removed_destination_state,
             "degraded": degraded,
             "excluded": excluded,
+            "pending_activation": pending_activation,
         },
         warnings,
     )
@@ -1969,6 +2146,20 @@ def _migration_required_confirmations(changes):
                 "message": (
                     "accept removal of destination-only portable files when source state "
                     "is mirrored into the destination"
+                ),
+            }
+        )
+    resets = changes.get("emotion_state_resets", [])
+    if resets:
+        confirmations.append(
+            {
+                "id": "accept_emotion_state_reset",
+                "kind": "reset",
+                "paths": [item["path"] for item in resets],
+                "source_paths": [item["source_path"] for item in resets],
+                "message": (
+                    "accept excluding source Emotion Engine continuity and initializing "
+                    "fresh destination state with trust_anchor=0.1"
                 ),
             }
         )
@@ -2239,11 +2430,15 @@ def _refresh_artifact_lock(target_dir):
         path = resolve_source_path(target_dir, rel_path, "installed artifact")
         artifacts[rel_path] = _artifact_lock_record(manifest, rel_path, path)
     destination = resolve_destination_path(target_dir, LOCK_PATH, "artifact lock destination")
-    destination.write_text(
-        json.dumps({"schema": "packwright-lock/v1", "artifacts": artifacts}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    return _write_text_if_changed(
+        destination,
+        json.dumps(
+            {"schema": "packwright-lock/v1", "artifacts": artifacts},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
     )
-    return True
 
 
 def _update_artifact_lock_paths(target_dir, rel_paths):
@@ -2322,6 +2517,7 @@ def _repair_managed_artifact_drift(target_dir, manifest, issues):
         resolved = load_embedded_spec(target_dir)
         adapter = manifest.get("adapter")
         expected = _compile_pack_for_adapter(adapter, resolved, {"source_mechanism": SPEC_PATH})
+        expected = bind_pack_runtime_paths(expected, target_dir)
         receipt = _score_migration_pack(resolved, expected, adapter)
         expected = embed_pack_metadata(expected, resolved, receipt)
     except (OSError, ValueError, PackwrightValidationError, json.JSONDecodeError):
@@ -2393,7 +2589,16 @@ def _write_automation_baseline(target_dir, manifest):
         target_dir, ".packwright/baseline-path", "automation relocation baseline"
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(str(target_dir.resolve()) + "\n", encoding="utf-8")
+    return _write_text_if_changed(destination, str(target_dir.resolve()) + "\n")
+
+
+def _write_text_if_changed(path, content):
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            return False
+    except (OSError, UnicodeError):
+        pass
+    path.write_text(content, encoding="utf-8")
     return True
 
 
@@ -2474,8 +2679,15 @@ def _migrate_should_include_emotion_engine(emotion_engine_source):
     )
 
 
-def _migration_emotion_state_report(state_source, runtime_active):
-    if runtime_active:
+def _migration_emotion_state_report(
+    state_source,
+    runtime_active,
+    reset=False,
+    excluded_source=None,
+):
+    if reset:
+        status = "reset_to_fresh_state"
+    elif runtime_active:
         status = "active"
     elif state_source:
         status = "snapshot_inert"
@@ -2486,7 +2698,22 @@ def _migration_emotion_state_report(state_source, runtime_active):
         "status": status,
         "source_path": str(state_source) if state_source else None,
         "will_initialize": bool(runtime_active and not state_source),
+        "excluded_source_path": str(excluded_source) if excluded_source else None,
+        "initialized_trust_anchor": 0.1 if reset else None,
     }
+
+
+def _directory_is_empty_or_missing(path):
+    path = Path(path)
+    if not path.exists():
+        return True
+    if not path.is_dir():
+        return False
+    try:
+        next(path.iterdir())
+    except StopIteration:
+        return True
+    return False
 
 
 def _compile_pack_for_adapter(adapter, resolved, references):
