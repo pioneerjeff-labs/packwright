@@ -4,6 +4,8 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.3.3] - 2026-08-02
+
 ### Changed
 
 - Emit Codex `SessionStart` and `UserPromptSubmit` context through the explicit
@@ -211,6 +213,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.3.3]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.3
 [0.3.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.0

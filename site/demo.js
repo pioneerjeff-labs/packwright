@@ -2,8 +2,8 @@
   "use strict";
 
   const englishLines = [
-    { className: "cmd", text: "python -m pip install packwright==0.3.2" },
-    { className: "t-ok", text: "  ✓ installed packwright 0.3.2 · Pi Core included" },
+    { className: "cmd", text: "python -m pip install packwright==0.3.3" },
+    { className: "t-ok", text: "  ✓ installed packwright 0.3.3 · Pi Core included" },
     { className: "cmd", text: "packwright init --template code --name Nova -o work/nova" },
     { className: "cmd", text: "packwright build work/nova --adapter claude-code -o pack/nova-claude" },
     { className: "t-ok", text: "  ✓ pack compiled · checker score 100.0" },
@@ -18,8 +18,8 @@
     { className: "t-dim", text: "# structure verified · operational readiness reported separately" },
   ];
   const chineseLines = [
-    { className: "cmd", text: "python -m pip install packwright==0.3.2" },
-    { className: "t-ok", text: "  ✓ 已安装 packwright 0.3.2 · 已支持 Pi Core" },
+    { className: "cmd", text: "python -m pip install packwright==0.3.3" },
+    { className: "t-ok", text: "  ✓ 已安装 packwright 0.3.3 · 已支持 Pi Core" },
     { className: "cmd", text: "packwright init --template code --name Nova -o work/nova" },
     { className: "cmd", text: "packwright build work/nova --adapter claude-code -o pack/nova-claude" },
     { className: "t-ok", text: "  ✓ pack 编译完成 · checker 评分 100.0" },
@@ -37,25 +37,25 @@
   const lines = isChinese ? chineseLines : englishLines;
   const quickstartCommands = {
     pi: [
-      "python -m pip install packwright==0.3.2",
+      "python -m pip install packwright==0.3.3",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter pi -o pack/nova-pi",
       "packwright install pack/nova-pi --adapter pi --target project/nova-pi",
     ].join("\n"),
     "claude-code": [
-      "python -m pip install packwright==0.3.2",
+      "python -m pip install packwright==0.3.3",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter claude-code -o pack/nova-claude",
       "packwright install pack/nova-claude --adapter claude-code --target project/nova-claude",
     ].join("\n"),
     codex: [
-      "python -m pip install packwright==0.3.2",
+      "python -m pip install packwright==0.3.3",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter codex -o pack/nova-codex",
       "packwright install pack/nova-codex --adapter codex --target project/nova-codex",
     ].join("\n"),
     cursor: [
-      "python -m pip install packwright==0.3.2",
+      "python -m pip install packwright==0.3.3",
       "packwright init --template code --name Nova -o work/nova",
       "packwright build work/nova --adapter cursor -o pack/nova-cursor",
       "packwright install pack/nova-cursor --adapter cursor --target project/nova-cursor",
