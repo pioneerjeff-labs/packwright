@@ -37,10 +37,10 @@
 <p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
 > [!TIP]
-> **Current release: 0.3.2.** Codex targets now use absolute hook paths,
-> budget-bounded full context, and digest-bound activation receipts. Migration
-> and reconcile separately report successful application and installed-tree
-> verification attention. Pi Core support was introduced in 0.3.0.
+> **Current release: 0.3.3.** Codex activation receipts now verify that the
+> complete managed context reached the transcript as developer messages, bound
+> to both the current hook and runner digests. Migration and reconcile continue
+> to report successful application separately from installed-tree verification.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
@@ -201,12 +201,11 @@ packwright verify-activation project/nova-codex --adapter codex
 packwright doctor project/nova-codex
 ```
 
-On the current unreleased `main`, changing either the managed hook fragment or
-runner invalidates the old receipt. Packwright returns runtime readiness to
-attention-required until the current `SessionStart` and `UserPromptSubmit`
-contexts are found intact as Codex developer messages and verified again. The
-published `0.3.2` receipt proves hook execution but does not yet inspect model
-delivery.
+In `0.3.3`, changing either the managed hook fragment or runner invalidates the
+old receipt. Packwright returns runtime readiness to attention-required until
+the current `SessionStart` and `UserPromptSubmit` contexts are found intact as
+Codex developer messages and verified again. Manual runner execution and
+execution-only `0.3.2` evidence no longer qualify.
 
 Mechanism 0.8 projects bounded local `session_start` and `user_prompt` context
 from canonical `automations`. Claude Code and Codex support both events. Cursor
@@ -266,7 +265,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.3.2` is the current stable maintenance release; `0.3.0` was the first
+`0.3.3` is the current stable maintenance release; `0.3.0` was the first
 release with Pi Core support, and `0.1.0` remains the first stable baseline.
 Packwright is local tooling, not cloud sync, and its plain-file structure score
 is separate from real runtime compatibility. Pi project trust and lifecycle
@@ -283,6 +282,7 @@ claims.
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.3 release notes](docs/releases/0.3.3.md)
 - [0.3.2 release notes](docs/releases/0.3.2.md)
 - [0.3.1 release notes](docs/releases/0.3.1.md)
 - [0.3.0 release notes](docs/releases/0.3.0.md)

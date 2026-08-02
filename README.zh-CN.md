@@ -37,9 +37,9 @@
 <p align="center"><strong>原生 pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
 
 > [!TIP]
-> **当前版本：0.3.2。** Codex target 现在使用绝对 hook 路径、有预算上限的
-> 全量上下文，以及与 hook 摘要绑定的激活收据。迁移与 reconcile 会把写入成功
-> 和安装后验证待关注分开报告。Pi Core 支持始于 0.3.0。
+> **当前版本：0.3.3。** Codex 激活收据现在会验证完整 managed context 确实以
+> developer message 送达 transcript，并同时绑定当前 hook 与 runner 摘要。迁移与
+> reconcile 继续把写入成功和安装后验证待关注分开报告。
 
 > [!NOTE]
 > Packwright 自身不会发起网络请求，也不会发送遥测数据。coding runtime 仍可能把它读取的文件发送给自己的模型服务商，其数据政策继续适用。
@@ -181,10 +181,10 @@ packwright verify-activation project/nova-codex --adapter codex
 packwright doctor project/nova-codex
 ```
 
-当前尚未发布的 `main` 会在 managed hook 或 runner 任一变化时让旧收据失效；
-只有当前 `SessionStart` 与 `UserPromptSubmit` 上下文完整出现在 Codex 的
-developer message 中并重新验证后，runtime readiness 才会恢复。已发布的
-`0.3.2` 收据只证明 hook 执行，尚未检查模型送达。
+`0.3.3` 会在 managed hook 或 runner 任一变化时让旧收据失效；只有当前
+`SessionStart` 与 `UserPromptSubmit` 上下文完整出现在 Codex 的 developer
+message 中并重新验证后，runtime readiness 才会恢复。手动执行 runner 和只证明
+执行过的 `0.3.2` 证据不再满足激活条件。
 
 机制 0.8 会从 canonical `automations` 投影有字节上限的本地
 `session_start` 与 `user_prompt` 上下文。Claude Code 和 Codex 支持两个事件；
@@ -240,7 +240,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 ## 当前发布边界
 
-`0.3.2` 是当前稳定维护版本；`0.3.0` 是首个支持 Pi Core 的版本，`0.1.0`
+`0.3.3` 是当前稳定维护版本；`0.3.0` 是首个支持 Pi Core 的版本，`0.1.0`
 仍是首个稳定基线。Packwright 是本地工具，不是云同步服务；plain-file 结构
 分数与真实 runtime 兼容性是两件事。Pi project trust 与生命周期 extension
 仍是需要明确完成的 runtime 激活步骤，不会被伪装成已自动就绪。
@@ -255,6 +255,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [本地 runtime automation](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.3 发布说明](docs/releases/0.3.3.md)
 - [0.3.2 发布说明](docs/releases/0.3.2.md)
 - [0.3.1 发布说明](docs/releases/0.3.1.md)
 - [0.3.0 发布说明](docs/releases/0.3.0.md)

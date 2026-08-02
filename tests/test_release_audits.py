@@ -487,7 +487,7 @@ class PublicTreeAuditTest(unittest.TestCase):
             self.assertIn('data-adapter="claude-code"', document)
             self.assertIn('>Claude Code</button>', document)
             self.assertLess(document.index('data-adapter="pi"'), document.index('data-adapter="claude-code"'))
-            self.assertIn("python -m pip install packwright==0.3.2", document)
+            self.assertIn("python -m pip install packwright==0.3.3", document)
 
         demo = (ROOT / "site" / "demo.js").read_text(encoding="utf-8")
         self.assertIn("const englishLines = [", demo)
