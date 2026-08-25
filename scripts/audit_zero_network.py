@@ -45,8 +45,16 @@ AUTO_LOADING_LINK_RELS = {
     "stylesheet",
 }
 SCAN_ROOTS = ("src", "scripts", "templates", "examples")
-SAFE_IMPORTS = {("scripts/audit_public_tree.py", "subprocess")}
-SAFE_CALLS = {("scripts/audit_public_tree.py", "subprocess", "check_output")}
+SAFE_IMPORTS = {
+    ("scripts/audit_public_tree.py", "subprocess"),
+    ("src/packwright/core/install.py", "subprocess"),
+    ("src/packwright/core/emotion_engine_projection.py", "subprocess"),
+}
+SAFE_CALLS = {
+    ("scripts/audit_public_tree.py", "subprocess", "check_output"),
+    ("src/packwright/core/install.py", "subprocess", "run"),
+    ("src/packwright/core/emotion_engine_projection.py", "subprocess", "run"),
+}
 
 
 def _relative_label(path, root=None):
@@ -62,11 +70,12 @@ def _relative_label(path, root=None):
 def _is_exempt(path_label, module, attr=None):
     normalized = path_label.replace("\\", "/")
     collection = SAFE_CALLS if attr else SAFE_IMPORTS
-    expected = ("scripts/audit_public_tree.py", module, attr) if attr else (
-        "scripts/audit_public_tree.py",
-        module,
+    source_label = normalized.split(":", 1)[0]
+    return any(
+        item[1:] == ((module, attr) if attr else (module,))
+        and source_label.endswith(item[0])
+        for item in collection
     )
-    return expected in collection and normalized.endswith(expected[0])
 
 
 def _audit_python_source(text, path_label):

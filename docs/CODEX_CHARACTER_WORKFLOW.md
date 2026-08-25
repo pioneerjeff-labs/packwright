@@ -88,7 +88,7 @@ Codex should then run the workflow below.
    ```
 
    The optional Emotion Engine files exist only when installation explicitly
-   includes `--include-emotion-engine` and an Emotion Engine v1.0.0 source:
+   includes `--include-emotion-engine` and an Emotion Engine v2.0.0-rc.3 source:
 
    ```text
    build/<slug>-codex-target/.agents/skills/emotion-engine/SKILL.md

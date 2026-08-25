@@ -133,9 +133,9 @@ def _config_has_unmanaged_hook_entries(path):
     hooks = data.get("hooks", {}) if isinstance(data, dict) else {}
     if not isinstance(hooks, dict):
         return True
-    marker = "packwright_automation.py"
+    managed_markers = ("packwright_automation.py", "emotion_engine_lifecycle.py")
     return any(
-        marker not in json.dumps(entry, sort_keys=True)
+        not any(marker in json.dumps(entry, sort_keys=True) for marker in managed_markers)
         for entries in hooks.values()
         if isinstance(entries, list)
         for entry in entries
