@@ -152,6 +152,10 @@ def _runtime_activation_layer(target_dir, manifest, warnings):
     }
     if "pi_project_trust_unverified" in warning_ids:
         reasons.append("Pi project trust has not been verified by Packwright")
+    if "emotion_engine_lifecycle_unverified" in warning_ids:
+        reasons.append(
+            "Emotion Engine has no verified host-native Codex SessionStart receipt yet"
+        )
     if reasons:
         layer = {
             "status": "attention_required",

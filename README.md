@@ -37,10 +37,10 @@
 <p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
 > [!TIP]
-> **Current release: 0.3.3.** Codex activation receipts now verify that the
-> complete managed context reached the transcript as developer messages, bound
-> to both the current hook and runner digests. Migration and reconcile continue
-> to report successful application separately from installed-tree verification.
+> **Current release: 0.3.4.** Optional Emotion Engine installs now pin
+> v2.0.0-rc.3, keep v2 state read-only until an explicit backed-up migration,
+> verify one coherent helper/MCP/skill/wrapper cohort, and forward only
+> host-native Codex session identities through the capability-gated bridge.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
@@ -265,7 +265,7 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.3.3` is the current stable maintenance release; `0.3.0` was the first
+`0.3.4` is the current stable maintenance release; `0.3.0` was the first
 release with Pi Core support, and `0.1.0` remains the first stable baseline.
 Packwright is local tooling, not cloud sync, and its plain-file structure score
 is separate from real runtime compatibility. Pi project trust and lifecycle
@@ -282,6 +282,7 @@ claims.
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
+- [0.3.4 release notes](docs/releases/0.3.4.md)
 - [0.3.3 release notes](docs/releases/0.3.3.md)
 - [0.3.2 release notes](docs/releases/0.3.2.md)
 - [0.3.1 release notes](docs/releases/0.3.1.md)

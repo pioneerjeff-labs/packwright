@@ -9,11 +9,15 @@ from packwright.core.adapter_layout import (
 from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_AVAILABLE_RUNTIME,
     EMOTION_ENGINE_CLAUDE_RUNTIME,
+    EMOTION_ENGINE_LIFECYCLE_PATH,
     EMOTION_ENGINE_MCP_WRAPPER_PATH,
     EMOTION_ENGINE_MODES,
+    EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
+    EMOTION_ENGINE_REQUIRED_CAPABILITIES,
     EMOTION_ENGINE_RUNTIME,
     EMOTION_ENGINE_RUNTIME_ROOT,
     EMOTION_ENGINE_STATE_PATH,
+    EMOTION_ENGINE_STATE_SCHEMA,
     EMOTION_ENGINE_WRAPPER_PATH,
     emotion_engine_artifacts,
     emotion_engine_expected,
@@ -954,7 +958,15 @@ def _emotion_engine_enabled(adapter_pack, entry, manifest):
 
 def _emotion_engine_state_valid(text):
     state = _parse_json(text)
-    return isinstance(state, dict) and state.get("_schema") == "emotion-engine-state/v2"
+    return (
+        isinstance(state, dict)
+        and state.get("_schema") == EMOTION_ENGINE_STATE_SCHEMA
+        and state.get("identity", {}).get("status") == "bound"
+        and all(
+            capability in state.get("capabilities", [])
+            for capability in EMOTION_ENGINE_REQUIRED_CAPABILITIES
+        )
+    )
 
 
 def _emotion_engine_entry_internal(adapter_pack, entry, adapter):
@@ -1020,7 +1032,7 @@ def _emotion_engine_mcp_present(adapter_pack, manifest):
         and "emotion_engine_record_policy" in mcp
         and "codex" in registration
         and "state" in registration
-        and "emotion_engine_repair" not in mcp
+        and '"name": "emotion_engine_repair"' not in mcp
         and "doctor_target" not in mcp
     )
 
@@ -1028,14 +1040,22 @@ def _emotion_engine_mcp_present(adapter_pack, manifest):
 def _emotion_engine_project_wrappers_present(adapter_pack, manifest):
     wrapper = adapter_pack.get(EMOTION_ENGINE_WRAPPER_PATH, "")
     mcp_wrapper = adapter_pack.get(EMOTION_ENGINE_MCP_WRAPPER_PATH, "")
+    lifecycle = adapter_pack.get(EMOTION_ENGINE_LIFECYCLE_PATH, "")
+    projection_receipt = _parse_json(adapter_pack.get(EMOTION_ENGINE_PROJECTION_RECEIPT_PATH, ""))
     artifacts = set(manifest.get("artifacts", [])) if isinstance(manifest, dict) else set()
     return (
         EMOTION_ENGINE_WRAPPER_PATH in adapter_pack
         and EMOTION_ENGINE_MCP_WRAPPER_PATH in adapter_pack
+        and EMOTION_ENGINE_LIFECYCLE_PATH in adapter_pack
+        and EMOTION_ENGINE_PROJECTION_RECEIPT_PATH in adapter_pack
         and EMOTION_ENGINE_WRAPPER_PATH in artifacts
         and EMOTION_ENGINE_MCP_WRAPPER_PATH in artifacts
+        and EMOTION_ENGINE_LIFECYCLE_PATH in artifacts
+        and EMOTION_ENGINE_PROJECTION_RECEIPT_PATH in artifacts
         and "emotion_engine_utils.py" in wrapper
         and "emotion_engine_mcp.py" in mcp_wrapper
+        and "session_idempotency/v1" in lifecycle
+        and projection_receipt.get("state_schema") == EMOTION_ENGINE_STATE_SCHEMA
     )
 
 
@@ -1048,6 +1068,7 @@ def _relationship_state_not_runtime_state(text):
         "trust_history",
         "emotion_trajectory",
         "emotion-engine-state/v2",
+        "emotion-engine-state/v3",
     )
     return not any(item in text for item in forbidden)
 

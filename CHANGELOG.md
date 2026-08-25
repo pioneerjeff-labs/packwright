@@ -4,6 +4,37 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.3.4] - 2026-08-25
+
+### Added
+
+- Add `packwright migrate-emotion-state`, which previews the exact v2-to-v3
+  identity binding without writes and, with `--yes`, creates a separate
+  timestamped backup before delegating migration to Emotion Engine and running
+  `activation_check` plus `audit_state`.
+- Add a Codex-native lifecycle bridge gated by `session_idempotency/v1`.
+  Replayed startup/resume/clear/compact events for one native session are
+  idempotent; when no close event exists, a different native session triggers
+  a deferred close before the new start.
+
+### Changed
+
+- Pin optional Emotion Engine projections to `v2.0.0-rc.3` and record state
+  schema, required capabilities, stable identity, writer cohort, and separate
+  installed/configured/active/verified layers in the target manifest.
+- Verify helper, MCP server, skill, wrappers, lifecycle bridge, projection
+  receipt, state capabilities, bound identity, activation, audit, and managed
+  configuration as one coherent cohort in `doctor`.
+
+### Fixed
+
+- Stop Packwright from constructing or directly patching Emotion Engine state.
+  Fresh state is initialized by the pinned helper; existing v2 and v3 state is
+  preserved byte-for-byte during install and refresh.
+- Keep v2 state read-only and report `migration_required` instead of treating a
+  newly projected runtime as active. Projection uses a pending marker and a
+  digest receipt so interrupted or mixed-version refreshes fail closed.
+
 ## [0.3.3] - 2026-08-02
 
 ### Changed
@@ -213,6 +244,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.3.4]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.4
 [0.3.3]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.3
 [0.3.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.1
