@@ -25,7 +25,7 @@ Packwright's public starter presets are `code`, `work`, and `companion`. They ar
 - `memory/todos.md`: action queue and commitments.
 - `memory/collaboration.md`: collaboration calibration and repair notes.
 - `workspace/`: domain-first generated drafts, durable artifacts, and archives.
-- `.emotion-engine/state.json`: optional dynamic emotion state, separate from durable memory.
+- `features.emotion_engine.state_path` in the installed manifest: optional generation-scoped dynamic emotion state, separate from durable memory.
 
 ## Archetypes
 

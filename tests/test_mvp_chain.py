@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -63,8 +64,17 @@ from packwright.core.install import (
     _emotion_engine_state_issue_for_path,
     _retire_legacy_emotion_states,
 )
+from packwright.core.emotion_engine_contract import (
+    EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
+    EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
+    EMOTION_ENGINE_PROJECTION_PENDING_PATH,
+    EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
+    EMOTION_ENGINE_RUNTIME_ROOT,
+    EMOTION_ENGINE_STATE_PATH,
+    EMOTION_ENGINE_VERSION,
+)
 from packwright.core.naming import character_user_name, slugify
-from packwright.core.pack_metadata import embed_pack_metadata
+from packwright.core.pack_metadata import LOCK_PATH, embed_pack_metadata
 from packwright.core.workspace_contract import (
     WORKSPACE_DOMAIN_TEMPLATE_DIR,
     WORKSPACE_LAYOUT,
@@ -788,8 +798,8 @@ character:
                 include_emotion_engine=True,
                 emotion_engine_source=sidecar_source,
             )
-            state = json.loads((target_dir / ".emotion-engine" / "state.json").read_text(encoding="utf-8"))
-            self.assertEqual(state["runtime_mode"], "light")
+            state = json.loads((target_dir / EMOTION_ENGINE_STATE_PATH).read_text(encoding="utf-8"))
+            self.assertEqual(state["runtime_mode"], "always")
             self.assertEqual(state["volatility_profile"], "expressive")
             self.assertGreater(state["personality_baseline"]["pleasure"], 0.3)
             self.assertGreater(state["personality_baseline"]["dominance"], 0.55)
@@ -1773,27 +1783,27 @@ character:
             self.assertTrue(wrapper.exists())
             self.assertTrue(os.access(wrapper, os.X_OK))
             self.assertIn(
-                ".packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py",
+                f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py",
                 wrapper.read_text(encoding="utf-8"),
             )
             self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine" / "SKILL.md").exists())
             self.assertTrue(
-                (target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py").exists()
+                (target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py").exists()
             )
             self.assertTrue(
-                (target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_mcp.py").exists()
+                (target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_mcp.py").exists()
             )
             self.assertTrue(
-                (target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "register_mcp_client.py").exists()
+                (target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "register_mcp_client.py").exists()
             )
-            self.assertTrue((target_dir / ".emotion-engine" / "state.json").exists())
+            self.assertTrue((target_dir / EMOTION_ENGINE_STATE_PATH).exists())
             self.assertTrue(sidecar["state_created"])
             self.assertTrue(sidecar["entry_updated"])
-            self.assertEqual(sidecar["version"], "2.0.0-rc.3")
+            self.assertEqual(sidecar["version"], EMOTION_ENGINE_VERSION)
             self.assertEqual(sidecar["mcp_config"], ".codex/config.toml")
             self.assertTrue((target_dir / ".codex" / "config.toml").is_file())
 
-            state = json.loads((target_dir / ".emotion-engine" / "state.json").read_text(encoding="utf-8"))
+            state = json.loads((target_dir / EMOTION_ENGINE_STATE_PATH).read_text(encoding="utf-8"))
             self.assertEqual(state["_schema"], "emotion-engine-state/v3")
             self.assertEqual(state["identity"]["character_id"], "atlas")
             self.assertEqual(state["identity"]["relationship_id"], "atlas:primary-user")
@@ -1810,8 +1820,8 @@ character:
             self.assertEqual(target_manifest["features"]["emotion_engine"]["mode"], "light")
             self.assertEqual(target_manifest["boundaries"]["emotion_engine_runtime"], "project_mcp_sidecar")
             self.assertIn("scripts/emotion_engine.sh", target_manifest["artifacts"])
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/register_mcp_client.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py", target_manifest["artifacts"])
 
             installed_pack = _read_pack_from_dir(target_dir)
 
@@ -2071,7 +2081,7 @@ character:
 
                     self.assertEqual(result["adapter"], adapter)
                     self.assertTrue((target_dir / skill_paths[adapter]).is_file())
-                    self.assertEqual((target_dir / ".emotion-engine" / "state.json").read_bytes(), legacy_state)
+                    self.assertEqual((target_dir / EMOTION_ENGINE_STATE_PATH).read_bytes(), legacy_state)
                     self.assertEqual(legacy_path.read_bytes(), legacy_state)
                     config_text = config_path.read_text(encoding="utf-8")
                     self.assertIn("keep", config_text)
@@ -2099,7 +2109,7 @@ character:
                     self.assertEqual(mcp_status.returncode, 0, mcp_status.stderr)
                     self.assertEqual(
                         json.loads(mcp_status.stdout)["result"]["serverInfo"]["version"],
-                        "2.0.0-rc.3",
+                        EMOTION_ENGINE_VERSION,
                     )
 
                     installed_pack = _read_pack_from_dir(target_dir)
@@ -2149,7 +2159,7 @@ character:
             self.assertTrue(backup.is_file())
             self.assertEqual(
                 backup.read_bytes(),
-                (target_dir / ".emotion-engine/state.json").read_bytes(),
+                (target_dir / EMOTION_ENGINE_STATE_PATH).read_bytes(),
             )
             self.assertEqual(result["retired_legacy_state"][0]["to"], ".emotion-engine/codex-state.json.bak")
             self.assertNotIn(
@@ -2180,7 +2190,7 @@ character:
     def test_legacy_state_retirement_refuses_diverged_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             target_dir = Path(tmpdir)
-            canonical = target_dir / ".emotion-engine" / "state.json"
+            canonical = target_dir / EMOTION_ENGINE_STATE_PATH
             legacy = target_dir / ".emotion-engine" / "codex-state.json"
             canonical.parent.mkdir(parents=True)
             canonical.write_text('{"session_count":2}\n', encoding="utf-8")
@@ -2361,7 +2371,7 @@ character:
             )
 
             self.assertEqual(legacy_path.read_bytes(), legacy_state)
-            self.assertEqual((target_dir / ".emotion-engine" / "state.json").read_bytes(), legacy_state)
+            self.assertEqual((target_dir / EMOTION_ENGINE_STATE_PATH).read_bytes(), legacy_state)
             self.assertNotIn(".emotion-engine/codex-state.json", result.get("stale_removed", []))
 
     def test_emotion_state_survives_codex_claude_cursor_codex_round_trip(self):
@@ -2379,7 +2389,7 @@ character:
                 include_emotion_engine=True,
                 emotion_engine_source=source,
             )
-            state_path = source_target / ".emotion-engine" / "state.json"
+            state_path = source_target / EMOTION_ENGINE_STATE_PATH
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state["session_count"] = 17
             state["emotion_log"] = [{"event_type": "milestone", "situation": "preserve me"}]
@@ -2402,12 +2412,13 @@ character:
                     )
                     self.assertTrue(receipt["ok"], receipt)
                     self.assertEqual(receipt["emotion_engine_state"]["status"], "active")
-                    self.assertEqual((target / ".emotion-engine" / "state.json").read_bytes(), expected_state)
+                    self.assertEqual((target / EMOTION_ENGINE_STATE_PATH).read_bytes(), expected_state)
                     self.assertTrue((target / skill_path).is_file())
                     self.assertIn("emotion-engine", (target / config_path).read_text(encoding="utf-8"))
                     manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
                     self.assertTrue(manifest["features"]["emotion_engine"]["installed"])
                     self.assertEqual(manifest["features"]["emotion_engine"]["adapter"], adapter)
+                    _initialize_emotion_engine_mcp(target)
                     self.assertTrue(doctor_target(target)["ok"])
                     current_target = target
 
@@ -2464,7 +2475,7 @@ character:
                 "live workspace draft\n",
                 encoding="utf-8",
             )
-            state_path = source_target_dir / ".emotion-engine" / "state.json"
+            state_path = source_target_dir / EMOTION_ENGINE_STATE_PATH
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state["session_count"] = 5
             state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -2474,8 +2485,8 @@ character:
                 "- Current Codex entry -> `AGENTS.md`\n"
                 "- Current save-context skill -> `.agents/skills/system-save-context/SKILL.md`\n"
                 "- Current Codex sidecar skill -> `.agents/skills/emotion-engine/SKILL.md`\n"
-                "- Current Emotion Engine helper -> `.packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py`\n"
-                "- Project-local Emotion Engine runtime state -> `.emotion-engine/state.json`\n"
+                f"- Current Emotion Engine helper -> `{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py`\n"
+                f"- Project-local Emotion Engine runtime state -> `{EMOTION_ENGINE_STATE_PATH}`\n"
                 "- Emotion update policy reference -> `.codex/system/references/emotion/update-policy.yaml`\n",
                 encoding="utf-8",
             )
@@ -2502,7 +2513,7 @@ character:
             self.assertIn("knowledge", result["portable_state"])
             self.assertIn("sources", result["portable_state"])
             self.assertIn("memory/index.md", result["memory_projection"])
-            self.assertIn(".emotion-engine/state.json", result["state_snapshots"])
+            self.assertIn(EMOTION_ENGINE_STATE_PATH, result["state_snapshots"])
             self.assertNotIn("outputs_added", {change["id"] for change in result["mechanism_changes"]})
             self.assertEqual(result["emotion_engine_state"]["status"], "snapshot_inert")
 
@@ -2526,7 +2537,7 @@ character:
                 (cursor_target_dir / "memory" / "index.md").read_text(encoding="utf-8"),
             )
             migrated_state = json.loads(
-                (cursor_target_dir / ".emotion-engine" / "state.json").read_text(encoding="utf-8")
+                (cursor_target_dir / EMOTION_ENGINE_STATE_PATH).read_text(encoding="utf-8")
             )
             self.assertEqual(migrated_state["session_count"], 5)
             cursor_manifest = json.loads((cursor_target_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -3082,7 +3093,7 @@ character:
             pack_dir = root / "pack"
             target_dir = root / "target"
             sidecar_source = root / "emotion-engine"
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             pack_with_stale_agents = dict(pack)
             pack_with_stale_agents["AGENTS.md"] = (
                 pack["AGENTS.md"].rstrip()
@@ -3162,7 +3173,7 @@ character:
                 include_emotion_engine=True,
                 emotion_engine_source=sidecar_source,
             )
-            state_path = source_target / ".emotion-engine" / "state.json"
+            state_path = source_target / EMOTION_ENGINE_STATE_PATH
             state = json.loads(state_path.read_text(encoding="utf-8"))
             state["trust"] = 0.45
             state["trust_anchor"] = 0.45
@@ -3225,14 +3236,14 @@ character:
                 emotion_engine_source=sidecar_source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             state = json.loads(state_file.read_text(encoding="utf-8"))
             state["session_count"] = 7
             state["character_profile"]["description"] = "preserve this installed profile"
             state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-            target_helper = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py"
-            unmanaged_note = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "local-note.txt"
+            target_helper = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py"
+            unmanaged_note = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "local-note.txt"
             unmanaged_note.write_text("preserve local sidecar note\n", encoding="utf-8")
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
             source_helper_text = (
@@ -3256,9 +3267,9 @@ character:
             self.assertEqual(refreshed_state["character_profile"]["description"], "preserve this installed profile")
             target_manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(target_manifest["features"]["emotion_engine"]["installed"])
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py", target_manifest["artifacts"])
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/register_mcp_client.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py", target_manifest["artifacts"])
 
             installed_pack = _read_pack_from_dir(target_dir)
             scored = score_mechanism(resolved, installed_pack, adapter="codex")
@@ -3283,13 +3294,13 @@ character:
                 emotion_engine_source=sidecar_source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             state = json.loads(state_file.read_text(encoding="utf-8"))
             state["session_count"] = 11
             state_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            target_helper = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py"
-            target_mcp = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_mcp.py"
-            target_register = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "register_mcp_client.py"
+            target_helper = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py"
+            target_mcp = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_mcp.py"
+            target_register = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "register_mcp_client.py"
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
             target_mcp.unlink()
             target_register.unlink()
@@ -3309,14 +3320,19 @@ character:
                 emotion_engine_source=sidecar_source,
             )
 
-            self.assertTrue(fixed["ok"], fixed)
-            self.assertEqual(fixed["after_issues"], [])
+            self.assertFalse(fixed["ok"], fixed)
+            self.assertEqual(
+                {issue["id"] for issue in fixed["after_issues"]},
+                {"emotion_engine_mcp_restart_required"},
+            )
             self.assertEqual(fixed["fixes"][0]["id"], "emotion_engine_refreshed")
             self.assertNotIn("stale installed helper", target_helper.read_text(encoding="utf-8"))
             self.assertTrue(target_mcp.exists())
             self.assertTrue(target_register.exists())
             refreshed_state = json.loads(state_file.read_text(encoding="utf-8"))
             self.assertEqual(refreshed_state["session_count"], 11)
+            _initialize_emotion_engine_mcp(target_dir)
+            self.assertTrue(doctor_target(target_dir)["ok"])
 
     def test_rc3_refresh_preserves_v2_until_explicit_verified_migration(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
@@ -3334,7 +3350,7 @@ character:
                 emotion_engine_source=source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             legacy = json.loads(state_file.read_text(encoding="utf-8"))
             legacy["_schema"] = "emotion-engine-state/v2"
             for key in ("identity", "capabilities", "session", "session_ledger", "processed_event_ids"):
@@ -3358,6 +3374,7 @@ character:
                 {issue["id"] for issue in diagnosed["issues"]},
             )
 
+            _initialize_emotion_engine_mcp(target_dir)
             dry_run = migrate_emotion_engine_state(target_dir)
             self.assertEqual(dry_run["status"], "migration_ready")
             self.assertFalse(dry_run["applied"])
@@ -3389,7 +3406,7 @@ character:
                 emotion_engine_source=source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             legacy = json.loads(state_file.read_text(encoding="utf-8"))
             legacy["_schema"] = "emotion-engine-state/v2"
             for key in ("identity", "capabilities", "session", "session_ledger", "processed_event_ids"):
@@ -3398,6 +3415,7 @@ character:
             refresh_emotion_engine(target_dir, emotion_engine_source=source)
             legacy_bytes = state_file.read_bytes()
             manifest_before = (target_dir / "manifest.json").read_bytes()
+            _initialize_emotion_engine_mcp(target_dir)
 
             with patch.dict(os.environ, {"PACKWRIGHT_TEST_FAIL_EMOTION_AUDIT": "1"}):
                 result = migrate_emotion_engine_state(target_dir, apply=True)
@@ -3449,7 +3467,7 @@ character:
 
             run_start("native-session-1", "startup")
             run_start("native-session-1", "resume")
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             first = json.loads(state_file.read_text(encoding="utf-8"))
             self.assertEqual(first["session_count"], 1)
             self.assertEqual(first["session"]["active_session_id"], "native-session-1")
@@ -3473,6 +3491,7 @@ character:
                 (target_dir / ".packwright" / "activation" / "emotion-engine-lifecycle.json").read_text(encoding="utf-8")
             )
             self.assertEqual(late_receipt["native_session_id"], "native-session-2")
+            _initialize_emotion_engine_mcp(target_dir)
             diagnosed = doctor_target(target_dir)
             self.assertTrue(diagnosed["ok"], diagnosed)
             self.assertNotIn(
@@ -3491,6 +3510,407 @@ character:
             run_start("native-session-3", "startup")
             self.assertEqual(state_file.read_bytes(), paused_before)
 
+    def test_refresh_invalidates_a_running_mcp_projection_nonce(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+
+            process = subprocess.Popen(
+                ["sh", str(target_dir / "scripts/emotion_engine_mcp.sh")],
+                cwd=str(target_dir),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            try:
+                process.stdin.write(
+                    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'
+                )
+                process.stdin.flush()
+                initialized = json.loads(process.stdout.readline())
+                self.assertEqual(
+                    initialized["result"]["serverInfo"]["version"],
+                    EMOTION_ENGINE_VERSION,
+                )
+                first_receipt = json.loads(
+                    (target_dir / EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH).read_text(
+                        encoding="utf-8"
+                    )
+                )
+
+                refresh_emotion_engine(target_dir, emotion_engine_source=source)
+                second_projection = json.loads(
+                    (target_dir / EMOTION_ENGINE_PROJECTION_RECEIPT_PATH).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertNotEqual(
+                    first_receipt["projection_nonce"],
+                    second_projection["projection_nonce"],
+                )
+                process.stdin.write(
+                    '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n'
+                )
+                process.stdin.flush()
+                rejected = json.loads(process.stdout.readline())
+                self.assertEqual(rejected["error"]["code"], -32041)
+                self.assertEqual(
+                    rejected["error"]["data"]["reason"],
+                    "projection_cohort_changed",
+                )
+            finally:
+                if process.stdin:
+                    process.stdin.close()
+                process.wait(timeout=5)
+                if process.stdout:
+                    process.stdout.close()
+                if process.stderr:
+                    process.stderr.close()
+
+            _initialize_emotion_engine_mcp(target_dir)
+            self.assertTrue(doctor_target(target_dir)["ok"])
+
+    def test_concurrent_refreshes_serialize_complete_writer_cohorts(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source_a = root / "emotion-a"
+            source_b = root / "emotion-b"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source_a)
+            shutil.copytree(source_a, source_b)
+            helper_b = source_b / "scripts/emotion_engine_utils.py"
+            helper_b.write_text(
+                helper_b.read_text(encoding="utf-8") + "\n# source-b cohort\n",
+                encoding="utf-8",
+            )
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source_a,
+            )
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(
+                    executor.map(
+                        lambda source: refresh_emotion_engine(
+                            target_dir,
+                            emotion_engine_source=source,
+                        ),
+                        (source_a, source_b),
+                    )
+                )
+            self.assertEqual(len(results), 2)
+            self.assertFalse((target_dir / EMOTION_ENGINE_PROJECTION_PENDING_PATH).exists())
+            manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
+            receipt = json.loads(
+                (target_dir / EMOTION_ENGINE_PROJECTION_RECEIPT_PATH).read_text(
+                    encoding="utf-8"
+                )
+            )
+            feature = manifest["features"]["emotion_engine"]
+            self.assertEqual(feature["source_digest"], receipt["source_digest"])
+            self.assertEqual(feature["projection_nonce"], receipt["projection_nonce"])
+            for rel_path, expected_hash in receipt["files"].items():
+                self.assertEqual(_test_sha256(target_dir / rel_path), expected_hash)
+            _initialize_emotion_engine_mcp(target_dir)
+            self.assertTrue(doctor_target(target_dir)["ok"])
+
+    def test_refresh_exception_restores_complete_writer_cohort(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            _initialize_emotion_engine_mcp(target_dir)
+            tracked = [
+                target_dir / "manifest.json",
+                target_dir / LOCK_PATH,
+                target_dir / EMOTION_ENGINE_STATE_PATH,
+                target_dir / EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
+                target_dir / EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
+                target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py",
+            ]
+            before = {path: path.read_bytes() for path in tracked if path.is_file()}
+            source_helper = source / "scripts" / "emotion_engine_utils.py"
+            source_helper.write_text(
+                source_helper.read_text(encoding="utf-8") + "\n# replacement cohort\n",
+                encoding="utf-8",
+            )
+
+            with patch(
+                "packwright.core.install._mark_emotion_engine_installed",
+                side_effect=RuntimeError("manifest commit failed"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "manifest commit failed"):
+                    refresh_emotion_engine(
+                        target_dir,
+                        emotion_engine_source=source,
+                    )
+
+            self.assertFalse((target_dir / EMOTION_ENGINE_PROJECTION_PENDING_PATH).exists())
+            for path, content in before.items():
+                self.assertEqual(path.read_bytes(), content, path)
+            self.assertTrue(doctor_target(target_dir)["ok"])
+
+    def test_pending_projection_fuses_shell_and_lifecycle_writers(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
+            before = state_file.read_bytes()
+            pending = target_dir / EMOTION_ENGINE_PROJECTION_PENDING_PATH
+            pending.write_text('{"status":"projecting"}\n', encoding="utf-8")
+
+            shell = subprocess.run(
+                [str(target_dir / "scripts/emotion_engine.sh"), "status"],
+                cwd=str(target_dir),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(shell.returncode, 75)
+            lifecycle = subprocess.run(
+                [sys.executable, str(target_dir / "scripts/emotion_engine_lifecycle.py"), "codex"],
+                cwd=str(target_dir),
+                input=json.dumps({
+                    "hook_event_name": "SessionStart",
+                    "session_id": "pending-session",
+                }),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(lifecycle.returncode, 0)
+            self.assertEqual(state_file.read_bytes(), before)
+
+    def test_migration_manifest_exception_restores_state_manifest_and_lock(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            pack = embed_pack_metadata(
+                compile_to_codex_pack(resolved),
+                resolved,
+                score_mechanism(resolved, compile_to_codex_pack(resolved), adapter="codex"),
+            )
+            _write_pack(pack, pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
+            _convert_emotion_state_to_v2(state_file)
+            refresh_emotion_engine(target_dir, emotion_engine_source=source)
+            _initialize_emotion_engine_mcp(target_dir)
+            state_before = state_file.read_bytes()
+            manifest_before = (target_dir / "manifest.json").read_bytes()
+            lock_before = (target_dir / LOCK_PATH).read_bytes()
+
+            with patch(
+                "packwright.core.install._update_artifact_lock_paths",
+                side_effect=RuntimeError("forced lock update failure"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "forced lock update failure"):
+                    migrate_emotion_engine_state(target_dir, apply=True)
+
+            self.assertEqual(state_file.read_bytes(), state_before)
+            self.assertEqual((target_dir / "manifest.json").read_bytes(), manifest_before)
+            self.assertEqual((target_dir / LOCK_PATH).read_bytes(), lock_before)
+            journal = json.loads(
+                (target_dir / EMOTION_ENGINE_MIGRATION_JOURNAL_PATH).read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(journal["status"], "rolled_back")
+            self.assertEqual(
+                migrate_emotion_engine_state(target_dir)["status"],
+                "migration_ready",
+            )
+
+    def test_paused_refresh_syncs_state_and_blocks_lifecycle(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            refresh_emotion_engine(
+                target_dir,
+                emotion_engine_source=source,
+                emotion_engine_mode="paused",
+            )
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+            self.assertFalse(state["enabled"])
+            self.assertEqual(state["runtime_mode"], "paused")
+            before = state_file.read_bytes()
+            subprocess.run(
+                [sys.executable, str(target_dir / "scripts/emotion_engine_lifecycle.py"), "codex"],
+                cwd=str(target_dir),
+                input=json.dumps({
+                    "hook_event_name": "SessionStart",
+                    "session_id": "paused-session",
+                }),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(state_file.read_bytes(), before)
+            _initialize_emotion_engine_mcp(target_dir)
+            self.assertTrue(doctor_target(target_dir)["ok"])
+
+    def test_placeholder_identity_requires_explicit_migration_binding(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
+            _convert_emotion_state_to_v2(state_file)
+            manifest_path = target_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["character"]["slug"] = "character"
+            manifest["sidecars"]["emotion-engine"]["identity"] = {
+                "character_id": "character",
+                "relationship_id": "character:primary-user",
+            }
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            planned = migrate_emotion_engine_state(target_dir)
+            self.assertEqual(planned["status"], "identity_confirmation_required")
+            with self.assertRaises(PackwrightValidationError):
+                migrate_emotion_engine_state(target_dir, apply=True)
+
+    def test_legacy_writer_path_cannot_downgrade_generation_state(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            legacy_path = target_dir / ".emotion-engine/state.json"
+            legacy_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_bytes = b'{"_schema":"emotion-engine-state/v2","session_count":4}\n'
+            legacy_path.write_bytes(legacy_bytes)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            generation_state = target_dir / EMOTION_ENGINE_STATE_PATH
+            self.assertNotEqual(generation_state.resolve(), legacy_path.resolve())
+            _initialize_emotion_engine_mcp(target_dir)
+            migrated = migrate_emotion_engine_state(target_dir, apply=True)
+            self.assertEqual(migrated["status"], "migrated", migrated)
+            generation_before = generation_state.read_bytes()
+
+            legacy_path.write_bytes(
+                b'{"_schema":"emotion-engine-state/v2","session_count":99}\n'
+            )
+            self.assertEqual(generation_state.read_bytes(), generation_before)
+            self.assertEqual(
+                json.loads(generation_state.read_text(encoding="utf-8"))["_schema"],
+                "emotion-engine-state/v3",
+            )
+
+    def test_claude_projection_uses_native_upstream_skill_without_codex_rewrite(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_claude_code_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            native = source / "integrations/claude-skill/emotion-engine/SKILL.md"
+            native.parent.mkdir(parents=True, exist_ok=True)
+            native.write_text(
+                "# Emotion Engine For Claude\n\n"
+                "Use CLAUDE_EMOTION_STATE and scripts/claude_emotion.sh. "
+                "Run register_mcp_client.py claude, settle_trust, require event_id, "
+                "and use Pause/Resume controls.\n",
+                encoding="utf-8",
+            )
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            skill = (target_dir / ".claude/skills/emotion-engine/SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("CLAUDE_EMOTION_STATE", skill)
+            self.assertIn("register_mcp_client.py claude", skill)
+            self.assertIn("record_policy", skill)
+            self.assertIn("`paused` mode, do not record, decay, or modulate", skill)
+            self.assertNotIn("CODEX_", skill)
+            self.assertNotIn("register_mcp_client.py codex", skill)
+
     def test_doctor_fix_upgrades_complete_v1_projection_but_leaves_v2_state_read_only(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3507,7 +3927,7 @@ character:
                 emotion_engine_source=source,
             )
 
-            state_file = target_dir / ".emotion-engine" / "state.json"
+            state_file = target_dir / EMOTION_ENGINE_STATE_PATH
             legacy = json.loads(state_file.read_text(encoding="utf-8"))
             legacy["_schema"] = "emotion-engine-state/v2"
             for key in ("identity", "capabilities", "session", "session_ledger", "processed_event_ids"):
@@ -3529,14 +3949,14 @@ character:
             manifest["sidecars"]["emotion-engine"] = {
                 "version": "1.0.0",
                 "mode": "light",
-                "state_file": ".emotion-engine/state.json",
+                "state_file": EMOTION_ENGINE_STATE_PATH,
                 "skill_path": ".agents/skills/emotion-engine/SKILL.md",
                 "source_digest": "old-v1",
             }
             manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            helper = target_dir / ".packwright/runtime/emotion-engine/scripts/emotion_engine_utils.py"
+            helper = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts/emotion_engine_utils.py"
             helper.write_text("# old v1 helper\n", encoding="utf-8")
-            (target_dir / ".packwright/runtime/emotion-engine/projection.json").unlink()
+            (target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "projection.json").unlink()
             (target_dir / "scripts/emotion_engine_lifecycle.py").unlink()
 
             repaired = doctor_target(
@@ -3552,12 +3972,13 @@ character:
             )
             upgraded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             feature = upgraded_manifest["features"]["emotion_engine"]
-            self.assertEqual(feature["version"], "2.0.0-rc.3")
+            self.assertEqual(feature["version"], EMOTION_ENGINE_VERSION)
             self.assertEqual(feature["state_schema"], "emotion-engine-state/v3")
             self.assertEqual(feature["activation"]["status"], "migration_required")
-            self.assertIn("ENGINE_VERSION = \"2.0.0-rc.3\"", helper.read_text(encoding="utf-8"))
+            self.assertIn(f'ENGINE_VERSION = "{EMOTION_ENGINE_VERSION}"', helper.read_text(encoding="utf-8"))
             self.assertTrue((target_dir / "scripts/emotion_engine_lifecycle.py").is_file())
 
+            _initialize_emotion_engine_mcp(target_dir)
             migrated = migrate_emotion_engine_state(target_dir, apply=True)
             self.assertEqual(migrated["status"], "migrated", migrated)
             self.assertTrue(doctor_target(target_dir)["ok"])
@@ -4089,14 +4510,14 @@ character:
             self.assertTrue((target_dir / "AGENTS.md").exists())
             self.assertTrue((target_dir / ".codex" / "atlas" / "references" / "mechanism" / "session-guards.yaml").exists())
             self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine" / "SKILL.md").exists())
-            self.assertTrue((target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_mcp.py").exists())
-            self.assertTrue((target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "register_mcp_client.py").exists())
-            self.assertTrue((target_dir / ".emotion-engine" / "state.json").exists())
+            self.assertTrue((target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_mcp.py").exists())
+            self.assertTrue((target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "register_mcp_client.py").exists())
+            self.assertTrue((target_dir / EMOTION_ENGINE_STATE_PATH).exists())
             target_manifest = json.loads((target_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(target_manifest["features"]["emotion_engine"]["installed"])
             self.assertEqual(target_manifest["features"]["emotion_engine"]["mode"], "light")
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
-            self.assertIn(".packwright/runtime/emotion-engine/scripts/register_mcp_client.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py", target_manifest["artifacts"])
+            self.assertIn(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/register_mcp_client.py", target_manifest["artifacts"])
 
             refused = subprocess.run(
                 [
@@ -4120,7 +4541,7 @@ character:
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("would be overwritten", refused.stderr)
 
-            target_helper = target_dir / ".packwright" / "runtime" / "emotion-engine" / "scripts" / "emotion_engine_utils.py"
+            target_helper = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py"
             target_helper.write_text("# stale installed helper\n", encoding="utf-8")
             source_helper = sidecar_source / "scripts" / "emotion_engine_utils.py"
             source_helper.write_text(
@@ -4190,10 +4611,32 @@ character:
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual(fixed.returncode, 0, fixed.stderr + fixed.stdout)
+            self.assertEqual(fixed.returncode, 1, fixed.stderr + fixed.stdout)
             fixed_manifest = json.loads(fixed.stdout)
-            self.assertTrue(fixed_manifest["ok"])
+            self.assertFalse(fixed_manifest["ok"])
+            self.assertEqual(
+                {issue["id"] for issue in fixed_manifest["issues"]},
+                {"emotion_engine_mcp_restart_required"},
+            )
             self.assertIn("state_file_lock", target_helper.read_text(encoding="utf-8"))
+            _initialize_emotion_engine_mcp(target_dir)
+            verified = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "packwright",
+                    "doctor",
+                    "--target-dir",
+                    str(target_dir),
+                ],
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(verified.returncode, 0, verified.stderr + verified.stdout)
+            self.assertTrue(json.loads(verified.stdout)["ok"])
 
     def test_cli_migrate_requires_separate_degradation_acceptance(self):
         env = os.environ.copy()
@@ -4581,13 +5024,13 @@ import shutil
 import sys
 from pathlib import Path
 
-ENGINE_VERSION = "2.0.0-rc.3"
+ENGINE_VERSION = "2.0.0-rc.4"
 STATE_SCHEMA = "emotion-engine-state/v3"
 LEGACY_STATE_SCHEMA = "emotion-engine-state/v2"
 STATE_CAPABILITIES = [
     "state_identity/v1", "structured_record_policy/v1", "session_idempotency/v1",
     "trust_evidence/v1", "behavior_audit/v1", "repair_plan/v1",
-    "migration_extensions/v1", "bounded_idempotency/v1",
+    "migration_extensions/v1", "bounded_idempotency/v1", "bounded_active_session/v1",
 ]
 
 def option(args, name):
@@ -4680,13 +5123,15 @@ def main():
         return 0
     if command == "pause":
         state["enabled"] = False
+        state["runtime_mode"] = "paused"
         save(path, state)
-        print(json.dumps({"ok": True, "enabled": False}))
+        print(json.dumps({"ok": True, "enabled": False, "runtime_mode": "paused"}))
         return 0
     if command == "resume":
         state["enabled"] = True
+        state["runtime_mode"] = option(args, "--mode") or "light"
         save(path, state)
-        print(json.dumps({"ok": True, "enabled": True}))
+        print(json.dumps({"ok": True, "enabled": True, "runtime_mode": state["runtime_mode"]}))
         return 0
     if command == "session_start":
         session_id = option(args, "--session-id")
@@ -4753,6 +5198,47 @@ if __name__ == "__main__":
     )
     (source_dir / "spec" / "emotion-state.schema.json").write_text("{}\n", encoding="utf-8")
     (source_dir / "LICENSE").write_text("test\n", encoding="utf-8")
+
+
+def _initialize_emotion_engine_mcp(target_dir):
+    completed = subprocess.run(
+        ["sh", str(Path(target_dir) / "scripts" / "emotion_engine_mcp.sh")],
+        cwd=str(target_dir),
+        input='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n',
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr or completed.stdout)
+    payload = json.loads(completed.stdout)
+    if payload.get("result", {}).get("serverInfo", {}).get("version") != EMOTION_ENGINE_VERSION:
+        raise AssertionError(payload)
+    return payload
+
+
+def _convert_emotion_state_to_v2(state_file):
+    state = json.loads(Path(state_file).read_text(encoding="utf-8"))
+    state["_schema"] = "emotion-engine-state/v2"
+    for key in (
+        "identity",
+        "capabilities",
+        "session",
+        "session_ledger",
+        "processed_event_ids",
+        "active_session_retention",
+    ):
+        state.pop(key, None)
+    Path(state_file).write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _test_sha256(path):
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 if __name__ == "__main__":

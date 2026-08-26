@@ -38,9 +38,9 @@
 
 > [!TIP]
 > **Current release: 0.3.4.** Optional Emotion Engine installs now pin
-> v2.0.0-rc.3, keep v2 state read-only until an explicit backed-up migration,
-> verify one coherent helper/MCP/skill/wrapper cohort, and forward only
-> host-native Codex session identities through the capability-gated bridge.
+> v2.0.0-rc.4, isolate each writer generation from legacy MCP processes, keep
+> v2 state read-only until an explicit journaled migration, and require a live
+> MCP initialize handshake after every complete cohort refresh.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.

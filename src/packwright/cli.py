@@ -188,11 +188,11 @@ def _build_parser():
         "--include-emotion-engine",
         action="store_true",
         default=None,
-        help="include the pinned adapter-native Emotion Engine v2.0.0-rc.3 runtime and project MCP configuration",
+        help="include the pinned adapter-native Emotion Engine v2.0.0-rc.4 runtime and project MCP configuration",
     )
     install.add_argument(
         "--emotion-engine-source",
-        help="Emotion Engine v2.0.0-rc.3 repository root or integration directory",
+        help="Emotion Engine v2.0.0-rc.4 repository root or integration directory",
     )
     install.add_argument(
         "--include-emotion-engine-codex",
@@ -307,6 +307,14 @@ def _build_parser():
         action="store_true",
         help="apply after creating a separate v2 backup; without this flag only the dry run is shown",
     )
+    migrate_emotion_state.add_argument(
+        "--character-id",
+        help="explicit stable character identity; required when the manifest slug is a placeholder",
+    )
+    migrate_emotion_state.add_argument(
+        "--relationship-id",
+        help="explicit stable relationship identity; required together with --character-id",
+    )
     migrate_emotion_state.add_argument("--out", help="output migration JSON path")
 
     doctor = subparsers.add_parser("doctor", help="inspect and optionally repair an installed target")
@@ -321,7 +329,7 @@ def _build_parser():
     doctor.add_argument("--fix", action="store_true", help="apply deterministic repairs for detected drift")
     doctor.add_argument(
         "--emotion-engine-source",
-        help="Emotion Engine v2.0.0-rc.3 repository root or integration directory, required to refresh runtime drift",
+        help="Emotion Engine v2.0.0-rc.4 repository root or integration directory, required to refresh runtime drift",
     )
     doctor.add_argument(
         "--emotion-engine-codex-source",
@@ -371,7 +379,7 @@ def _add_refresh_emotion_arguments(parser):
     parser.add_argument("--target-dir", required=True, help="installed target directory")
     parser.add_argument(
         "--emotion-engine-source",
-        help="Emotion Engine v2.0.0-rc.3 repository root or integration directory",
+        help="Emotion Engine v2.0.0-rc.4 repository root or integration directory",
     )
     parser.add_argument(
         "--emotion-engine-codex-source",
@@ -459,7 +467,7 @@ def _add_migrate_arguments(parser):
     )
     parser.add_argument(
         "--emotion-engine-source",
-        help="Emotion Engine v2.0.0-rc.3 source used to activate the carried state in the destination adapter",
+        help="Emotion Engine v2.0.0-rc.4 source used to activate the carried state in the destination adapter",
     )
     parser.add_argument(
         "--emotion-engine-codex-source",
@@ -523,8 +531,8 @@ def _add_new_arguments(parser):
     parser.add_argument("--pack-dir", help="built adapter pack directory; defaults to pack/<slug>-<adapter>")
     parser.add_argument("--target-dir", "--target", required=True, dest="target_dir", help="fresh installed target directory")
     parser.add_argument("--threshold", type=int, help="score threshold override")
-    parser.add_argument("--include-emotion-engine", action="store_true", help="install Emotion Engine v2.0.0-rc.3 and project MCP configuration")
-    parser.add_argument("--emotion-engine-source", help="Emotion Engine v2.0.0-rc.3 repository or integration directory")
+    parser.add_argument("--include-emotion-engine", action="store_true", help="install Emotion Engine v2.0.0-rc.4 and project MCP configuration")
+    parser.add_argument("--emotion-engine-source", help="Emotion Engine v2.0.0-rc.4 repository or integration directory")
     parser.add_argument("--emotion-style", help="style description for initialized Emotion Engine state")
     parser.add_argument("--emotion-engine-mode", choices=["light", "always", "paused"], help="override the recommended Emotion Engine mode")
     parser.add_argument("--out", help="output orchestration JSON path")
@@ -834,7 +842,12 @@ def _cmd_refresh_emotion_engine(args):
 
 
 def _cmd_migrate_emotion_state(args):
-    result = migrate_emotion_engine_state(args.target_dir, apply=args.yes)
+    result = migrate_emotion_engine_state(
+        args.target_dir,
+        apply=args.yes,
+        character_id=args.character_id,
+        relationship_id=args.relationship_id,
+    )
     _write_json_or_print(result, args.out)
     return 0 if result.get("status") != "verification_failed" else 1
 

@@ -88,12 +88,12 @@ Codex should then run the workflow below.
    ```
 
    The optional Emotion Engine files exist only when installation explicitly
-   includes `--include-emotion-engine` and an Emotion Engine v2.0.0-rc.3 source:
+   includes `--include-emotion-engine` and an Emotion Engine v2.0.0-rc.4 source:
 
    ```text
    build/<slug>-codex-target/.agents/skills/emotion-engine/SKILL.md
    build/<slug>-codex-target/.packwright/runtime/emotion-engine/
-   build/<slug>-codex-target/.emotion-engine/state.json
+   build/<slug>-codex-target/.emotion-engine/generations/2.0.0-rc.4-400bd2e/state.json
    ```
 
 ## Boundary

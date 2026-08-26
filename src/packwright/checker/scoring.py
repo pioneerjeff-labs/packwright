@@ -10,6 +10,7 @@ from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_AVAILABLE_RUNTIME,
     EMOTION_ENGINE_CLAUDE_RUNTIME,
     EMOTION_ENGINE_LIFECYCLE_PATH,
+    EMOTION_ENGINE_MCP_LAUNCHER_PATH,
     EMOTION_ENGINE_MCP_WRAPPER_PATH,
     EMOTION_ENGINE_MODES,
     EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
@@ -1041,19 +1042,23 @@ def _emotion_engine_project_wrappers_present(adapter_pack, manifest):
     wrapper = adapter_pack.get(EMOTION_ENGINE_WRAPPER_PATH, "")
     mcp_wrapper = adapter_pack.get(EMOTION_ENGINE_MCP_WRAPPER_PATH, "")
     lifecycle = adapter_pack.get(EMOTION_ENGINE_LIFECYCLE_PATH, "")
+    launcher = adapter_pack.get(EMOTION_ENGINE_MCP_LAUNCHER_PATH, "")
     projection_receipt = _parse_json(adapter_pack.get(EMOTION_ENGINE_PROJECTION_RECEIPT_PATH, ""))
     artifacts = set(manifest.get("artifacts", [])) if isinstance(manifest, dict) else set()
     return (
         EMOTION_ENGINE_WRAPPER_PATH in adapter_pack
         and EMOTION_ENGINE_MCP_WRAPPER_PATH in adapter_pack
         and EMOTION_ENGINE_LIFECYCLE_PATH in adapter_pack
+        and EMOTION_ENGINE_MCP_LAUNCHER_PATH in adapter_pack
         and EMOTION_ENGINE_PROJECTION_RECEIPT_PATH in adapter_pack
         and EMOTION_ENGINE_WRAPPER_PATH in artifacts
         and EMOTION_ENGINE_MCP_WRAPPER_PATH in artifacts
         and EMOTION_ENGINE_LIFECYCLE_PATH in artifacts
+        and EMOTION_ENGINE_MCP_LAUNCHER_PATH in artifacts
         and EMOTION_ENGINE_PROJECTION_RECEIPT_PATH in artifacts
         and "emotion_engine_utils.py" in wrapper
-        and "emotion_engine_mcp.py" in mcp_wrapper
+        and "packwright_mcp_launcher.py" in mcp_wrapper
+        and "projection_nonce" in launcher
         and "session_idempotency/v1" in lifecycle
         and projection_receipt.get("state_schema") == EMOTION_ENGINE_STATE_SCHEMA
     )
