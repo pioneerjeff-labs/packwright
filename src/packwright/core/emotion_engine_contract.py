@@ -6,8 +6,9 @@ EMOTION_ENGINE_MODES = set(EMOTION_ENGINE_USER_VISIBLE_MODES)
 EMOTION_ENGINE_RUNTIME = "project_mcp_sidecar"
 EMOTION_ENGINE_AVAILABLE_RUNTIME = "optional_project_mcp_sidecar"
 EMOTION_ENGINE_CLAUDE_RUNTIME = EMOTION_ENGINE_AVAILABLE_RUNTIME
-EMOTION_ENGINE_VERSION = "2.0.0-rc.3"
-EMOTION_ENGINE_UPSTREAM_COMMIT = "9c2dfa6107ce40c954943b7fe54278c586bb1593"
+EMOTION_ENGINE_VERSION = "2.0.0-rc.4"
+EMOTION_ENGINE_UPSTREAM_COMMIT = "400bd2eb0ebad5edd3000d7d5ff7da383dfa3615"
+EMOTION_ENGINE_GENERATION = "2.0.0-rc.4-400bd2e"
 EMOTION_ENGINE_STATE_SCHEMA = "emotion-engine-state/v3"
 EMOTION_ENGINE_LEGACY_STATE_SCHEMA = "emotion-engine-state/v2"
 EMOTION_ENGINE_REQUIRED_CAPABILITIES = (
@@ -19,19 +20,28 @@ EMOTION_ENGINE_REQUIRED_CAPABILITIES = (
     "repair_plan/v1",
     "migration_extensions/v1",
     "bounded_idempotency/v1",
+    "bounded_active_session/v1",
 )
 EMOTION_ENGINE_SIDECAR = "emotion-engine"
 EMOTION_ENGINE_MANIFEST_PATH = "manifest.json"
 
-EMOTION_ENGINE_RUNTIME_ROOT = ".packwright/runtime/emotion-engine"
-EMOTION_ENGINE_STATE_PATH = ".emotion-engine/state.json"
+EMOTION_ENGINE_RUNTIME_ROOT = (
+    f".packwright/runtime/emotion-engine/generations/{EMOTION_ENGINE_GENERATION}"
+)
+EMOTION_ENGINE_STATE_PATH = (
+    f".emotion-engine/generations/{EMOTION_ENGINE_GENERATION}/state.json"
+)
 EMOTION_ENGINE_LEGACY_STATE_PATHS = (
+    ".emotion-engine/state.json",
     ".emotion-engine/codex-state.json",
     ".emotion-engine/emotion-state.json",
 )
 EMOTION_ENGINE_WRAPPER_PATH = "scripts/emotion_engine.sh"
 EMOTION_ENGINE_MCP_WRAPPER_PATH = "scripts/emotion_engine_mcp.sh"
 EMOTION_ENGINE_LIFECYCLE_PATH = "scripts/emotion_engine_lifecycle.py"
+EMOTION_ENGINE_MCP_LAUNCHER_PATH = (
+    f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/packwright_mcp_launcher.py"
+)
 EMOTION_ENGINE_PROJECTION_RECEIPT_PATH = (
     f"{EMOTION_ENGINE_RUNTIME_ROOT}/projection.json"
 )
@@ -40,6 +50,13 @@ EMOTION_ENGINE_PROJECTION_PENDING_PATH = (
 )
 EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH = (
     ".packwright/activation/emotion-engine-lifecycle.json"
+)
+EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH = (
+    ".packwright/activation/emotion-engine-mcp.json"
+)
+EMOTION_ENGINE_TARGET_LOCK_PATH = ".packwright/emotion-engine.lock"
+EMOTION_ENGINE_MIGRATION_JOURNAL_PATH = (
+    ".packwright/transactions/emotion-engine-migration.json"
 )
 EMOTION_ENGINE_CODEX_LIFECYCLE_CONFIG_PATH = ".codex/hooks.json"
 
@@ -93,6 +110,7 @@ def emotion_engine_artifacts(adapter):
         EMOTION_ENGINE_WRAPPER_PATH,
         EMOTION_ENGINE_MCP_WRAPPER_PATH,
         EMOTION_ENGINE_LIFECYCLE_PATH,
+        EMOTION_ENGINE_MCP_LAUNCHER_PATH,
         EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
         emotion_engine_skill_path(adapter),
         EMOTION_ENGINE_STATE_PATH,
@@ -110,6 +128,7 @@ def emotion_engine_feature(
     source_digest=None,
     mcp_status=None,
     activation=None,
+    projection_nonce=None,
 ):
     if installed and not emotion_engine_runtime_supported(adapter):
         raise ValueError(f"Emotion Engine runtime is unavailable for adapter: {adapter}")
@@ -124,6 +143,8 @@ def emotion_engine_feature(
         "user_visible_modes": list(EMOTION_ENGINE_USER_VISIBLE_MODES),
         "state_path": EMOTION_ENGINE_STATE_PATH if installed else None,
         "runtime_root": EMOTION_ENGINE_RUNTIME_ROOT if installed else None,
+        "writer_generation": EMOTION_ENGINE_GENERATION if installed else None,
+        "projection_nonce": projection_nonce if installed else None,
         "skill_path": emotion_engine_skill_path(adapter) if installed else None,
         "mcp_config_path": emotion_engine_mcp_config_path(adapter) if installed else None,
         "mcp_status": mcp_status if installed else None,
@@ -141,12 +162,21 @@ def emotion_engine_feature(
     return feature
 
 
-def emotion_engine_sidecar_record(adapter, mode, source_digest, mcp_status, activation=None):
+def emotion_engine_sidecar_record(
+    adapter,
+    mode,
+    source_digest,
+    mcp_status,
+    activation=None,
+    projection_nonce=None,
+):
     return {
         "version": EMOTION_ENGINE_VERSION,
         "state_schema": EMOTION_ENGINE_STATE_SCHEMA,
         "required_capabilities": list(EMOTION_ENGINE_REQUIRED_CAPABILITIES),
         "upstream_commit": EMOTION_ENGINE_UPSTREAM_COMMIT,
+        "writer_generation": EMOTION_ENGINE_GENERATION,
+        "projection_nonce": projection_nonce,
         "mode": mode,
         "runtime_root": EMOTION_ENGINE_RUNTIME_ROOT,
         "skill_path": emotion_engine_skill_path(adapter),
@@ -160,9 +190,12 @@ def emotion_engine_sidecar_record(adapter, mode, source_digest, mcp_status, acti
             EMOTION_ENGINE_WRAPPER_PATH,
             EMOTION_ENGINE_MCP_WRAPPER_PATH,
             EMOTION_ENGINE_LIFECYCLE_PATH,
+            EMOTION_ENGINE_MCP_LAUNCHER_PATH,
         ],
         "projection_receipt": EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
         "lifecycle_receipt": EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
+        "mcp_activation_receipt": EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
+        "target_lock": EMOTION_ENGINE_TARGET_LOCK_PATH,
         "lifecycle_config": (
             EMOTION_ENGINE_CODEX_LIFECYCLE_CONFIG_PATH
             if adapter == "codex"
@@ -205,6 +238,17 @@ def emotion_engine_manifest_issues(manifest, expected_mode=None, required_artifa
         issues.append("manifest Emotion Engine adapter is inconsistent")
     if feature.get("version") != EMOTION_ENGINE_VERSION:
         issues.append("manifest Emotion Engine version is inconsistent")
+    if (
+        feature.get("writer_generation") != EMOTION_ENGINE_GENERATION
+        or sidecar.get("writer_generation") != EMOTION_ENGINE_GENERATION
+    ):
+        issues.append("manifest Emotion Engine writer generation is inconsistent")
+    if (
+        not isinstance(feature.get("projection_nonce"), str)
+        or not feature.get("projection_nonce")
+        or feature.get("projection_nonce") != sidecar.get("projection_nonce")
+    ):
+        issues.append("manifest Emotion Engine projection nonce is inconsistent")
     if feature.get("state_schema") != EMOTION_ENGINE_STATE_SCHEMA or sidecar.get("state_schema") != EMOTION_ENGINE_STATE_SCHEMA:
         issues.append("manifest Emotion Engine state schema is inconsistent")
     required_capabilities = list(EMOTION_ENGINE_REQUIRED_CAPABILITIES)
@@ -232,11 +276,16 @@ def emotion_engine_manifest_issues(manifest, expected_mode=None, required_artifa
         EMOTION_ENGINE_WRAPPER_PATH,
         EMOTION_ENGINE_MCP_WRAPPER_PATH,
         EMOTION_ENGINE_LIFECYCLE_PATH,
+        EMOTION_ENGINE_MCP_LAUNCHER_PATH,
     ]
     if sidecar.get("writer_cohort") != expected_writer_cohort:
         issues.append("manifest Emotion Engine writer cohort is inconsistent")
     if sidecar.get("projection_receipt") != EMOTION_ENGINE_PROJECTION_RECEIPT_PATH:
         issues.append("manifest Emotion Engine projection receipt path is inconsistent")
+    if sidecar.get("mcp_activation_receipt") != EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH:
+        issues.append("manifest Emotion Engine MCP activation receipt path is inconsistent")
+    if sidecar.get("target_lock") != EMOTION_ENGINE_TARGET_LOCK_PATH:
+        issues.append("manifest Emotion Engine target lock path is inconsistent")
     expected_lifecycle_config = (
         EMOTION_ENGINE_CODEX_LIFECYCLE_CONFIG_PATH if adapter == "codex" else None
     )

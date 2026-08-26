@@ -799,7 +799,7 @@ def _relationship_md(character):
             "## 关系连续性\n\n"
             f"{direct}\n\n"
             "## 边界\n\n"
-            "持久的协作校准写入 `memory/collaboration.md`；启用 Emotion Engine 后，其机器可读的情绪运行状态只写入 `.emotion-engine/state.json`。\n"
+            "持久的协作校准写入 `memory/collaboration.md`；启用 Emotion Engine 后，其机器可读状态只写入安装清单声明的 generation state path。\n"
         )
     direct = {
         "task_only": "Keep the relationship stable and practical. The character should focus on doing the work and avoid maintaining an emotional relationship unless the user explicitly asks.",
@@ -812,7 +812,7 @@ def _relationship_md(character):
         "## Relationship Continuity\n\n"
         f"{direct}\n\n"
         "## Boundary\n\n"
-        "Durable collaboration calibrations belong in `memory/collaboration.md`; machine-readable emotion runtime state belongs in `.emotion-engine/state.json` only when enabled.\n"
+        "Durable collaboration calibrations belong in `memory/collaboration.md`; machine-readable emotion runtime state belongs only in the generation state path declared by the installed manifest.\n"
     )
 
 
@@ -1084,7 +1084,7 @@ def _emotion_state_schema_yaml(name):
             "status": "structured_reserved",
             "runtime": "not_implemented",
             "schema": {
-                "runtime_state": ".emotion-engine/state.json when enabled",
+                "runtime_state": "manifest features.emotion_engine.state_path when enabled",
                 "durable_collaboration_notes": "memory/collaboration.md",
                 "boundary": f"Do not mix {name}'s live PAD/trust runtime state into durable memory notes.",
             },
@@ -1232,7 +1232,7 @@ def _memory_index_md():
         "- Drafts, durable artifacts, and archived outputs -> `workspace/`\n"
         "- Action queue -> `memory/todos.md`\n"
         "- Collaboration calibration notes -> `memory/collaboration.md`\n"
-        "- Dynamic emotion state and compact emotion history -> `.emotion-engine/state.json` when enabled\n\n"
+        "- Dynamic emotion state and compact emotion history -> manifest `features.emotion_engine.state_path` when enabled\n\n"
         "## Compatibility Files\n\n"
         "- `memory/pinned.md` is compatibility-only in the MVP; avoid using it as a normal memory layer.\n"
         "- `memory/recent-activity.md` is an old name for session recall; prefer `memory/session-index.md`.\n"

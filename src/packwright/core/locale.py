@@ -278,6 +278,7 @@ def localize_save_context_markdown(text, mechanism):
         "- `workspace/<domain>/` stores drafts, deliverables, and archives; important outputs should be indexed in `memory/source-map.md`.": "- `workspace/<domain>/` 保存草稿、交付物和归档；重要产物应在 `memory/source-map.md` 建立索引。",
         "- `.emotion-engine/state.json` stores dynamic emotion state; do not mirror it into memory files.": "- `.emotion-engine/state.json` 保存动态情绪状态；不要把它复制到记忆文件。",
         "- `.emotion-engine/state.json` stores dynamic emotion state when enabled; do not mirror it into memory files.": "- 启用后，`.emotion-engine/state.json` 保存动态情绪状态；不要把它复制到记忆文件。",
+        "- Dynamic emotion state and compact emotion history -> manifest `features.emotion_engine.state_path` when enabled": "- 动态情绪状态和紧凑情绪历史 -> 启用后写入清单的 `features.emotion_engine.state_path`",
         "- Do not write cloud state in the current local projection.": "- 当前本地投影不要写入云端状态。",
         "- Do not put current status into `CLAUDE.md` or `AGENTS.md`.": "- 不要把当前状态写入 `CLAUDE.md` 或 `AGENTS.md`。",
         "- Prefer one compact session-index lookup entry over copying long context.": "- 优先写一条紧凑的会话索引，而不是复制长上下文。",

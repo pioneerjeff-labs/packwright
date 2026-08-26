@@ -16,15 +16,21 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
   Replayed startup/resume/clear/compact events for one native session are
   idempotent; when no close event exists, a different native session triggers
   a deferred close before the new start.
+- Add a target-wide Emotion Engine transaction lock, per-refresh projection
+  nonce, live MCP initialize receipt, and persistent migration journal with
+  automatic recovery of interrupted state/manifest/lock commits.
 
 ### Changed
 
-- Pin optional Emotion Engine projections to `v2.0.0-rc.3` and record state
+- Pin optional Emotion Engine projections to `v2.0.0-rc.4` and record state
   schema, required capabilities, stable identity, writer cohort, and separate
   installed/configured/active/verified layers in the target manifest.
 - Verify helper, MCP server, skill, wrappers, lifecycle bridge, projection
   receipt, state capabilities, bound identity, activation, audit, and managed
   configuration as one coherent cohort in `doctor`.
+- Project the upstream Claude Code skill natively, synchronize
+  `light`/`always`/`paused` through the engine helper, and require explicit
+  migration ids when a manifest still uses a placeholder character slug.
 
 ### Fixed
 
@@ -34,6 +40,10 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Keep v2 state read-only and report `migration_required` instead of treating a
   newly projected runtime as active. Projection uses a pending marker and a
   digest receipt so interrupted or mixed-version refreshes fail closed.
+- Place runtime code and live state in a release-generation directory so an
+  already-running v1/rc.3 MCP process can write only its legacy state path.
+  Pending projections now fuse shell, lifecycle, and MCP writers; concurrent
+  refreshes cannot publish mismatched files and receipts.
 
 ## [0.3.3] - 2026-08-02
 

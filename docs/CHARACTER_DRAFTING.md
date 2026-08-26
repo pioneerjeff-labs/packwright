@@ -126,8 +126,8 @@ also requires `--accept-preset` after inspecting `packwright presets <name>`.
 - `memory/*` stores durable facts, todos, pickup notes, knowledge pointers, and human-readable relationship continuity.
 - `.codex/<character>/references/emotion/**` stores emotion policy/spec references.
 - `.agents/skills/emotion-engine/SKILL.md` is the optional Codex guidance projection; other adapters receive their native guidance path.
-- `.packwright/runtime/emotion-engine/**` is the shared optional v2.0.0-rc.3 runtime.
-- `.emotion-engine/state.json` is the optional live Emotion Engine runtime state.
+- `.packwright/runtime/emotion-engine/generations/**` contains pinned optional runtime generations.
+- The installed manifest's `features.emotion_engine.state_path` is the only live Emotion Engine runtime state.
 
 Do not mix live Emotion Engine PAD/trust state into `memory/relationship-state.md`.
 
