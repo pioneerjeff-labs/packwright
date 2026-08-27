@@ -20,6 +20,7 @@ from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_STATE_PATH,
     EMOTION_ENGINE_STATE_SCHEMA,
     EMOTION_ENGINE_WRAPPER_PATH,
+    EMOTION_ENGINE_WRITER_GATEWAY_PATH,
     emotion_engine_artifacts,
     emotion_engine_expected,
     emotion_engine_manifest_diagnostics,
@@ -997,11 +998,13 @@ def _emotion_engine_settle_trust_present(adapter_pack, entry, adapter):
     skill = adapter_pack.get(emotion_engine_skill_path(adapter), "")
     helper = adapter_pack.get(f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py", "")
     wrapper = adapter_pack.get(EMOTION_ENGINE_WRAPPER_PATH, "")
+    gateway = adapter_pack.get(EMOTION_ENGINE_WRITER_GATEWAY_PATH, "")
     return (
         "settle_trust" in skill
         and "settle_trust" in helper
-        and "emotion_engine_utils.py" in wrapper
-        and EMOTION_ENGINE_STATE_PATH in wrapper
+        and "packwright_state_gateway.py" in wrapper
+        and "emotion_engine_utils.py" in gateway
+        and EMOTION_ENGINE_STATE_PATH in gateway
     )
 
 
@@ -1040,6 +1043,7 @@ def _emotion_engine_mcp_present(adapter_pack, manifest):
 
 def _emotion_engine_project_wrappers_present(adapter_pack, manifest):
     wrapper = adapter_pack.get(EMOTION_ENGINE_WRAPPER_PATH, "")
+    gateway = adapter_pack.get(EMOTION_ENGINE_WRITER_GATEWAY_PATH, "")
     mcp_wrapper = adapter_pack.get(EMOTION_ENGINE_MCP_WRAPPER_PATH, "")
     lifecycle = adapter_pack.get(EMOTION_ENGINE_LIFECYCLE_PATH, "")
     launcher = adapter_pack.get(EMOTION_ENGINE_MCP_LAUNCHER_PATH, "")
@@ -1047,16 +1051,20 @@ def _emotion_engine_project_wrappers_present(adapter_pack, manifest):
     artifacts = set(manifest.get("artifacts", [])) if isinstance(manifest, dict) else set()
     return (
         EMOTION_ENGINE_WRAPPER_PATH in adapter_pack
+        and EMOTION_ENGINE_WRITER_GATEWAY_PATH in adapter_pack
         and EMOTION_ENGINE_MCP_WRAPPER_PATH in adapter_pack
         and EMOTION_ENGINE_LIFECYCLE_PATH in adapter_pack
         and EMOTION_ENGINE_MCP_LAUNCHER_PATH in adapter_pack
         and EMOTION_ENGINE_PROJECTION_RECEIPT_PATH in adapter_pack
         and EMOTION_ENGINE_WRAPPER_PATH in artifacts
+        and EMOTION_ENGINE_WRITER_GATEWAY_PATH in artifacts
         and EMOTION_ENGINE_MCP_WRAPPER_PATH in artifacts
         and EMOTION_ENGINE_LIFECYCLE_PATH in artifacts
         and EMOTION_ENGINE_MCP_LAUNCHER_PATH in artifacts
         and EMOTION_ENGINE_PROJECTION_RECEIPT_PATH in artifacts
-        and "emotion_engine_utils.py" in wrapper
+        and "packwright_state_gateway.py" in wrapper
+        and "emotion_engine_utils.py" in gateway
+        and "migrate_state" in gateway
         and "packwright_mcp_launcher.py" in mcp_wrapper
         and "projection_nonce" in launcher
         and "session_idempotency/v1" in lifecycle

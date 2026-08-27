@@ -53,6 +53,7 @@ from .emotion_engine_contract import (
     EMOTION_ENGINE_UPSTREAM_COMMIT,
     EMOTION_ENGINE_VERSION,
     EMOTION_ENGINE_WRAPPER_PATH,
+    EMOTION_ENGINE_WRITER_GATEWAY_PATH,
     emotion_engine_artifacts,
     emotion_engine_expected,
     emotion_engine_feature,
@@ -67,6 +68,7 @@ from .emotion_engine_projection import (
     prepare_codex_lifecycle_config,
     render_emotion_engine_lifecycle,
     render_emotion_engine_mcp_launcher,
+    render_emotion_engine_writer_gateway,
 )
 from .adapter_layout import adapter_entry, adapter_skill_root, supported_adapters
 from .automation_projection import (
@@ -696,11 +698,31 @@ def _retire_legacy_emotion_states(target_dir):
         ])
     planned = _emotion_legacy_retirement_plan(target_dir)
     canonical_hash = _file_sha256(canonical)
+    journal_path = target_dir / EMOTION_ENGINE_MIGRATION_JOURNAL_PATH
+    journal = None
+    if journal_path.is_file():
+        try:
+            candidate = json.loads(journal_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            candidate = None
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("status") == "completed"
+            and candidate.get("destination_sha256") == canonical_hash
+        ):
+            journal = candidate
     for item in planned:
         source = target_dir / item["from"]
-        if _file_sha256(source) != canonical_hash:
+        source_hash = _file_sha256(source)
+        migration_proves_source = bool(
+            journal
+            and source_hash == journal.get("source_sha256")
+            and journal.get("operation") in {None, "migrate_v2_to_v3"}
+        )
+        if source_hash != canonical_hash and not migration_proves_source:
             raise PackwrightValidationError([
-                f"legacy Emotion Engine state differs from canonical state and was not retired: {source}"
+                "legacy Emotion Engine state differs from canonical state and no completed "
+                f"migration journal proves its provenance; it was not retired: {source}"
             ])
     for item in planned:
         (target_dir / item["from"]).rename(target_dir / item["to"])
@@ -757,6 +779,7 @@ def refresh_emotion_engine(
             target_dir / EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
             target_dir / EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
             target_dir / EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
+            *(target_dir / rel_path for rel_path in plan.get("stale_projection_receipts", [])),
         }
         if plan.get("lifecycle_config"):
             transaction_paths.add(plan["lifecycle_config"]["destination"])
@@ -777,12 +800,7 @@ def refresh_emotion_engine(
                 manifest_adapter,
                 resolved_emotion_engine_mode,
             )
-            updated_lock_paths = ["manifest.json", *_existing_sidecar_artifacts(target_dir)]
-            if manifest_adapter == "codex":
-                updated_lock_paths.append(".codex/hooks.json")
-            if sidecar.get("entry_updated"):
-                updated_lock_paths.append(adapter_entry(manifest_adapter))
-            _update_artifact_lock_paths(target_dir, updated_lock_paths)
+            _refresh_artifact_lock(target_dir)
         except Exception:
             _restore_target_files(snapshot)
             raise
@@ -826,7 +844,7 @@ def migrate_emotion_engine_state(
     character_id=None,
     relationship_id=None,
 ):
-    """Serialize and plan/apply one explicit v2-to-v3 state migration."""
+    """Serialize and plan/apply one explicit state migration or capability upgrade."""
     target_dir = Path(target_dir)
     with _emotion_engine_target_lock(target_dir):
         _recover_incomplete_emotion_engine_migration(target_dir)
@@ -844,7 +862,7 @@ def _migrate_emotion_engine_state_locked(
     character_id=None,
     relationship_id=None,
 ):
-    """Plan or apply one explicit v2-to-v3 Emotion Engine state migration.
+    """Plan or apply one explicit Emotion Engine migration/upgrade transaction.
 
     Packwright derives the owner identity from the installed character slug,
     creates a separate timestamped backup before applying, delegates the state
@@ -884,6 +902,7 @@ def _migrate_emotion_engine_state_locked(
         issue for issue in preflight
         if issue["id"] not in {
             "emotion_engine_state_migration_required",
+            "emotion_engine_state_capability_mismatch",
             "emotion_engine_manifest_identity_mismatch",
         }
     ]
@@ -898,16 +917,30 @@ def _migrate_emotion_engine_state_locked(
     schema = state.get("_schema") if isinstance(state, dict) else None
     if schema == EMOTION_ENGINE_STATE_SCHEMA:
         issue = _emotion_engine_state_issue(state_file, expected_identity=identity)
-        if issue:
+        if issue and issue["id"] != "emotion_engine_state_capability_mismatch":
             raise PackwrightValidationError([issue["message"]])
-        return {
-            "status": "already_v3",
-            "applied": False,
-            "state_file": str(state_file),
-            "identity": identity,
-            "activation": _emotion_engine_activation_status(target_dir, plan),
-        }
-    if schema != EMOTION_ENGINE_LEGACY_STATE_SCHEMA:
+        if issue is None:
+            return {
+                "status": "already_v3",
+                "applied": False,
+                "state_file": str(state_file),
+                "identity": identity,
+                "activation": _emotion_engine_activation_status(target_dir, plan),
+            }
+        operation = "upgrade_v3_capabilities"
+        helper_command = "upgrade_state"
+        ready_status = "upgrade_ready"
+        applied_statuses = {"upgraded", "already_current"}
+        final_status = "upgraded"
+        from_schema = EMOTION_ENGINE_STATE_SCHEMA
+    elif schema == EMOTION_ENGINE_LEGACY_STATE_SCHEMA:
+        operation = "migrate_v2_to_v3"
+        helper_command = "migrate_state"
+        ready_status = "migration_ready"
+        applied_statuses = {"migrated", "already_v3"}
+        final_status = "migrated"
+        from_schema = EMOTION_ENGINE_LEGACY_STATE_SCHEMA
+    else:
         raise PackwrightValidationError([
             f"Emotion Engine state schema cannot be migrated: {schema!r}"
         ])
@@ -915,25 +948,33 @@ def _migrate_emotion_engine_state_locked(
     with tempfile.TemporaryDirectory(prefix="packwright-emotion-migration-") as tmpdir:
         dry_run_state = Path(tmpdir) / "state.json"
         shutil.copy2(state_file, dry_run_state)
+        helper_args = (
+            (
+                "--character-id",
+                identity["character_id"],
+                "--relationship-id",
+                identity["relationship_id"],
+            )
+            if operation == "migrate_v2_to_v3"
+            else ()
+        )
         dry_run = _run_installed_emotion_helper(
             target_dir,
-            "migrate_state",
-            "--character-id",
-            identity["character_id"],
-            "--relationship-id",
-            identity["relationship_id"],
+            helper_command,
+            *helper_args,
             state_file=dry_run_state,
         )
-    if dry_run.get("returncode") != 0 or dry_run.get("status") != "migration_ready":
+    if dry_run.get("returncode") != 0 or dry_run.get("status") != ready_status:
         raise PackwrightValidationError([
-            "Emotion Engine helper rejected the v2-to-v3 migration dry run: "
+            f"Emotion Engine helper rejected the {operation} dry run: "
             + dry_run.get("message", dry_run.get("stderr", "unknown error"))
         ])
     report = {
-        "status": "migration_ready",
+        "status": ready_status,
         "applied": False,
+        "operation": operation,
         "state_file": str(state_file),
-        "from_schema": EMOTION_ENGINE_LEGACY_STATE_SCHEMA,
+        "from_schema": from_schema,
         "to_schema": EMOTION_ENGINE_STATE_SCHEMA,
         "identity": identity,
         "dry_run": dry_run,
@@ -943,7 +984,7 @@ def _migrate_emotion_engine_state_locked(
         return report
 
     report.pop("required_confirmation", None)
-    backup = _emotion_engine_migration_backup_path(target_dir)
+    backup = _emotion_engine_migration_backup_path(target_dir, schema=from_schema)
     backup.parent.mkdir(parents=True, exist_ok=True)
     journal_path = target_dir / EMOTION_ENGINE_MIGRATION_JOURNAL_PATH
     snapshot = _snapshot_target_files({
@@ -954,6 +995,7 @@ def _migrate_emotion_engine_state_locked(
     journal = {
         "schema": "packwright-emotion-migration-transaction/v1",
         "status": "in_progress",
+        "operation": operation,
         "phase": "backup",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "state_file": EMOTION_ENGINE_STATE_PATH,
@@ -971,21 +1013,18 @@ def _migrate_emotion_engine_state_locked(
     _write_json_atomic(journal_path, journal)
     try:
         _write_bytes_atomic(backup, state_file.read_bytes())
-        journal["phase"] = "migrate_state"
+        journal["phase"] = helper_command
         _write_json_atomic(journal_path, journal)
         migrated = _run_installed_emotion_helper(
             target_dir,
-            "migrate_state",
-            "--character-id",
-            identity["character_id"],
-            "--relationship-id",
-            identity["relationship_id"],
+            helper_command,
+            *helper_args,
             "--apply",
         )
         mode_sync = (
             _sync_emotion_engine_mode(target_dir, state_file, mode)
             if migrated.get("returncode") == 0
-            and migrated.get("status") in {"migrated", "already_v3"}
+            and migrated.get("status") in applied_statuses
             else {"status": "migration_not_ready", "changed": False}
         )
         journal["phase"] = "verify"
@@ -994,7 +1033,7 @@ def _migrate_emotion_engine_state_locked(
         audit = _run_installed_emotion_helper(target_dir, "audit_state")
         verified = (
             migrated.get("returncode") == 0
-            and migrated.get("status") in {"migrated", "already_v3"}
+            and migrated.get("status") in applied_statuses
             and activation.get("returncode") == 0
             and activation.get("status") == "ready"
             and audit.get("returncode") == 0
@@ -1039,7 +1078,7 @@ def _migrate_emotion_engine_state_locked(
         _write_json_atomic(journal_path, journal)
         raise
     report.update({
-        "status": "migrated" if verified else "verification_failed",
+        "status": final_status if verified else "verification_failed",
         "applied": True,
         "backup": str(backup),
         "journal": str(journal_path),
@@ -1088,13 +1127,14 @@ def _recover_incomplete_emotion_engine_migration(target_dir):
     return journal
 
 
-def _emotion_engine_migration_backup_path(target_dir):
+def _emotion_engine_migration_backup_path(target_dir, schema=EMOTION_ENGINE_LEGACY_STATE_SCHEMA):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     root = target_dir / ".emotion-engine" / "backups"
-    candidate = root / f"state.v2.{stamp}.json"
+    label = "v2" if schema == EMOTION_ENGINE_LEGACY_STATE_SCHEMA else "v3"
+    candidate = root / f"state.{label}.{stamp}.json"
     suffix = 1
     while candidate.exists():
-        candidate = root / f"state.v2.{stamp}.{suffix}.json"
+        candidate = root / f"state.{label}.{stamp}.{suffix}.json"
         suffix += 1
     return candidate
 
@@ -3684,6 +3724,43 @@ def _coalesce_emotion_engine_source(source, legacy_source):
     return source or legacy_source
 
 
+def _stale_emotion_projection_receipts(target_dir, manifest):
+    """Return previous-generation receipts that must be revoked on refresh."""
+    target_dir = Path(target_dir)
+    candidates = set()
+    recorded = (
+        manifest.get("sidecars", {}).get(EMOTION_ENGINE_SIDECAR, {}).get("projection_receipt")
+        if isinstance(manifest, dict)
+        else None
+    )
+    if isinstance(recorded, str) and recorded.strip():
+        recorded_path = resolve_destination_path(
+            target_dir,
+            recorded.strip(),
+            "manifest Emotion Engine projection receipt",
+        )
+        if recorded_path.is_file():
+            candidates.add(recorded_path.resolve())
+    generations_root = target_dir / ".packwright" / "runtime" / "emotion-engine" / "generations"
+    if generations_root.is_dir():
+        candidates.update(path.resolve() for path in generations_root.glob("*/projection.json") if path.is_file())
+
+    current = (target_dir / EMOTION_ENGINE_PROJECTION_RECEIPT_PATH).resolve()
+    stale = []
+    root = target_dir.resolve()
+    for path in candidates:
+        if path == current:
+            continue
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise PackwrightValidationError([
+                f"Emotion Engine projection receipt escapes target: {path}"
+            ]) from exc
+        stale.append(validate_relative_path(relative, "stale Emotion Engine projection receipt").as_posix())
+    return sorted(set(stale))
+
+
 def _prepare_emotion_engine_install(
     target_dir,
     source,
@@ -3720,6 +3797,7 @@ def _prepare_emotion_engine_install(
         upstream_skill,
     ).encode("utf-8")
     projection[EMOTION_ENGINE_WRAPPER_PATH] = _project_emotion_wrapper_text().encode("utf-8")
+    projection[EMOTION_ENGINE_WRITER_GATEWAY_PATH] = render_emotion_engine_writer_gateway().encode("utf-8")
     projection[EMOTION_ENGINE_MCP_WRAPPER_PATH] = _project_emotion_mcp_wrapper_text().encode("utf-8")
     projection[EMOTION_ENGINE_LIFECYCLE_PATH] = render_emotion_engine_lifecycle().encode("utf-8")
     projection[EMOTION_ENGINE_MCP_LAUNCHER_PATH] = render_emotion_engine_mcp_launcher().encode("utf-8")
@@ -3727,13 +3805,25 @@ def _prepare_emotion_engine_install(
     existing = [path for path in projection if (target_dir / path).exists()]
 
     identity = _emotion_engine_identity(manifest)
-    selected_state = _select_emotion_state_source(target_dir, explicit=state_source)
+    declared_state = (
+        manifest.get("sidecars", {}).get(EMOTION_ENGINE_SIDECAR, {}).get("state_file")
+        if isinstance(manifest, dict)
+        else None
+    )
+    selected_state = _select_emotion_state_source(
+        target_dir,
+        explicit=state_source,
+        declared=declared_state,
+    )
     if selected_state:
         issue = _emotion_engine_state_issue_for_path(
             selected_state,
             expected_identity=identity,
         )
-        if issue and issue["id"] != "emotion_engine_state_migration_required":
+        if issue and issue["id"] not in {
+            "emotion_engine_state_migration_required",
+            "emotion_engine_state_capability_mismatch",
+        }:
             raise PackwrightValidationError([issue["message"] + f": {selected_state}"])
 
     config_plan = _prepare_emotion_engine_mcp_config(target_dir, adapter, force)
@@ -3760,6 +3850,10 @@ def _prepare_emotion_engine_install(
         "force": force,
         "mcp_config": config_plan,
         "lifecycle_config": lifecycle_config,
+        "stale_projection_receipts": _stale_emotion_projection_receipts(
+            target_dir,
+            manifest,
+        ),
     }
 
 
@@ -3814,6 +3908,7 @@ def _validate_emotion_engine_source(source_root, common, skill_source, adapter):
         "STATE_CAPABILITIES",
         "activation_check",
         "migrate_state",
+        "upgrade_state",
         "session_idempotency/v1",
         "bounded_active_session/v1",
         "settle_trust",
@@ -3828,6 +3923,8 @@ def _validate_emotion_engine_source(source_root, common, skill_source, adapter):
         )
     if "SERVER_VERSION = engine.ENGINE_VERSION" not in mcp_text:
         issues.append(f"Emotion Engine MCP server must inherit helper version {EMOTION_ENGINE_VERSION}")
+    if "--locked-state" not in mcp_text or "--managed-runtime" not in mcp_text:
+        issues.append("Emotion Engine MCP server must support locked managed-runtime state access")
     if "tools/list" not in mcp_text or "emotion_engine_record_policy" not in mcp_text:
         issues.append("Emotion Engine MCP server must expose record_policy through tools/list")
     if '"name": "emotion_engine_repair"' in mcp_text or "doctor_target" in mcp_text:
@@ -3924,13 +4021,9 @@ if [ "$#" -lt 1 ]; then
 fi
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-if [ -e "$PROJECT_DIR/{EMOTION_ENGINE_PROJECTION_PENDING_PATH}" ]; then
-  echo "Emotion Engine projection is incomplete; run packwright doctor/refresh before writing state" >&2
-  exit 75
-fi
 COMMAND=$1
 shift
-exec python3 "$PROJECT_DIR/{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py" "$COMMAND" "$PROJECT_DIR/{EMOTION_ENGINE_STATE_PATH}" "$@"
+exec python3 "$PROJECT_DIR/{EMOTION_ENGINE_WRITER_GATEWAY_PATH}" "$COMMAND" "$@"
 """
 
 
@@ -3987,11 +4080,18 @@ def _prepare_installed_emotion_engine_plan(target_dir, adapter, mode, manifest):
         "source_digest": feature.get("source_digest"),
         "projection_nonce": feature.get("projection_nonce"),
         "state_file": target_dir / EMOTION_ENGINE_STATE_PATH,
-        "state_source": _select_emotion_state_source(target_dir),
+        "state_source": _select_emotion_state_source(
+            target_dir,
+            declared=manifest.get("sidecars", {}).get(EMOTION_ENGINE_SIDECAR, {}).get("state_file"),
+        ),
         "identity": _emotion_engine_identity(manifest),
         "mode": mode,
         "mcp_config": _prepare_emotion_engine_mcp_config(target_dir, adapter, force=True),
         "lifecycle_config": prepare_codex_lifecycle_config(target_dir) if adapter == "codex" else None,
+        "stale_projection_receipts": _stale_emotion_projection_receipts(
+            target_dir,
+            manifest,
+        ),
     }
 
 
@@ -4157,6 +4257,14 @@ def _emotion_engine_doctor_issues(target_dir, manifest, plan):
     mcp_activation_issue = _emotion_engine_mcp_activation_issue(target_dir, plan)
     if mcp_activation_issue:
         issues.append(mcp_activation_issue)
+    activation_manifest_issue = _emotion_engine_activation_manifest_issue(
+        target_dir,
+        manifest,
+        plan,
+        mcp_activation_issue=mcp_activation_issue,
+    )
+    if activation_manifest_issue:
+        issues.append(activation_manifest_issue)
 
     config_issue = _emotion_engine_mcp_config_issue(target_dir, plan["mcp_config"], adapter)
     if config_issue:
@@ -4337,6 +4445,36 @@ def _emotion_engine_mcp_activation_issue(target_dir, plan):
     return None
 
 
+def _emotion_engine_activation_manifest_issue(
+    target_dir,
+    manifest,
+    plan,
+    mcp_activation_issue=None,
+):
+    feature = manifest.get("features", {}).get("emotion_engine", {})
+    sidecar = manifest.get("sidecars", {}).get(EMOTION_ENGINE_SIDECAR, {})
+    if not isinstance(feature, dict) or not isinstance(sidecar, dict):
+        return None
+    actual = _emotion_engine_activation_status(target_dir, plan)
+    expected_mcp_status = (
+        "configured_client_restart_required"
+        if mcp_activation_issue is not None
+        else "active"
+    )
+    if (
+        feature.get("activation") != actual
+        or sidecar.get("activation") != actual
+        or feature.get("mcp_status") != expected_mcp_status
+        or sidecar.get("mcp_status") != expected_mcp_status
+    ):
+        return _doctor_issue(
+            "emotion_engine_activation_manifest_stale",
+            "manifest.json",
+            "manifest activation or MCP status does not match the current live cohort receipt",
+        )
+    return None
+
+
 def _emotion_engine_mode_issue(state_file, expected_mode):
     try:
         state = json.loads(Path(state_file).read_text(encoding="utf-8"))
@@ -4424,6 +4562,22 @@ def _emotion_engine_activation_status(target_dir, plan):
             "active": False,
             "verified": False,
             "status": "migration_required",
+        }
+    state_issue = _emotion_engine_state_issue(
+        target_dir / EMOTION_ENGINE_STATE_PATH,
+        expected_identity=plan.get("identity"),
+    )
+    if state_issue is not None:
+        return {
+            "installed": True,
+            "configured": True,
+            "active": False,
+            "verified": False,
+            "status": (
+                "capability_upgrade_required"
+                if state_issue.get("id") == "emotion_engine_state_capability_mismatch"
+                else "verification_failed"
+            ),
         }
     activation = _emotion_engine_activation_probe(target_dir, plan)
     audit = _run_installed_emotion_helper(target_dir, "audit_state")
@@ -4550,6 +4704,15 @@ def _install_emotion_engine(target_dir, plan):
         "source_digest": plan["source_digest"],
         "status": "projecting",
     })
+    for stale_receipt in plan.get("stale_projection_receipts", []):
+        try:
+            resolve_destination_path(
+                target_dir,
+                stale_receipt,
+                "stale Emotion Engine projection receipt",
+            ).unlink()
+        except FileNotFoundError:
+            pass
     for stale_receipt in (
         EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
         EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
@@ -4564,6 +4727,7 @@ def _install_emotion_engine(target_dir, plan):
         _write_bytes_atomic(destination, content)
         if rel_path in {
             EMOTION_ENGINE_WRAPPER_PATH,
+            EMOTION_ENGINE_WRITER_GATEWAY_PATH,
             EMOTION_ENGINE_MCP_WRAPPER_PATH,
             EMOTION_ENGINE_LIFECYCLE_PATH,
             EMOTION_ENGINE_MCP_LAUNCHER_PATH,
@@ -4638,6 +4802,22 @@ def _mark_emotion_engine_installed(target_dir, sidecar, adapter, mode):
     if not manifest_path.exists():
         return False
     manifest = _load_manifest(target_dir)
+    previous_sidecar = manifest.get("sidecars", {}).get(EMOTION_ENGINE_SIDECAR, {})
+    previous_runtime_root = (
+        previous_sidecar.get("runtime_root")
+        if isinstance(previous_sidecar, dict)
+        else None
+    )
+    previous_state_file = (
+        previous_sidecar.get("state_file")
+        if isinstance(previous_sidecar, dict)
+        else None
+    )
+    previous_projection_receipt = (
+        previous_sidecar.get("projection_receipt")
+        if isinstance(previous_sidecar, dict)
+        else None
+    )
     manifest.setdefault("features", {})["emotion_engine"] = emotion_engine_feature(
         mode=mode,
         adapter=adapter,
@@ -4660,6 +4840,21 @@ def _mark_emotion_engine_installed(target_dir, sidecar, adapter, mode):
     boundaries["emotion_engine_runtime"] = EMOTION_ENGINE_RUNTIME
     boundaries["emotion_engine_mode"] = mode
     artifacts = set(manifest.get("artifacts", []))
+    if isinstance(previous_runtime_root, str) and previous_runtime_root != EMOTION_ENGINE_RUNTIME_ROOT:
+        artifacts = {
+            artifact for artifact in artifacts
+            if not (
+                artifact == previous_runtime_root
+                or artifact.startswith(previous_runtime_root.rstrip("/") + "/")
+            )
+        }
+    if isinstance(previous_state_file, str) and previous_state_file != EMOTION_ENGINE_STATE_PATH:
+        artifacts.discard(previous_state_file)
+    if (
+        isinstance(previous_projection_receipt, str)
+        and previous_projection_receipt != EMOTION_ENGINE_PROJECTION_RECEIPT_PATH
+    ):
+        artifacts.discard(previous_projection_receipt)
     artifacts.update(_existing_sidecar_artifacts(target_dir, adapter))
     if adapter == "codex" and (target_dir / ".codex/hooks.json").is_file():
         artifacts.add(".codex/hooks.json")
@@ -4684,15 +4879,29 @@ def _make_executable(path):
     path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _select_emotion_state_source(root_dir, explicit=None):
+def _select_emotion_state_source(root_dir, explicit=None, declared=None):
     root_dir = Path(root_dir)
-    candidates = []
     if explicit is not None:
         explicit_path = Path(explicit).expanduser().resolve()
         if not explicit_path.is_file():
             raise PackwrightValidationError([f"Emotion Engine state source does not exist: {explicit_path}"])
-        candidates.append(explicit_path)
-    for rel_path in (EMOTION_ENGINE_STATE_PATH, *EMOTION_ENGINE_LEGACY_STATE_PATHS):
+        return explicit_path
+
+    canonical = (root_dir / EMOTION_ENGINE_STATE_PATH).resolve()
+    if canonical.is_file():
+        return canonical
+
+    if isinstance(declared, str) and declared.strip():
+        declared_path = resolve_destination_path(
+            root_dir,
+            declared.strip(),
+            "manifest Emotion Engine state source",
+        )
+        if declared_path.is_file():
+            return declared_path.resolve()
+
+    candidates = []
+    for rel_path in EMOTION_ENGINE_LEGACY_STATE_PATHS:
         candidate = root_dir / rel_path
         if candidate.is_file():
             candidates.append(candidate.resolve())
@@ -4712,9 +4921,6 @@ def _select_emotion_state_source(root_dir, explicit=None):
             "multiple Emotion Engine state candidates contain different data; choose one explicitly before install or migration",
             f"state candidates: {listed}",
         ])
-    canonical = (root_dir / EMOTION_ENGINE_STATE_PATH).resolve()
-    if canonical in unique:
-        return canonical
     return unique[0]
 
 
@@ -4801,6 +5007,12 @@ def _sync_emotion_engine_mode(target_dir, state_file, mode):
         return {"status": "state_unavailable", "changed": False}
     if not isinstance(state, dict) or state.get("_schema") != EMOTION_ENGINE_STATE_SCHEMA:
         return {"status": "migration_required", "changed": False}
+    capabilities = state.get("capabilities")
+    if not isinstance(capabilities, list) or any(
+        capability not in capabilities
+        for capability in EMOTION_ENGINE_REQUIRED_CAPABILITIES
+    ):
+        return {"status": "capability_upgrade_required", "changed": False}
     expected_enabled = mode != "paused"
     if state.get("runtime_mode") == mode and state.get("enabled") is expected_enabled:
         return {"status": "already_synced", "changed": False, "mode": mode}

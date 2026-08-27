@@ -16,7 +16,7 @@ the default help screen.
 | `packwright build` | Validate the source, compile an adapter pack, and score it. |
 | `packwright install` | Install an adapter pack into a local runtime target. |
 | `packwright migrate` | Compile and install an existing target for another adapter. |
-| `packwright migrate-emotion-state` | Preview or explicitly apply the installed Emotion Engine v2-to-v3 state migration. |
+| `packwright migrate-emotion-state` | Preview or explicitly apply the installed Emotion Engine v2-to-v3 migration or v3 capability upgrade. |
 | `packwright reconcile` | Upgrade one installed target from a newer canonical mechanism without mixing work-state into mechanism. |
 | `packwright verify-activation` | Verify live Codex hook evidence and persist a receipt bound to the current hook digest. |
 | `packwright doctor` | Diagnose and optionally repair deterministic target drift. |

@@ -299,13 +299,13 @@ def _build_parser():
 
     migrate_emotion_state = subparsers.add_parser(
         "migrate-emotion-state",
-        description="plan or apply the explicit installed Emotion Engine v2-to-v3 state migration",
+        description="plan or apply an installed Emotion Engine v2-to-v3 migration or v3 capability upgrade",
     )
     migrate_emotion_state.add_argument("--target-dir", required=True, help="installed target directory")
     migrate_emotion_state.add_argument(
         "--yes",
         action="store_true",
-        help="apply after creating a separate v2 backup; without this flag only the dry run is shown",
+        help="apply after creating a separate v2 or v3 backup; without this flag only the dry run is shown",
     )
     migrate_emotion_state.add_argument(
         "--character-id",
