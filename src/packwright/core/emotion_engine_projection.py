@@ -2,21 +2,272 @@ import json
 import shlex
 
 from .emotion_engine_contract import (
+    EMOTION_ENGINE_GENERATION,
     EMOTION_ENGINE_LIFECYCLE_PATH,
     EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
     EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
     EMOTION_ENGINE_MCP_LAUNCHER_PATH,
     EMOTION_ENGINE_PROJECTION_PENDING_PATH,
     EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
+    EMOTION_ENGINE_REQUIRED_CAPABILITIES,
     EMOTION_ENGINE_RUNTIME_ROOT,
     EMOTION_ENGINE_STATE_PATH,
     EMOTION_ENGINE_TARGET_LOCK_PATH,
     EMOTION_ENGINE_VERSION,
+    EMOTION_ENGINE_WRITER_GATEWAY_PATH,
 )
 from .path_safety import resolve_destination_path
 
 
 EMOTION_ENGINE_LIFECYCLE_MARKER = "emotion_engine_lifecycle.py"
+
+
+def render_emotion_engine_writer_gateway():
+    """Render the fixed-state, target-locked shell writer gateway."""
+    template = r'''#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - Unix fallback
+    msvcrt = None
+
+ENGINE_VERSION = "__ENGINE_VERSION__"
+WRITER_GENERATION = "__WRITER_GENERATION__"
+STATE_REL = "__STATE_PATH__"
+HELPER_REL = "__RUNTIME_ROOT__/scripts/emotion_engine_utils.py"
+GATEWAY_REL = "__GATEWAY_PATH__"
+WRAPPER_REL = "scripts/emotion_engine.sh"
+PENDING_REL = "__PENDING_PATH__"
+PROJECTION_REL = "__PROJECTION_PATH__"
+ACTIVATION_REL = "__MCP_ACTIVATION_PATH__"
+LOCK_REL = "__LOCK_PATH__"
+ARTIFACT_LOCK_REL = ".packwright/lock.json"
+MANIFEST_REL = "manifest.json"
+BLOCKED_COMMANDS = {"init", "bind_identity", "migrate_state", "upgrade_state", "reset"}
+
+
+def project_root():
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / MANIFEST_REL).is_file():
+            return candidate
+    return Path.cwd()
+
+
+def read_json(path):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def sha256(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def write_bytes_atomic(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_bytes(content)
+    temporary.replace(path)
+
+
+def write_json_atomic(path, value):
+    write_bytes_atomic(
+        path,
+        (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
+
+
+@contextmanager
+def target_lock(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+b")
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        elif msvcrt is not None:  # pragma: no cover - Windows fallback
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        yield
+    finally:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        elif msvcrt is not None:  # pragma: no cover - Windows fallback
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        handle.close()
+
+
+def projection_ready(root):
+    if (root / PENDING_REL).exists():
+        return False, "projection_pending"
+    manifest = read_json(root / MANIFEST_REL)
+    receipt = read_json(root / PROJECTION_REL)
+    if manifest is None or receipt is None:
+        return False, "projection_receipt_missing"
+    feature = manifest.get("features", {}).get("emotion_engine", {})
+    sidecar = manifest.get("sidecars", {}).get("emotion-engine", {})
+    if (
+        not isinstance(feature, dict)
+        or not isinstance(sidecar, dict)
+        or feature.get("installed") is not True
+        or feature.get("version") != ENGINE_VERSION
+        or feature.get("writer_generation") != WRITER_GENERATION
+        or sidecar.get("writer_generation") != WRITER_GENERATION
+        or sidecar.get("state_file") != STATE_REL
+        or receipt.get("engine_version") != ENGINE_VERSION
+        or receipt.get("writer_generation") != WRITER_GENERATION
+        or receipt.get("projection_nonce") != feature.get("projection_nonce")
+        or receipt.get("source_digest") != feature.get("source_digest")
+    ):
+        return False, "projection_cohort_changed"
+    files = receipt.get("files")
+    if not isinstance(files, dict):
+        return False, "projection_receipt_invalid"
+    for rel_path in (HELPER_REL, GATEWAY_REL, WRAPPER_REL):
+        if files.get(rel_path) != sha256(root / rel_path):
+            return False, "writer_cohort_drift"
+    return True, None
+
+
+def activation_receipt_current(root, feature):
+    receipt = read_json(root / ACTIVATION_REL)
+    return bool(
+        isinstance(receipt, dict)
+        and receipt.get("schema") == "packwright-emotion-mcp-activation/v1"
+        and receipt.get("engine_version") == ENGINE_VERSION
+        and receipt.get("projection_nonce") == feature.get("projection_nonce")
+        and receipt.get("source_digest") == feature.get("source_digest")
+    )
+
+
+def sync_mode_manifest(root, state):
+    manifest_path = root / MANIFEST_REL
+    lock_path = root / ARTIFACT_LOCK_REL
+    manifest_before = manifest_path.read_bytes()
+    lock_before = lock_path.read_bytes() if lock_path.is_file() else None
+    try:
+        manifest = json.loads(manifest_before)
+        feature = manifest["features"]["emotion_engine"]
+        sidecar = manifest["sidecars"]["emotion-engine"]
+        mode = state.get("runtime_mode")
+        enabled = state.get("enabled") is True
+        if mode not in {"light", "always", "paused"} or enabled is (mode == "paused"):
+            raise ValueError("helper returned inconsistent runtime mode")
+        live = activation_receipt_current(root, feature)
+        activation = {
+            "installed": True,
+            "configured": True,
+            "active": bool(live and enabled),
+            "verified": bool(live),
+            "status": (
+                "client_restart_required"
+                if not live
+                else ("paused" if mode == "paused" else "ready")
+            ),
+        }
+        feature["mode"] = mode
+        sidecar["mode"] = mode
+        manifest.setdefault("boundaries", {})["emotion_engine_mode"] = mode
+        feature["activation"] = dict(activation)
+        sidecar["activation"] = dict(activation)
+        if live:
+            feature["mcp_status"] = "active"
+            sidecar["mcp_status"] = "active"
+        write_json_atomic(manifest_path, manifest)
+        if lock_before is not None:
+            artifact_lock = json.loads(lock_before)
+            if (
+                not isinstance(artifact_lock, dict)
+                or artifact_lock.get("schema") != "packwright-lock/v1"
+                or not isinstance(artifact_lock.get("artifacts"), dict)
+            ):
+                raise ValueError("Packwright artifact lock is invalid")
+            artifact_lock["artifacts"][MANIFEST_REL] = sha256(manifest_path)
+            write_json_atomic(lock_path, artifact_lock)
+    except Exception:
+        write_bytes_atomic(manifest_path, manifest_before)
+        if lock_before is not None:
+            write_bytes_atomic(lock_path, lock_before)
+        raise
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: emotion_engine.sh <command> [args...]", file=sys.stderr)
+        return 2
+    command = sys.argv[1]
+    if command in BLOCKED_COMMANDS:
+        print(
+            f"{command} is owned by the Packwright state transaction; use packwright instead",
+            file=sys.stderr,
+        )
+        return 64
+    root = project_root()
+    with target_lock(root / LOCK_REL):
+        ready, reason = projection_ready(root)
+        if not ready:
+            print(
+                f"Emotion Engine writer cohort is unavailable ({reason}); run packwright doctor/refresh",
+                file=sys.stderr,
+            )
+            return 75
+        state_path = root / STATE_REL
+        state_before = state_path.read_bytes() if state_path.is_file() else None
+        completed = subprocess.run(
+            [sys.executable, str(root / HELPER_REL), command, str(state_path), *sys.argv[2:]],
+            cwd=str(root),
+            check=False,
+            capture_output=True,
+        )
+        if completed.returncode == 0 and command in {"pause", "resume"}:
+            state = read_json(state_path)
+            try:
+                if state is None:
+                    raise ValueError("helper did not leave valid state")
+                sync_mode_manifest(root, state)
+            except Exception as exc:
+                if state_before is not None:
+                    write_bytes_atomic(state_path, state_before)
+                print(f"Packwright mode transaction rolled back: {exc}", file=sys.stderr)
+                return 70
+        sys.stdout.buffer.write(completed.stdout)
+        sys.stdout.buffer.flush()
+        sys.stderr.buffer.write(completed.stderr)
+        sys.stderr.buffer.flush()
+        return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+    return (
+        template.replace("__ENGINE_VERSION__", EMOTION_ENGINE_VERSION)
+        .replace("__WRITER_GENERATION__", EMOTION_ENGINE_GENERATION)
+        .replace("__STATE_PATH__", EMOTION_ENGINE_STATE_PATH)
+        .replace("__RUNTIME_ROOT__", EMOTION_ENGINE_RUNTIME_ROOT)
+        .replace("__GATEWAY_PATH__", EMOTION_ENGINE_WRITER_GATEWAY_PATH)
+        .replace("__PENDING_PATH__", EMOTION_ENGINE_PROJECTION_PENDING_PATH)
+        .replace("__PROJECTION_PATH__", EMOTION_ENGINE_PROJECTION_RECEIPT_PATH)
+        .replace("__MCP_ACTIVATION_PATH__", EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH)
+        .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
+    )
 
 
 def render_emotion_engine_lifecycle():
@@ -325,9 +576,14 @@ except ImportError:  # pragma: no cover - Unix fallback
     msvcrt = None
 
 ENGINE_VERSION = "__ENGINE_VERSION__"
+WRITER_GENERATION = "__WRITER_GENERATION__"
+STATE_SCHEMA = "emotion-engine-state/v3"
+LEGACY_STATE_SCHEMA = "emotion-engine-state/v2"
+REQUIRED_CAPABILITIES = __REQUIRED_CAPABILITIES__
 STATE_REL = "__STATE_PATH__"
 MCP_REL = "__RUNTIME_ROOT__/scripts/emotion_engine_mcp.py"
 HELPER_REL = "__RUNTIME_ROOT__/scripts/emotion_engine_utils.py"
+GATEWAY_REL = "__GATEWAY_PATH__"
 LAUNCHER_REL = "__MCP_LAUNCHER_PATH__"
 WRAPPER_REL = "scripts/emotion_engine_mcp.sh"
 LIFECYCLE_REL = "scripts/emotion_engine_lifecycle.py"
@@ -335,7 +591,13 @@ PENDING_REL = "__PENDING_PATH__"
 PROJECTION_REL = "__PROJECTION_PATH__"
 ACTIVATION_REL = "__MCP_ACTIVATION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
+MANIFEST_REL = "manifest.json"
+ARTIFACT_LOCK_REL = ".packwright/lock.json"
 ACTIVATION_SCHEMA = "packwright-emotion-mcp-activation/v1"
+MANAGED_RUNTIME_BLOCKED_TOOLS = {
+    "emotion_engine_bind_identity",
+    "emotion_engine_migrate_state",
+}
 
 
 def project_root():
@@ -367,6 +629,13 @@ def write_json_atomic(path, value):
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    temporary.replace(path)
+
+
+def write_bytes_atomic(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    temporary.write_bytes(content)
     temporary.replace(path)
 
 
@@ -404,7 +673,7 @@ def projection_ready(root, expected_nonce, expected_digest):
     files = receipt.get("files")
     if not isinstance(files, dict):
         return False, "projection_receipt_invalid"
-    for rel_path in (HELPER_REL, MCP_REL, LAUNCHER_REL, WRAPPER_REL, LIFECYCLE_REL):
+    for rel_path in (HELPER_REL, MCP_REL, GATEWAY_REL, LAUNCHER_REL, WRAPPER_REL, LIFECYCLE_REL):
         if files.get(rel_path) != sha256(root / rel_path):
             return False, "writer_cohort_drift"
     return True, None
@@ -426,11 +695,85 @@ def emit_error(request_id, reason):
     sys.stdout.flush()
 
 
+def emit_policy_error(request_id, code, message):
+    if request_id is None:
+        return
+    payload = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": code, "message": message},
+    }
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def request_policy_issue(request):
+    if request.get("method") != "tools/call":
+        return None
+    params = request.get("params") or {}
+    arguments = params.get("arguments") or {}
+    if isinstance(arguments, dict) and "state_file" in arguments:
+        return -32602, "state_file is fixed by Packwright and cannot be overridden"
+    if params.get("name") in MANAGED_RUNTIME_BLOCKED_TOOLS:
+        return -32601, "tool is disabled in the Packwright managed runtime; use the Packwright transaction"
+    return None
+
+
+def activation_for_state(state, feature, sidecar):
+    schema = state.get("_schema")
+    capabilities = state.get("capabilities")
+    identity = state.get("identity")
+    if schema == LEGACY_STATE_SCHEMA:
+        status = "migration_required"
+        active = verified = False
+    elif schema != STATE_SCHEMA:
+        status = "verification_failed"
+        active = verified = False
+    elif not isinstance(capabilities, list) or any(
+        capability not in capabilities for capability in REQUIRED_CAPABILITIES
+    ):
+        status = "capability_upgrade_required"
+        active = verified = False
+    elif (
+        state.get("runtime_mode") != feature.get("mode")
+        or state.get("enabled") is (feature.get("mode") == "paused")
+    ):
+        status = "mode_mismatch"
+        active = verified = False
+    elif (
+        not isinstance(identity, dict)
+        or identity.get("status") != "bound"
+        or identity.get("character_id") != sidecar.get("identity", {}).get("character_id")
+        or identity.get("relationship_id") != sidecar.get("identity", {}).get("relationship_id")
+    ):
+        status = "identity_mismatch"
+        active = verified = False
+    else:
+        verified = True
+        active = state.get("enabled") is True
+        status = "ready" if active else "paused"
+    return {
+        "installed": True,
+        "configured": True,
+        "active": active,
+        "verified": verified,
+        "status": status,
+    }
+
+
 def write_activation(root, projection, child_pid):
     state = read_json(root / STATE_REL) or {}
-    write_json_atomic(
-        root / ACTIVATION_REL,
-        {
+    manifest_path = root / MANIFEST_REL
+    lock_path = root / ARTIFACT_LOCK_REL
+    activation_path = root / ACTIVATION_REL
+    snapshots = {
+        path: path.read_bytes() if path.is_file() else None
+        for path in (activation_path, manifest_path, lock_path)
+    }
+    try:
+        write_json_atomic(
+            activation_path,
+            {
             "schema": ACTIVATION_SCHEMA,
             "engine_version": ENGINE_VERSION,
             "projection_nonce": projection["projection_nonce"],
@@ -444,8 +787,48 @@ def write_activation(root, projection, child_pid):
             "pid": os.getpid(),
             "child_pid": child_pid,
             "initialized_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+            },
+        )
+        manifest = read_json(manifest_path)
+        if manifest is None:
+            raise ValueError("manifest is unavailable during MCP activation")
+        feature = manifest.get("features", {}).get("emotion_engine", {})
+        sidecar = manifest.get("sidecars", {}).get("emotion-engine", {})
+        if (
+            not isinstance(feature, dict)
+            or not isinstance(sidecar, dict)
+            or feature.get("projection_nonce") != projection.get("projection_nonce")
+            or sidecar.get("projection_nonce") != projection.get("projection_nonce")
+            or feature.get("writer_generation") != WRITER_GENERATION
+            or sidecar.get("writer_generation") != WRITER_GENERATION
+        ):
+            raise ValueError("manifest writer cohort changed during MCP activation")
+        activation = activation_for_state(state, feature, sidecar)
+        feature["activation"] = dict(activation)
+        sidecar["activation"] = dict(activation)
+        feature["mcp_status"] = "active"
+        sidecar["mcp_status"] = "active"
+        write_json_atomic(manifest_path, manifest)
+        if lock_path.is_file():
+            artifact_lock = read_json(lock_path)
+            if (
+                artifact_lock is None
+                or artifact_lock.get("schema") != "packwright-lock/v1"
+                or not isinstance(artifact_lock.get("artifacts"), dict)
+            ):
+                raise ValueError("Packwright artifact lock is invalid during MCP activation")
+            artifact_lock["artifacts"][MANIFEST_REL] = sha256(manifest_path)
+            write_json_atomic(lock_path, artifact_lock)
+    except Exception:
+        for path, content in snapshots.items():
+            if content is None:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+            else:
+                write_bytes_atomic(path, content)
+        raise
 
 
 def main():
@@ -459,7 +842,14 @@ def main():
     if not ready:
         return 3
     child = subprocess.Popen(
-        [sys.executable, str(root / MCP_REL), "--state", str(root / STATE_REL)],
+        [
+            sys.executable,
+            str(root / MCP_REL),
+            "--state",
+            str(root / STATE_REL),
+            "--locked-state",
+            "--managed-runtime",
+        ],
         cwd=str(root),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -476,6 +866,10 @@ def main():
                 emit_error(None, "batch_requests_unsupported")
                 continue
             request_id = request.get("id")
+            policy_issue = request_policy_issue(request)
+            if policy_issue is not None:
+                emit_policy_error(request_id, *policy_issue)
+                continue
             with target_lock(root / LOCK_REL):
                 ready, reason = projection_ready(root, nonce, source_digest)
                 if not ready:
@@ -498,7 +892,11 @@ def main():
                         sys.stdout.write(response_line)
                         sys.stdout.flush()
                         return 6
-                    write_activation(root, initial, child.pid)
+                    try:
+                        write_activation(root, initial, child.pid)
+                    except Exception:
+                        emit_error(request_id, "activation_manifest_commit_failed")
+                        return 7
                 sys.stdout.write(response_line)
                 sys.stdout.flush()
     finally:
@@ -516,8 +914,11 @@ if __name__ == "__main__":
 '''
     return (
         template.replace("__ENGINE_VERSION__", EMOTION_ENGINE_VERSION)
+        .replace("__WRITER_GENERATION__", EMOTION_ENGINE_GENERATION)
+        .replace("__REQUIRED_CAPABILITIES__", json.dumps(list(EMOTION_ENGINE_REQUIRED_CAPABILITIES)))
         .replace("__STATE_PATH__", EMOTION_ENGINE_STATE_PATH)
         .replace("__RUNTIME_ROOT__", EMOTION_ENGINE_RUNTIME_ROOT)
+        .replace("__GATEWAY_PATH__", EMOTION_ENGINE_WRITER_GATEWAY_PATH)
         .replace("__MCP_LAUNCHER_PATH__", EMOTION_ENGINE_MCP_LAUNCHER_PATH)
         .replace("__PENDING_PATH__", EMOTION_ENGINE_PROJECTION_PENDING_PATH)
         .replace("__PROJECTION_PATH__", EMOTION_ENGINE_PROJECTION_RECEIPT_PATH)

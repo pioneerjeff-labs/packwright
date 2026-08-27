@@ -4,12 +4,17 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+- Route managed shell writes through a fixed-state gateway that shares the target lock with refresh, migration, lifecycle, and MCP operations; identity binding, v2 migration, v3 capability upgrade, initialization, and reset cannot bypass Packwright transactions.
+- Launch MCP in locked managed-runtime mode, reject request-level state path overrides at the launcher boundary, and atomically converge the activation manifest and artifact lock after a live initialize handshake.
+- Prefer the manifest-declared current generation over differing legacy files, retain previous-generation state during refresh, revoke older generation receipts under the shared target lock, and allow journal-proven legacy v2 packets to retire after their canonical v3 migration.
+- Add an explicit journaled and backed-up upgrade path for older v3 packets missing newly required capabilities.
+
 ## [0.3.4] - 2026-08-25
 
 ### Added
 
 - Add `packwright migrate-emotion-state`, which previews the exact v2-to-v3
-  identity binding without writes and, with `--yes`, creates a separate
+  identity binding or v3 capability upgrade without writes and, with `--yes`, creates a separate
   timestamped backup before delegating migration to Emotion Engine and running
   `activation_check` plus `audit_state`.
 - Add a Codex-native lifecycle bridge gated by `session_idempotency/v1`.

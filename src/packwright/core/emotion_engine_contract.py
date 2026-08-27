@@ -7,8 +7,8 @@ EMOTION_ENGINE_RUNTIME = "project_mcp_sidecar"
 EMOTION_ENGINE_AVAILABLE_RUNTIME = "optional_project_mcp_sidecar"
 EMOTION_ENGINE_CLAUDE_RUNTIME = EMOTION_ENGINE_AVAILABLE_RUNTIME
 EMOTION_ENGINE_VERSION = "2.0.0-rc.4"
-EMOTION_ENGINE_UPSTREAM_COMMIT = "400bd2eb0ebad5edd3000d7d5ff7da383dfa3615"
-EMOTION_ENGINE_GENERATION = "2.0.0-rc.4-400bd2e"
+EMOTION_ENGINE_UPSTREAM_COMMIT = "693b00c469ed4caef545b835fd96f4598edbe2e3"
+EMOTION_ENGINE_GENERATION = "2.0.0-rc.4-693b00c"
 EMOTION_ENGINE_STATE_SCHEMA = "emotion-engine-state/v3"
 EMOTION_ENGINE_LEGACY_STATE_SCHEMA = "emotion-engine-state/v2"
 EMOTION_ENGINE_REQUIRED_CAPABILITIES = (
@@ -37,6 +37,9 @@ EMOTION_ENGINE_LEGACY_STATE_PATHS = (
     ".emotion-engine/emotion-state.json",
 )
 EMOTION_ENGINE_WRAPPER_PATH = "scripts/emotion_engine.sh"
+EMOTION_ENGINE_WRITER_GATEWAY_PATH = (
+    f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/packwright_state_gateway.py"
+)
 EMOTION_ENGINE_MCP_WRAPPER_PATH = "scripts/emotion_engine_mcp.sh"
 EMOTION_ENGINE_LIFECYCLE_PATH = "scripts/emotion_engine_lifecycle.py"
 EMOTION_ENGINE_MCP_LAUNCHER_PATH = (
@@ -108,6 +111,7 @@ def emotion_engine_artifacts(adapter):
     return (
         *EMOTION_ENGINE_COMMON_ARTIFACTS,
         EMOTION_ENGINE_WRAPPER_PATH,
+        EMOTION_ENGINE_WRITER_GATEWAY_PATH,
         EMOTION_ENGINE_MCP_WRAPPER_PATH,
         EMOTION_ENGINE_LIFECYCLE_PATH,
         EMOTION_ENGINE_MCP_LAUNCHER_PATH,
@@ -188,6 +192,7 @@ def emotion_engine_sidecar_record(
             f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py",
             f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py",
             EMOTION_ENGINE_WRAPPER_PATH,
+            EMOTION_ENGINE_WRITER_GATEWAY_PATH,
             EMOTION_ENGINE_MCP_WRAPPER_PATH,
             EMOTION_ENGINE_LIFECYCLE_PATH,
             EMOTION_ENGINE_MCP_LAUNCHER_PATH,
@@ -274,6 +279,7 @@ def emotion_engine_manifest_issues(manifest, expected_mode=None, required_artifa
         f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py",
         f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_mcp.py",
         EMOTION_ENGINE_WRAPPER_PATH,
+        EMOTION_ENGINE_WRITER_GATEWAY_PATH,
         EMOTION_ENGINE_MCP_WRAPPER_PATH,
         EMOTION_ENGINE_LIFECYCLE_PATH,
         EMOTION_ENGINE_MCP_LAUNCHER_PATH,
