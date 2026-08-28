@@ -17,8 +17,8 @@ still declare that placeholder remain valid and projectable for compatibility.
 
 Every enabled target receives:
 
-- `.packwright/runtime/emotion-engine/generations/2.0.0-rc.4-52e8b66/` — the pinned helper, fixed-state shell gateway, MCP server, cohort-aware launcher, schema, template, registration helper, projection receipt, and license;
-- `.emotion-engine/generations/2.0.0-rc.4-52e8b66/state.json` — the rc.4 generation's live state;
+- `.packwright/runtime/emotion-engine/generations/2.0.0-rc.4-410c7e0/` — the pinned helper, fixed-state shell gateway, MCP server, cohort-aware launcher, schema, template, registration helper, projection receipt, and license;
+- `.emotion-engine/generations/2.0.0-rc.4-410c7e0/state.json` — the rc.4 generation's live state;
 - `scripts/emotion_engine.sh` — shell access through the target-locked fixed-state gateway;
 - `scripts/emotion_engine_mcp.sh` — the project-relative MCP launcher.
 - `scripts/emotion_engine_lifecycle.py` — a capability-gated lifecycle bridge that never edits state directly.
@@ -71,7 +71,7 @@ Available modes are:
 
 Packwright reads the current generation path plus the legacy paths:
 
-- `.emotion-engine/generations/2.0.0-rc.4-52e8b66/state.json`
+- `.emotion-engine/generations/2.0.0-rc.4-410c7e0/state.json`
 - `.emotion-engine/state.json`
 - `.emotion-engine/codex-state.json`
 - `.emotion-engine/emotion-state.json`
@@ -84,6 +84,14 @@ state is preserved byte-for-byte during projection refresh. Existing v2 state
 is also preserved byte-for-byte, but rc.4 keeps it read-only and Packwright
 reports `migration_required`; installing new runtime files does not mark that
 state active.
+
+Normal shell, lifecycle, and MCP writers run in explicit managed-runtime mode.
+They require the canonical primary state to exist and reject structural
+integrity errors before the Emotion Engine mutator or backup path runs.
+Diagnostic audit and repair-plan reads remain available on an existing damaged
+packet, and semantic warnings alone do not block writes. Initialization,
+identity binding, migration, capability upgrade, and reset remain exclusive to
+Packwright's locked, journaled owner transaction.
 
 `doctor` warns whenever a legacy state remains. After reviewing the canonical
 copy, pass `--retire-legacy-state` to an Emotion Engine install or refresh to

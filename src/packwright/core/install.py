@@ -4204,6 +4204,9 @@ def _validate_emotion_engine_source(source_root, common, skill_source, adapter):
         "bounded_active_session/v1",
         "missing_state_capabilities",
         "require_current_state_capabilities",
+        "ManagedStateError",
+        "require_managed_runtime_writable",
+        "--managed-runtime",
         "settle_trust",
         "record_policy",
         "reply_bias",
@@ -4220,6 +4223,10 @@ def _validate_emotion_engine_source(source_root, common, skill_source, adapter):
         issues.append("Emotion Engine MCP server must support locked managed-runtime state access")
     if "tools/call requires a non-null request id" not in mcp_text:
         issues.append("Emotion Engine MCP server must reject id-less write RPC requests")
+    if "Tool arguments must be an object" not in mcp_text:
+        issues.append("Emotion Engine MCP server must reject non-object tool arguments")
+    if "managed_runtime=managed_runtime" not in mcp_text:
+        issues.append("Emotion Engine MCP server must propagate managed-runtime policy to state access")
     if "tools/list" not in mcp_text or "emotion_engine_record_policy" not in mcp_text:
         issues.append("Emotion Engine MCP server must expose record_policy through tools/list")
     if '"name": "emotion_engine_repair"' in mcp_text or "doctor_target" in mcp_text:
@@ -4829,8 +4836,23 @@ def _run_installed_emotion_helper(target_dir, command, *args, state_file=None):
             "status": "helper_missing",
             "message": f"Emotion Engine helper is missing: {helper}",
         }
+    installer_owned_commands = {
+        "init",
+        "bind_identity",
+        "migrate_state",
+        "upgrade_state",
+        "reset",
+    }
+    runtime_prefix = [] if command in installer_owned_commands else ["--managed-runtime"]
     completed = subprocess.run(
-        ["python3", str(helper), command, str(state_file), *map(str, args)],
+        [
+            "python3",
+            str(helper),
+            *runtime_prefix,
+            command,
+            str(state_file),
+            *map(str, args),
+        ],
         cwd=str(target_dir),
         check=False,
         capture_output=True,

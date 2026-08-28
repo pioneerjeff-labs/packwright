@@ -25,8 +25,10 @@ from packwright.core import (
     resolve_mechanism,
 )
 from packwright.core.emotion_engine_contract import (
+    EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
     EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
     EMOTION_ENGINE_REQUIRED_CAPABILITIES,
+    EMOTION_ENGINE_RUNTIME_ROOT,
     EMOTION_ENGINE_STATE_PATH,
     EMOTION_ENGINE_UPSTREAM_COMMIT,
     EMOTION_ENGINE_VERSION,
@@ -65,6 +67,59 @@ def initialize_mcp(target, request_id=1):
     version = response.get("result", {}).get("serverInfo", {}).get("version")
     if version != EMOTION_ENGINE_VERSION:
         raise RuntimeError(f"unexpected Emotion Engine MCP version: {response}")
+
+
+def run_shell_writer(target, command, *args):
+    return subprocess.run(
+        [str(target / "scripts" / "emotion_engine.sh"), command, *map(str, args)],
+        cwd=str(target),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+
+def run_lifecycle_writer(target, session_id):
+    return subprocess.run(
+        [sys.executable, str(target / "scripts" / "emotion_engine_lifecycle.py"), "codex"],
+        cwd=str(target),
+        input=json.dumps({
+            "hook_event_name": "SessionStart",
+            "session_id": session_id,
+        }),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+
+def run_mcp_requests(target, requests):
+    completed = subprocess.run(
+        ["sh", str(target / "scripts" / "emotion_engine_mcp.sh")],
+        cwd=str(target),
+        input="".join(json.dumps(request) + "\n" for request in requests),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    responses = [
+        json.loads(line)
+        for line in completed.stdout.splitlines()
+        if line.strip()
+    ]
+    return completed, responses
+
+
+def session_start_arguments(session_id, event_id):
+    return {
+        "session_id": session_id,
+        "event_id": event_id,
+        "character_id": "atlas",
+        "relationship_id": "atlas:primary-user",
+    }
 
 
 def require_clean_doctor(target):
@@ -110,6 +165,206 @@ def smoke_fresh_adapters(root, source, resolved):
         require_clean_doctor(target)
         targets[adapter] = (pack_dir, target)
     return targets
+
+
+def smoke_managed_writer_fail_closed(target):
+    state_path = target / EMOTION_ENGINE_STATE_PATH
+    backup_path = Path(f"{state_path}.bak")
+    original_state = state_path.read_bytes()
+    original_backup = backup_path.read_bytes() if backup_path.is_file() else None
+
+    def restore_original():
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_bytes(original_state)
+        if original_backup is None:
+            backup_path.unlink(missing_ok=True)
+        else:
+            backup_path.write_bytes(original_backup)
+
+    try:
+        state_path.unlink()
+        backup_path.unlink(missing_ok=True)
+        shell = run_shell_writer(
+            target,
+            "session_start",
+            "--session-id", "missing-shell",
+            "--event-id", "missing-shell-start",
+            "--character-id", "atlas",
+            "--relationship-id", "atlas:primary-user",
+        )
+        if shell.returncode == 0 or state_path.exists() or backup_path.exists():
+            raise RuntimeError("managed shell recreated a missing primary state")
+        lifecycle = run_lifecycle_writer(target, "missing-lifecycle")
+        if lifecycle.returncode != 0 or state_path.exists() or backup_path.exists():
+            raise RuntimeError("managed lifecycle recreated a missing primary state")
+        mcp, responses = run_mcp_requests(target, [{
+            "jsonrpc": "2.0",
+            "id": "missing-mcp",
+            "method": "tools/call",
+            "params": {
+                "name": "emotion_engine_session_start",
+                "arguments": session_start_arguments("missing-mcp", "missing-mcp-start"),
+            },
+        }])
+        if (
+            not responses
+            or "error" not in responses[0]
+            or responses[0]["error"].get("code") != -32043
+            or responses[0]["error"].get("data", {}).get("status") != "state_file_missing"
+            or state_path.exists()
+            or backup_path.exists()
+        ):
+            raise RuntimeError(
+                "managed MCP recreated a missing primary state: "
+                f"returncode={mcp.returncode}, responses={responses}, "
+                f"state_exists={state_path.exists()}, backup_exists={backup_path.exists()}, "
+                f"stderr={mcp.stderr!r}"
+            )
+
+        restore_original()
+        corrupt = json.loads(state_path.read_text(encoding="utf-8"))
+        corrupt["processed_event_ids"] = ["release-duplicate", "release-duplicate"]
+        state_path.write_text(
+            json.dumps(corrupt, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        corrupt_bytes = state_path.read_bytes()
+        backup_bytes = b'{"release-smoke":"keep"}\n'
+        backup_path.write_bytes(backup_bytes)
+
+        shell = run_shell_writer(
+            target,
+            "session_start",
+            "--session-id", "corrupt-shell",
+            "--event-id", "corrupt-shell-start",
+            "--character-id", "atlas",
+            "--relationship-id", "atlas:primary-user",
+        )
+        if shell.returncode == 0:
+            raise RuntimeError("managed shell accepted hard-corrupt state")
+        lifecycle = run_lifecycle_writer(target, "corrupt-lifecycle")
+        if lifecycle.returncode != 0:
+            raise RuntimeError(lifecycle.stderr or lifecycle.stdout)
+        mcp, responses = run_mcp_requests(target, [{
+            "jsonrpc": "2.0",
+            "id": "corrupt-mcp",
+            "method": "tools/call",
+            "params": {
+                "name": "emotion_engine_session_start",
+                "arguments": session_start_arguments("corrupt-mcp", "corrupt-mcp-start"),
+            },
+        }])
+        if not responses or "error" not in responses[0]:
+            raise RuntimeError(
+                "managed MCP accepted hard-corrupt state: "
+                f"returncode={mcp.returncode}, responses={responses}, stderr={mcp.stderr!r}"
+            )
+        if state_path.read_bytes() != corrupt_bytes or backup_path.read_bytes() != backup_bytes:
+            raise RuntimeError("hard-corrupt writer changed state or its backup")
+
+        restore_original()
+        started = run_shell_writer(
+            target,
+            "session_start",
+            "--session-id", "semantic-warning",
+            "--event-id", "semantic-warning-start",
+            "--character-id", "atlas",
+            "--relationship-id", "atlas:primary-user",
+        )
+        if started.returncode != 0:
+            raise RuntimeError(started.stderr or started.stdout)
+        warning_state = json.loads(state_path.read_text(encoding="utf-8"))
+        warning_state["emotion_log"].append({
+            "timestamp": warning_state["session_ledger"][-1]["opened_at"],
+            "event_type": "turn",
+            "session_id": "semantic-warning",
+            "event_id": "semantic-warning-task",
+            "subject": "task",
+            "semantic_event_type": "work_checkpoint",
+            "situation": "release smoke tests passed",
+        })
+        warning_state["session_ledger"][-1]["turn_count"] = 1
+        state_path.write_text(
+            json.dumps(warning_state, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        warning_bytes = state_path.read_bytes()
+        helper = target / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py"
+        audit = subprocess.run(
+            [
+                sys.executable,
+                str(helper),
+                "--managed-runtime",
+                "audit_state",
+                str(state_path),
+            ],
+            cwd=str(target),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        audit_payload = json.loads(audit.stdout)
+        if audit.returncode != 0 or audit_payload.get("ok") is not True or not audit_payload.get("semantic_warnings"):
+            raise RuntimeError(
+                "semantic-warning fixture is not a warning-only valid state: "
+                f"returncode={audit.returncode}, payload={audit_payload}, stderr={audit.stderr!r}"
+            )
+
+        shell = run_shell_writer(
+            target,
+            "pre_turn_decay",
+            "--session-id", "semantic-warning",
+            "--event-id", "semantic-shell-decay",
+            "--character-id", "atlas",
+            "--relationship-id", "atlas:primary-user",
+        )
+        if shell.returncode != 0 or state_path.read_bytes() == warning_bytes:
+            raise RuntimeError("semantic warnings incorrectly blocked the managed shell writer")
+        state_path.write_bytes(warning_bytes)
+
+        lifecycle = run_lifecycle_writer(target, "semantic-lifecycle")
+        receipt_path = target / EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if (
+            lifecycle.returncode != 0
+            or state_path.read_bytes() == warning_bytes
+            or not receipt.get("operations")
+            or receipt["operations"][-1].get("status") != "started"
+        ):
+            raise RuntimeError("semantic warnings incorrectly blocked the lifecycle writer")
+        state_path.write_bytes(warning_bytes)
+
+        mcp, responses = run_mcp_requests(target, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "emotion_engine_record_turn",
+                    "arguments": {
+                        **session_start_arguments("semantic-warning", "semantic-mcp-turn"),
+                        "pleasure": 0.1,
+                        "arousal": 0.3,
+                        "dominance": 0.5,
+                        "host_approved": True,
+                    },
+                },
+            },
+        ])
+        if (
+            mcp.returncode != 0
+            or len(responses) != 2
+            or "result" not in responses[1]
+            or state_path.read_bytes() == warning_bytes
+        ):
+            raise RuntimeError("semantic warnings incorrectly blocked the managed MCP writer")
+    finally:
+        restore_original()
+        (target / EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH).unlink(missing_ok=True)
+
+    initialize_mcp(target, request_id=90)
+    require_clean_doctor(target)
 
 
 def smoke_capability_upgrade(source, target):
@@ -234,6 +489,7 @@ def main():
         root = Path(tmpdir)
         targets = smoke_fresh_adapters(root, source, resolved)
         codex_target = targets["codex"][1]
+        smoke_managed_writer_fail_closed(codex_target)
         smoke_capability_upgrade(source, codex_target)
         smoke_crash_recovery(codex_target)
         smoke_v2_lineage(root, source, resolved)
