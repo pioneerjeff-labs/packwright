@@ -75,6 +75,7 @@ from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_RUNTIME_ROOT,
     EMOTION_ENGINE_STATE_PATH,
     EMOTION_ENGINE_VERSION,
+    EMOTION_ENGINE_WRITER_GATEWAY_PATH,
 )
 from packwright.core.naming import character_user_name, slugify
 from packwright.core.pack_metadata import LOCK_PATH, embed_pack_metadata
@@ -1789,6 +1790,10 @@ character:
                 f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/packwright_state_gateway.py",
                 wrapper.read_text(encoding="utf-8"),
             )
+            gateway = target_dir / EMOTION_ENGINE_WRITER_GATEWAY_PATH
+            lifecycle = target_dir / "scripts" / "emotion_engine_lifecycle.py"
+            self.assertIn('"--managed-runtime"', gateway.read_text(encoding="utf-8"))
+            self.assertIn('"--managed-runtime"', lifecycle.read_text(encoding="utf-8"))
             self.assertTrue((target_dir / ".agents" / "skills" / "emotion-engine" / "SKILL.md").exists())
             self.assertTrue(
                 (target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py").exists()
@@ -5893,6 +5898,16 @@ STATE_CAPABILITIES = [
     "migration_extensions/v1", "bounded_idempotency/v1", "bounded_active_session/v1",
 ]
 
+class ManagedStateError(ValueError):
+    pass
+
+def require_managed_runtime_writable(path, state):
+    processed = state.get("processed_event_ids", [])
+    duplicates = sorted({item for item in processed if processed.count(item) > 1})
+    if duplicates:
+        raise ManagedStateError("duplicate_processed_event_ids")
+    return state
+
 def option(args, name):
     return args[args.index(name) + 1] if name in args else None
 
@@ -5944,9 +5959,17 @@ def save(path, state):
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
 
 def main():
-    command = sys.argv[1]
-    path = Path(sys.argv[2])
-    args = sys.argv[3:]
+    managed_runtime = len(sys.argv) > 1 and sys.argv[1] == "--managed-runtime"
+    offset = 2 if managed_runtime else 1
+    command = sys.argv[offset]
+    path = Path(sys.argv[offset + 1])
+    args = sys.argv[offset + 2:]
+    if managed_runtime and command in {"init", "bind_identity", "migrate_state", "upgrade_state", "reset"}:
+        print(json.dumps({"ok": False, "status": "installer_transaction_required"}))
+        return 2
+    if managed_runtime and not path.is_file():
+        print(json.dumps({"ok": False, "status": "state_file_missing"}))
+        return 2
     if command == "init":
         state = default_state(args)
         save(path, state)
@@ -5980,6 +6003,12 @@ def main():
     if command in {"configure", "pause", "resume", "session_start", "session_end"} and missing:
         print(json.dumps({"ok": False, "status": "capability_upgrade_required", "missing_capabilities": missing}))
         return 2
+    if managed_runtime and command in {"configure", "pause", "resume", "session_start", "session_end"}:
+        try:
+            require_managed_runtime_writable(path, state)
+        except ManagedStateError:
+            print(json.dumps({"ok": False, "status": "state_integrity_failed", "hard_errors": [{"code": "duplicate_processed_event_ids"}]}))
+            return 2
     if command == "activation_check":
         if state.get("_schema") != STATE_SCHEMA:
             print(json.dumps({"ok": False, "engine_version": ENGINE_VERSION, "status": "migration_required", "schema": state.get("_schema"), "message": "v2 state is read-only"}))
@@ -5995,8 +6024,11 @@ def main():
             print(json.dumps({"ok": False, "hard_errors": ["forced_test_failure"]}))
             return 1
         missing = [item for item in STATE_CAPABILITIES if item not in state.get("capabilities", [])]
-        ok = state.get("_schema") == STATE_SCHEMA and state.get("identity", {}).get("status") == "bound" and not missing
-        print(json.dumps({"ok": ok, "hard_errors": [] if ok else ["invalid"]}))
+        processed = state.get("processed_event_ids", [])
+        duplicates = sorted({item for item in processed if processed.count(item) > 1})
+        ok = state.get("_schema") == STATE_SCHEMA and state.get("identity", {}).get("status") == "bound" and not missing and not duplicates
+        hard_errors = [] if ok else ([{"code": "duplicate_processed_event_ids", "ids": duplicates}] if duplicates else ["invalid"])
+        print(json.dumps({"ok": ok, "hard_errors": hard_errors}))
         return 0 if ok else 1
     if command == "configure":
         description = " ".join(args[args.index("--style") + 1:])
@@ -6069,6 +6101,7 @@ if __name__ == "__main__":
         "SERVER_VERSION = engine.ENGINE_VERSION\n"
         "# supports --locked-state and --managed-runtime\n"
         "# tools/call requires a non-null request id\n"
+        "# Tool arguments must be an object; managed_runtime=managed_runtime\n"
         "# tools/list exposes emotion_engine_record_policy and no Packwright repair tools.\n"
         "for line in sys.stdin:\n"
         "    request = json.loads(line)\n"

@@ -302,7 +302,14 @@ def main():
             return 75
         state_before = state_path.read_bytes() if state_path.is_file() else None
         completed = subprocess.run(
-            [sys.executable, str(helper_path), command, str(state_path), *sys.argv[2:]],
+            [
+                sys.executable,
+                str(helper_path),
+                "--managed-runtime",
+                command,
+                str(state_path),
+                *sys.argv[2:],
+            ],
             cwd=str(root),
             check=False,
             capture_output=True,
@@ -474,6 +481,7 @@ def run_helper(helper, command, state_file, identity, session_id, event_id):
         [
             sys.executable,
             str(helper),
+            "--managed-runtime",
             command,
             str(state_file),
             "--session-id",
@@ -928,7 +936,13 @@ def run_helper_check(root, command):
     helper = safe_path(root, HELPER_REL)
     state_file = safe_path(root, STATE_REL)
     completed = subprocess.run(
-        [sys.executable, str(helper), command, str(state_file)],
+        [
+            sys.executable,
+            str(helper),
+            "--managed-runtime",
+            command,
+            str(state_file),
+        ],
         cwd=str(root),
         check=False,
         capture_output=True,
