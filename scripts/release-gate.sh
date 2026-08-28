@@ -7,6 +7,7 @@ TEMP_ROOT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 MODE=""
 LOCAL_PREPUBLISH=false
 OUTPUT_DIR=""
+EMOTION_ENGINE_SOURCE="${PACKWRIGHT_RELEASE_EMOTION_ENGINE_SOURCE:-}"
 
 set_mode() {
   if [[ -n "$MODE" ]]; then
@@ -24,6 +25,11 @@ while [[ $# -gt 0 ]]; do
     --package-only) set_mode package ;;
     --build-only) set_mode build ;;
     --local-prepublish) LOCAL_PREPUBLISH=true ;;
+    --emotion-engine-source)
+      shift
+      [[ $# -gt 0 ]] || { echo "--emotion-engine-source requires a path" >&2; exit 2; }
+      EMOTION_ENGINE_SOURCE="$1"
+      ;;
     --output-dir)
       shift
       [[ $# -gt 0 ]] || { echo "--output-dir requires a path" >&2; exit 2; }
@@ -57,9 +63,17 @@ run_audits() {
   "$PYTHON" scripts/audit_public_tree.py
 }
 
+run_emotion_engine_smoke() {
+  if [[ -z "$EMOTION_ENGINE_SOURCE" ]]; then
+    return 0
+  fi
+  "$PYTHON" scripts/emotion_engine_release_smoke.py "$EMOTION_ENGINE_SOURCE"
+}
+
 case "$MODE" in
   unit)
     run_unit_checks
+    run_emotion_engine_smoke
     exit 0
     ;;
   audit)
@@ -68,12 +82,14 @@ case "$MODE" in
     ;;
   quick)
     run_unit_checks
+    run_emotion_engine_smoke
     "$PYTHON" scripts/audit_zero_network.py
     "$PYTHON" scripts/audit_public_tree.py
     exit 0
     ;;
   full)
     run_unit_checks
+    run_emotion_engine_smoke
     "$PYTHON" scripts/audit_zero_network.py
     "$PYTHON" scripts/audit_public_tree.py
     ;;

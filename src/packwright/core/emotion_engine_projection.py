@@ -7,6 +7,7 @@ from .emotion_engine_contract import (
     EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
     EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
     EMOTION_ENGINE_MCP_LAUNCHER_PATH,
+    EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
     EMOTION_ENGINE_PROJECTION_PENDING_PATH,
     EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
     EMOTION_ENGINE_REQUIRED_CAPABILITIES,
@@ -53,6 +54,7 @@ PENDING_REL = "__PENDING_PATH__"
 PROJECTION_REL = "__PROJECTION_PATH__"
 ACTIVATION_REL = "__MCP_ACTIVATION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
+MIGRATION_JOURNAL_REL = "__MIGRATION_JOURNAL_PATH__"
 ARTIFACT_LOCK_REL = ".packwright/lock.json"
 MANIFEST_REL = "manifest.json"
 BLOCKED_COMMANDS = {"init", "bind_identity", "migrate_state", "upgrade_state", "reset"}
@@ -63,6 +65,20 @@ def project_root():
         if (candidate / MANIFEST_REL).is_file():
             return candidate
     return Path.cwd()
+
+
+def safe_path(root, rel_path):
+    root = root.resolve()
+    relative = Path(rel_path)
+    if relative.is_absolute() or relative == Path(".") or ".." in relative.parts:
+        raise ValueError(f"unsafe managed path: {rel_path}")
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"managed path traverses a symlink: {rel_path}")
+    current.resolve(strict=False).relative_to(root)
+    return current
 
 
 def read_json(path):
@@ -114,11 +130,48 @@ def target_lock(path):
         handle.close()
 
 
+def migration_fuse(root):
+    try:
+        path = safe_path(root, MIGRATION_JOURNAL_REL)
+    except (OSError, ValueError):
+        return False, "migration_journal_unsafe"
+    if not path.is_file():
+        return True, None
+    journal = read_json(path)
+    if journal is None:
+        return False, "migration_journal_invalid"
+    if journal.get("status") == "in_progress":
+        return False, "migration_in_progress"
+    return True, None
+
+
+def artifact_lock_current(root):
+    try:
+        manifest_path = safe_path(root, MANIFEST_REL)
+        lock_path = safe_path(root, ARTIFACT_LOCK_REL)
+    except (OSError, ValueError):
+        return False
+    lock = read_json(lock_path)
+    expected = lock.get("artifacts", {}).get(MANIFEST_REL) if isinstance(lock, dict) else None
+    return isinstance(expected, str) and expected == sha256(manifest_path)
+
+
 def projection_ready(root):
-    if (root / PENDING_REL).exists():
+    fuse_ready, fuse_reason = migration_fuse(root)
+    if not fuse_ready:
+        return False, fuse_reason
+    try:
+        pending_path = safe_path(root, PENDING_REL)
+        manifest_path = safe_path(root, MANIFEST_REL)
+        projection_path = safe_path(root, PROJECTION_REL)
+    except (OSError, ValueError):
+        return False, "writer_path_unsafe"
+    if pending_path.exists():
         return False, "projection_pending"
-    manifest = read_json(root / MANIFEST_REL)
-    receipt = read_json(root / PROJECTION_REL)
+    if not artifact_lock_current(root):
+        return False, "manifest_lock_drift"
+    manifest = read_json(manifest_path)
+    receipt = read_json(projection_path)
     if manifest is None or receipt is None:
         return False, "projection_receipt_missing"
     feature = manifest.get("features", {}).get("emotion_engine", {})
@@ -141,13 +194,20 @@ def projection_ready(root):
     if not isinstance(files, dict):
         return False, "projection_receipt_invalid"
     for rel_path in (HELPER_REL, GATEWAY_REL, WRAPPER_REL):
-        if files.get(rel_path) != sha256(root / rel_path):
+        try:
+            candidate = safe_path(root, rel_path)
+        except (OSError, ValueError):
+            return False, "writer_path_unsafe"
+        if files.get(rel_path) != sha256(candidate):
             return False, "writer_cohort_drift"
     return True, None
 
 
 def activation_receipt_current(root, feature):
-    receipt = read_json(root / ACTIVATION_REL)
+    try:
+        receipt = read_json(safe_path(root, ACTIVATION_REL))
+    except (OSError, ValueError):
+        return False
     return bool(
         isinstance(receipt, dict)
         and receipt.get("schema") == "packwright-emotion-mcp-activation/v1"
@@ -158,11 +218,21 @@ def activation_receipt_current(root, feature):
 
 
 def sync_mode_manifest(root, state):
-    manifest_path = root / MANIFEST_REL
-    lock_path = root / ARTIFACT_LOCK_REL
+    manifest_path = safe_path(root, MANIFEST_REL)
+    lock_path = safe_path(root, ARTIFACT_LOCK_REL)
     manifest_before = manifest_path.read_bytes()
-    lock_before = lock_path.read_bytes() if lock_path.is_file() else None
+    if not lock_path.is_file():
+        raise ValueError("Packwright artifact lock is missing")
+    lock_before = lock_path.read_bytes()
     try:
+        artifact_lock = json.loads(lock_before)
+        if (
+            not isinstance(artifact_lock, dict)
+            or artifact_lock.get("schema") != "packwright-lock/v1"
+            or not isinstance(artifact_lock.get("artifacts"), dict)
+            or artifact_lock["artifacts"].get(MANIFEST_REL) != hashlib.sha256(manifest_before).hexdigest()
+        ):
+            raise ValueError("manifest changed outside the Packwright artifact lock")
         manifest = json.loads(manifest_before)
         feature = manifest["features"]["emotion_engine"]
         sidecar = manifest["sidecars"]["emotion-engine"]
@@ -191,20 +261,11 @@ def sync_mode_manifest(root, state):
             feature["mcp_status"] = "active"
             sidecar["mcp_status"] = "active"
         write_json_atomic(manifest_path, manifest)
-        if lock_before is not None:
-            artifact_lock = json.loads(lock_before)
-            if (
-                not isinstance(artifact_lock, dict)
-                or artifact_lock.get("schema") != "packwright-lock/v1"
-                or not isinstance(artifact_lock.get("artifacts"), dict)
-            ):
-                raise ValueError("Packwright artifact lock is invalid")
-            artifact_lock["artifacts"][MANIFEST_REL] = sha256(manifest_path)
-            write_json_atomic(lock_path, artifact_lock)
+        artifact_lock["artifacts"][MANIFEST_REL] = sha256(manifest_path)
+        write_json_atomic(lock_path, artifact_lock)
     except Exception:
         write_bytes_atomic(manifest_path, manifest_before)
-        if lock_before is not None:
-            write_bytes_atomic(lock_path, lock_before)
+        write_bytes_atomic(lock_path, lock_before)
         raise
 
 
@@ -220,7 +281,12 @@ def main():
         )
         return 64
     root = project_root()
-    with target_lock(root / LOCK_REL):
+    try:
+        lock_path = safe_path(root, LOCK_REL)
+    except (OSError, ValueError) as exc:
+        print(f"Emotion Engine writer path is unsafe: {exc}", file=sys.stderr)
+        return 75
+    with target_lock(lock_path):
         ready, reason = projection_ready(root)
         if not ready:
             print(
@@ -228,10 +294,15 @@ def main():
                 file=sys.stderr,
             )
             return 75
-        state_path = root / STATE_REL
+        try:
+            state_path = safe_path(root, STATE_REL)
+            helper_path = safe_path(root, HELPER_REL)
+        except (OSError, ValueError) as exc:
+            print(f"Emotion Engine writer path is unsafe: {exc}", file=sys.stderr)
+            return 75
         state_before = state_path.read_bytes() if state_path.is_file() else None
         completed = subprocess.run(
-            [sys.executable, str(root / HELPER_REL), command, str(state_path), *sys.argv[2:]],
+            [sys.executable, str(helper_path), command, str(state_path), *sys.argv[2:]],
             cwd=str(root),
             check=False,
             capture_output=True,
@@ -267,6 +338,7 @@ if __name__ == "__main__":
         .replace("__PROJECTION_PATH__", EMOTION_ENGINE_PROJECTION_RECEIPT_PATH)
         .replace("__MCP_ACTIVATION_PATH__", EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH)
         .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
+        .replace("__MIGRATION_JOURNAL_PATH__", EMOTION_ENGINE_MIGRATION_JOURNAL_PATH)
     )
 
 
@@ -305,11 +377,28 @@ HELPER_REL = "__RUNTIME_ROOT__/scripts/emotion_engine_utils.py"
 PENDING_REL = "__PENDING_PATH__"
 PROJECTION_REL = "__PROJECTION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
+MIGRATION_JOURNAL_REL = "__MIGRATION_JOURNAL_PATH__"
+ARTIFACT_LOCK_REL = ".packwright/lock.json"
+MANIFEST_REL = "manifest.json"
 LIFECYCLE_RECEIPT_REL = "__LIFECYCLE_RECEIPT_PATH__"
 
 
 def project_root():
     return Path(__file__).resolve().parent.parent
+
+
+def safe_path(root, rel_path):
+    root = root.resolve()
+    relative = Path(rel_path)
+    if relative.is_absolute() or relative == Path(".") or ".." in relative.parts:
+        raise ValueError(f"unsafe managed path: {rel_path}")
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"managed path traverses a symlink: {rel_path}")
+    current.resolve(strict=False).relative_to(root)
+    return current
 
 
 def read_json(path):
@@ -318,6 +407,36 @@ def read_json(path):
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def file_sha256(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def writer_ready(root):
+    try:
+        journal_path = safe_path(root, MIGRATION_JOURNAL_REL)
+        pending_path = safe_path(root, PENDING_REL)
+        manifest_path = safe_path(root, MANIFEST_REL)
+        artifact_lock_path = safe_path(root, ARTIFACT_LOCK_REL)
+    except (OSError, ValueError):
+        return False
+    if pending_path.exists():
+        return False
+    if journal_path.is_file():
+        journal = read_json(journal_path)
+        if journal is None or journal.get("status") == "in_progress":
+            return False
+    artifact_lock = read_json(artifact_lock_path)
+    expected_manifest = (
+        artifact_lock.get("artifacts", {}).get(MANIFEST_REL)
+        if isinstance(artifact_lock, dict)
+        else None
+    )
+    return isinstance(expected_manifest, str) and expected_manifest == file_sha256(manifest_path)
 
 
 def read_hook_input():
@@ -400,11 +519,18 @@ def main():
     session_id = session_id.strip()
 
     root = project_root()
-    if (root / PENDING_REL).exists():
+    if not writer_ready(root):
         return 0
-    manifest = read_json(root / "manifest.json")
-    state_file = root / STATE_REL
-    helper = root / HELPER_REL
+    try:
+        manifest_path = safe_path(root, MANIFEST_REL)
+        state_file = safe_path(root, STATE_REL)
+        helper = safe_path(root, HELPER_REL)
+        lock_path = safe_path(root, LOCK_REL)
+        projection_path = safe_path(root, PROJECTION_REL)
+        lifecycle_receipt_path = safe_path(root, LIFECYCLE_RECEIPT_REL)
+    except (OSError, ValueError):
+        return 0
+    manifest = read_json(manifest_path)
     if manifest is None or not helper.is_file() or not state_file.is_file():
         return 0
     feature = manifest.get("features", {}).get("emotion_engine", {})
@@ -420,16 +546,15 @@ def main():
     ):
         return 0
 
-    lock_path = root / LOCK_REL
     with lifecycle_lock(lock_path):
-        if (root / PENDING_REL).exists():
+        if not writer_ready(root):
             return 0
-        projection = read_json(root / PROJECTION_REL)
+        projection = read_json(projection_path)
         if (
             projection is None
             or projection.get("projection_nonce") != feature.get("projection_nonce")
             or projection.get("source_digest") != feature.get("source_digest")
-            or projection.get("files", {}).get(HELPER_REL) != hashlib.sha256(helper.read_bytes()).hexdigest()
+            or projection.get("files", {}).get(HELPER_REL) != file_sha256(helper)
         ):
             return 0
         state = read_json(state_file)
@@ -531,7 +656,7 @@ def main():
             "projection_nonce": feature.get("projection_nonce"),
             "operations": operations,
         }
-        write_receipt(root / LIFECYCLE_RECEIPT_REL, receipt)
+        write_receipt(lifecycle_receipt_path, receipt)
     return 0
 
 
@@ -544,6 +669,7 @@ if __name__ == "__main__":
         .replace("__PENDING_PATH__", EMOTION_ENGINE_PROJECTION_PENDING_PATH)
         .replace("__PROJECTION_PATH__", EMOTION_ENGINE_PROJECTION_RECEIPT_PATH)
         .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
+        .replace("__MIGRATION_JOURNAL_PATH__", EMOTION_ENGINE_MIGRATION_JOURNAL_PATH)
         .replace("__LIFECYCLE_RECEIPT_PATH__", EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH)
     )
 
@@ -559,6 +685,7 @@ def render_emotion_engine_mcp_launcher():
 import hashlib
 import json
 import os
+import select
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -591,6 +718,7 @@ PENDING_REL = "__PENDING_PATH__"
 PROJECTION_REL = "__PROJECTION_PATH__"
 ACTIVATION_REL = "__MCP_ACTIVATION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
+MIGRATION_JOURNAL_REL = "__MIGRATION_JOURNAL_PATH__"
 MANIFEST_REL = "manifest.json"
 ARTIFACT_LOCK_REL = ".packwright/lock.json"
 ACTIVATION_SCHEMA = "packwright-emotion-mcp-activation/v1"
@@ -605,6 +733,20 @@ def project_root():
         if (candidate / "manifest.json").is_file():
             return candidate
     return Path.cwd()
+
+
+def safe_path(root, rel_path):
+    root = root.resolve()
+    relative = Path(rel_path)
+    if relative.is_absolute() or relative == Path(".") or ".." in relative.parts:
+        raise ValueError(f"unsafe managed path: {rel_path}")
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"managed path traverses a symlink: {rel_path}")
+    current.resolve(strict=False).relative_to(root)
+    return current
 
 
 def read_json(path):
@@ -659,10 +801,46 @@ def target_lock(path):
         handle.close()
 
 
+def migration_fuse(root):
+    try:
+        path = safe_path(root, MIGRATION_JOURNAL_REL)
+    except (OSError, ValueError):
+        return False, "migration_journal_unsafe"
+    if not path.is_file():
+        return True, None
+    journal = read_json(path)
+    if journal is None:
+        return False, "migration_journal_invalid"
+    if journal.get("status") == "in_progress":
+        return False, "migration_in_progress"
+    return True, None
+
+
+def artifact_lock_current(root):
+    try:
+        manifest_path = safe_path(root, MANIFEST_REL)
+        lock_path = safe_path(root, ARTIFACT_LOCK_REL)
+    except (OSError, ValueError):
+        return False
+    lock = read_json(lock_path)
+    expected = lock.get("artifacts", {}).get(MANIFEST_REL) if isinstance(lock, dict) else None
+    return isinstance(expected, str) and expected == sha256(manifest_path)
+
+
 def projection_ready(root, expected_nonce, expected_digest):
-    if (root / PENDING_REL).exists():
+    fuse_ready, fuse_reason = migration_fuse(root)
+    if not fuse_ready:
+        return False, fuse_reason
+    try:
+        pending_path = safe_path(root, PENDING_REL)
+        projection_path = safe_path(root, PROJECTION_REL)
+    except (OSError, ValueError):
+        return False, "writer_path_unsafe"
+    if pending_path.exists():
         return False, "projection_pending"
-    receipt = read_json(root / PROJECTION_REL)
+    if not artifact_lock_current(root):
+        return False, "manifest_lock_drift"
+    receipt = read_json(projection_path)
     if (
         receipt is None
         or receipt.get("engine_version") != ENGINE_VERSION
@@ -674,7 +852,11 @@ def projection_ready(root, expected_nonce, expected_digest):
     if not isinstance(files, dict):
         return False, "projection_receipt_invalid"
     for rel_path in (HELPER_REL, MCP_REL, GATEWAY_REL, LAUNCHER_REL, WRAPPER_REL, LIFECYCLE_REL):
-        if files.get(rel_path) != sha256(root / rel_path):
+        try:
+            candidate = safe_path(root, rel_path)
+        except (OSError, ValueError):
+            return False, "writer_path_unsafe"
+        if files.get(rel_path) != sha256(candidate):
             return False, "writer_cohort_drift"
     return True, None
 
@@ -696,8 +878,6 @@ def emit_error(request_id, reason):
 
 
 def emit_policy_error(request_id, code, message):
-    if request_id is None:
-        return
     payload = {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -708,15 +888,82 @@ def emit_policy_error(request_id, code, message):
 
 
 def request_policy_issue(request):
-    if request.get("method") != "tools/call":
+    if request.get("jsonrpc") != "2.0":
+        return -32600, "request must declare jsonrpc 2.0"
+    method = request.get("method")
+    if not isinstance(method, str) or not method:
+        return -32600, "request method must be a non-empty string"
+    request_id = request.get("id")
+    if request_id is None and not method.startswith("notifications/"):
+        return -32600, "MCP requests require a non-null id"
+    params = request.get("params")
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        return -32602, "request params must be an object"
+    if method != "tools/call":
         return None
-    params = request.get("params") or {}
-    arguments = params.get("arguments") or {}
-    if isinstance(arguments, dict) and "state_file" in arguments:
+    if request_id is None:
+        return -32600, "tools/call requires a non-null request id"
+    arguments = params.get("arguments")
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, dict):
+        return -32602, "tool arguments must be an object"
+    if "state_file" in arguments:
         return -32602, "state_file is fixed by Packwright and cannot be overridden"
     if params.get("name") in MANAGED_RUNTIME_BLOCKED_TOOLS:
         return -32601, "tool is disabled in the Packwright managed runtime; use the Packwright transaction"
     return None
+
+
+def read_child_response(child, timeout_seconds=30):
+    readable, _, _ = select.select([child.stdout], [], [], timeout_seconds)
+    if not readable:
+        return None
+    return child.stdout.readline()
+
+
+def run_helper_check(root, command):
+    helper = safe_path(root, HELPER_REL)
+    state_file = safe_path(root, STATE_REL)
+    completed = subprocess.run(
+        [sys.executable, str(helper), command, str(state_file)],
+        cwd=str(root),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        payload = {"status": "invalid_helper_output"}
+    if not isinstance(payload, dict):
+        payload = {"status": "invalid_helper_output"}
+    payload["returncode"] = completed.returncode
+    return payload
+
+
+def verify_state_for_activation(root):
+    state_path = safe_path(root, STATE_REL)
+    before_hash = sha256(state_path)
+    activation_check = run_helper_check(root, "activation_check")
+    audit = run_helper_check(root, "audit_state")
+    if (
+        activation_check.get("returncode") != 0
+        or activation_check.get("status") != "ready"
+        or audit.get("returncode") != 0
+        or audit.get("ok") is not True
+        or before_hash is None
+        or sha256(state_path) != before_hash
+    ):
+        return None
+    return {
+        "state_sha256": before_hash,
+        "activation_check": activation_check,
+        "audit_state": audit,
+    }
 
 
 def activation_for_state(state, feature, sidecar):
@@ -761,16 +1008,29 @@ def activation_for_state(state, feature, sidecar):
     }
 
 
-def write_activation(root, projection, child_pid):
-    state = read_json(root / STATE_REL) or {}
-    manifest_path = root / MANIFEST_REL
-    lock_path = root / ARTIFACT_LOCK_REL
-    activation_path = root / ACTIVATION_REL
+def write_activation(root, projection, child_pid, verification):
+    state_path = safe_path(root, STATE_REL)
+    state = read_json(state_path) or {}
+    manifest_path = safe_path(root, MANIFEST_REL)
+    lock_path = safe_path(root, ARTIFACT_LOCK_REL)
+    activation_path = safe_path(root, ACTIVATION_REL)
     snapshots = {
         path: path.read_bytes() if path.is_file() else None
         for path in (activation_path, manifest_path, lock_path)
     }
     try:
+        if sha256(state_path) != verification.get("state_sha256"):
+            raise ValueError("state changed after activation verification")
+        if not lock_path.is_file():
+            raise ValueError("Packwright artifact lock is missing during MCP activation")
+        artifact_lock = read_json(lock_path)
+        if (
+            artifact_lock is None
+            or artifact_lock.get("schema") != "packwright-lock/v1"
+            or not isinstance(artifact_lock.get("artifacts"), dict)
+            or artifact_lock["artifacts"].get(MANIFEST_REL) != sha256(manifest_path)
+        ):
+            raise ValueError("manifest changed outside the Packwright artifact lock")
         write_json_atomic(
             activation_path,
             {
@@ -781,9 +1041,12 @@ def write_activation(root, projection, child_pid):
             "runtime_root": "__RUNTIME_ROOT__",
             "state_path": STATE_REL,
             "state_schema": state.get("_schema"),
-            "helper_sha256": sha256(root / HELPER_REL),
-            "mcp_sha256": sha256(root / MCP_REL),
-            "launcher_sha256": sha256(root / LAUNCHER_REL),
+            "state_sha256": verification["state_sha256"],
+            "activation_check_status": verification["activation_check"].get("status"),
+            "audit_ok": verification["audit_state"].get("ok") is True,
+            "helper_sha256": sha256(safe_path(root, HELPER_REL)),
+            "mcp_sha256": sha256(safe_path(root, MCP_REL)),
+            "launcher_sha256": sha256(safe_path(root, LAUNCHER_REL)),
             "pid": os.getpid(),
             "child_pid": child_pid,
             "initialized_at": datetime.now(timezone.utc).isoformat(),
@@ -809,16 +1072,8 @@ def write_activation(root, projection, child_pid):
         feature["mcp_status"] = "active"
         sidecar["mcp_status"] = "active"
         write_json_atomic(manifest_path, manifest)
-        if lock_path.is_file():
-            artifact_lock = read_json(lock_path)
-            if (
-                artifact_lock is None
-                or artifact_lock.get("schema") != "packwright-lock/v1"
-                or not isinstance(artifact_lock.get("artifacts"), dict)
-            ):
-                raise ValueError("Packwright artifact lock is invalid during MCP activation")
-            artifact_lock["artifacts"][MANIFEST_REL] = sha256(manifest_path)
-            write_json_atomic(lock_path, artifact_lock)
+        artifact_lock["artifacts"][MANIFEST_REL] = sha256(manifest_path)
+        write_json_atomic(lock_path, artifact_lock)
     except Exception:
         for path, content in snapshots.items():
             if content is None:
@@ -833,20 +1088,24 @@ def write_activation(root, projection, child_pid):
 
 def main():
     root = project_root()
-    initial = read_json(root / PROJECTION_REL)
+    try:
+        projection_path = safe_path(root, PROJECTION_REL)
+        lock_path = safe_path(root, LOCK_REL)
+        mcp_path = safe_path(root, MCP_REL)
+        state_path = safe_path(root, STATE_REL)
+    except (OSError, ValueError):
+        return 2
+    initial = read_json(projection_path)
     if initial is None:
         return 2
     nonce = initial.get("projection_nonce")
     source_digest = initial.get("source_digest")
-    ready, _ = projection_ready(root, nonce, source_digest)
-    if not ready:
-        return 3
     child = subprocess.Popen(
         [
             sys.executable,
-            str(root / MCP_REL),
+            str(mcp_path),
             "--state",
-            str(root / STATE_REL),
+            str(state_path),
             "--locked-state",
             "--managed-runtime",
         ],
@@ -870,7 +1129,7 @@ def main():
             if policy_issue is not None:
                 emit_policy_error(request_id, *policy_issue)
                 continue
-            with target_lock(root / LOCK_REL):
+            with target_lock(lock_path):
                 ready, reason = projection_ready(root, nonce, source_digest)
                 if not ready:
                     emit_error(request_id, reason)
@@ -879,21 +1138,36 @@ def main():
                 child.stdin.flush()
                 if request_id is None:
                     continue
-                response_line = child.stdout.readline()
+                response_line = read_child_response(child)
                 if not response_line:
                     return child.poll() or 5
+                try:
+                    response = json.loads(response_line)
+                except json.JSONDecodeError:
+                    emit_error(request_id, "invalid_child_response")
+                    return 8
+                if (
+                    not isinstance(response, dict)
+                    or response.get("jsonrpc") != "2.0"
+                    or response.get("id") != request_id
+                ):
+                    emit_error(request_id, "child_response_id_mismatch")
+                    return 8
                 if request.get("method") == "initialize":
                     try:
-                        response = json.loads(response_line)
                         version = response.get("result", {}).get("serverInfo", {}).get("version")
-                    except (json.JSONDecodeError, AttributeError):
+                    except AttributeError:
                         version = None
                     if version != ENGINE_VERSION:
                         sys.stdout.write(response_line)
                         sys.stdout.flush()
                         return 6
                     try:
-                        write_activation(root, initial, child.pid)
+                        verification = verify_state_for_activation(root)
+                        if verification is None:
+                            emit_error(request_id, "activation_state_verification_failed")
+                            return 7
+                        write_activation(root, initial, child.pid, verification)
                     except Exception:
                         emit_error(request_id, "activation_manifest_commit_failed")
                         return 7
@@ -924,6 +1198,7 @@ if __name__ == "__main__":
         .replace("__PROJECTION_PATH__", EMOTION_ENGINE_PROJECTION_RECEIPT_PATH)
         .replace("__MCP_ACTIVATION_PATH__", EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH)
         .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
+        .replace("__MIGRATION_JOURNAL_PATH__", EMOTION_ENGINE_MIGRATION_JOURNAL_PATH)
     )
 
 

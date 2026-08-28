@@ -41,7 +41,8 @@
 > v2.0.0-rc.4, isolate each writer generation from legacy MCP processes, keep
 > v2 state read-only until an explicit journaled migration, upgrade older v3
 > capability packets through the same transaction, lock shell and MCP writes to
-> one state path, and require a live MCP initialize handshake after refresh.
+> one symlink-safe state path, globally fuse writers during incomplete
+> migrations, and require a full activation/audit MCP handshake after refresh.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
