@@ -46,11 +46,13 @@ AUTO_LOADING_LINK_RELS = {
 }
 SCAN_ROOTS = ("src", "scripts", "templates", "examples")
 SAFE_IMPORTS = {
+    ("scripts/emotion_engine_release_smoke.py", "subprocess"),
     ("scripts/audit_public_tree.py", "subprocess"),
     ("src/packwright/core/install.py", "subprocess"),
     ("src/packwright/core/emotion_engine_projection.py", "subprocess"),
 }
 SAFE_CALLS = {
+    ("scripts/emotion_engine_release_smoke.py", "subprocess", "run"),
     ("scripts/audit_public_tree.py", "subprocess", "check_output"),
     ("src/packwright/core/install.py", "subprocess", "run"),
     ("src/packwright/core/emotion_engine_projection.py", "subprocess", "Popen"),

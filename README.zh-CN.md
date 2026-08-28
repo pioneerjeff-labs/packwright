@@ -38,8 +38,9 @@
 
 > [!TIP]
 > **当前版本：0.3.4。** 可选 Emotion Engine 运行时现已固定到
-> v2.0.0-rc.3；v2 状态在显式备份迁移前保持只读，helper/MCP/skill/wrapper
-> 作为同一投影批次验收，Codex 生命周期桥只转发 host 原生 session identity。
+> v2.0.0-rc.4；v2 和能力不完整的旧 v3 状态在显式备份迁移前保持只读，
+> helper/MCP/skill/wrapper 作为同一投影批次验收。未完成迁移会全局熔断写入，
+> 所有状态路径拒绝符号链接越界，MCP 初始化须完成 activation check 与完整 audit。
 
 > [!NOTE]
 > Packwright 自身不会发起网络请求，也不会发送遥测数据。coding runtime 仍可能把它读取的文件发送给自己的模型服务商，其数据政策继续适用。

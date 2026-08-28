@@ -5,9 +5,12 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 ## Unreleased
 
 - Route managed shell writes through a fixed-state gateway that shares the target lock with refresh, migration, lifecycle, and MCP operations; identity binding, v2 migration, v3 capability upgrade, initialization, and reset cannot bypass Packwright transactions.
-- Launch MCP in locked managed-runtime mode, reject request-level state path overrides at the launcher boundary, and atomically converge the activation manifest and artifact lock after a live initialize handshake.
-- Prefer the manifest-declared current generation over differing legacy files, retain previous-generation state during refresh, revoke older generation receipts under the shared target lock, and allow journal-proven legacy v2 packets to retire after their canonical v3 migration.
-- Add an explicit journaled and backed-up upgrade path for older v3 packets missing newly required capabilities.
+- Launch MCP in locked managed-runtime mode, reject state overrides and id-less write RPCs, validate exact child response ids, and hold the target lock through the matching response.
+- Require a full non-mutating activation check and state audit before a live MCP handshake can converge the activation manifest; compare the previous artifact-lock digest before any manifest update so drift cannot be washed into a new baseline.
+- Make an incomplete migration journal a global writer fuse across install, refresh, shell, lifecycle, and MCP, with complete state/manifest/lock/lineage rollback on recovery.
+- Reject symlink traversal for managed state, generation, journal, backup, and lineage paths.
+- Detect divergent canonical and legacy state before migration, and preserve explicit migration lineage so a reviewed legacy packet can still retire after ordinary canonical writes.
+- Pin Emotion Engine commit `52e8b66509abfc4d3fff8855a24e183a36a6f764`, whose ordinary v3 loads preserve stored capabilities and whose writers fail closed until an explicit capability upgrade succeeds.
 
 ## [0.3.4] - 2026-08-25
 

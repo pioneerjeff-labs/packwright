@@ -17,8 +17,8 @@ still declare that placeholder remain valid and projectable for compatibility.
 
 Every enabled target receives:
 
-- `.packwright/runtime/emotion-engine/generations/2.0.0-rc.4-693b00c/` — the pinned helper, fixed-state shell gateway, MCP server, cohort-aware launcher, schema, template, registration helper, projection receipt, and license;
-- `.emotion-engine/generations/2.0.0-rc.4-693b00c/state.json` — the rc.4 generation's live state;
+- `.packwright/runtime/emotion-engine/generations/2.0.0-rc.4-52e8b66/` — the pinned helper, fixed-state shell gateway, MCP server, cohort-aware launcher, schema, template, registration helper, projection receipt, and license;
+- `.emotion-engine/generations/2.0.0-rc.4-52e8b66/state.json` — the rc.4 generation's live state;
 - `scripts/emotion_engine.sh` — shell access through the target-locked fixed-state gateway;
 - `scripts/emotion_engine_mcp.sh` — the project-relative MCP launcher.
 - `scripts/emotion_engine_lifecycle.py` — a capability-gated lifecycle bridge that never edits state directly.
@@ -71,12 +71,12 @@ Available modes are:
 
 Packwright reads the current generation path plus the legacy paths:
 
-- `.emotion-engine/generations/2.0.0-rc.4-693b00c/state.json`
+- `.emotion-engine/generations/2.0.0-rc.4-52e8b66/state.json`
 - `.emotion-engine/state.json`
 - `.emotion-engine/codex-state.json`
 - `.emotion-engine/emotion-state.json`
 
-The current generation is canonical whenever it exists. Otherwise Packwright first carries the state path explicitly declared by the installed manifest, then considers the fixed legacy paths. One selected older state is copied byte-for-byte into the current generation and retained at its old path. An old MCP process therefore keeps writing only its previous generation and cannot downgrade the canonical packet. Differing legacy candidates are ambiguous only before a canonical or manifest-declared source is available.
+The current generation is canonical whenever it exists. Otherwise Packwright first carries the state path explicitly declared by the installed manifest, then considers the fixed legacy paths. One selected older state is copied byte-for-byte into the current generation and retained at its old path. An old MCP process therefore keeps writing only its previous generation and cannot downgrade the canonical packet. If canonical and legacy bytes later diverge, Packwright refuses migration instead of silently discarding the legacy writer's newer data; only a persistent migration-lineage record can prove that the difference is expected.
 
 Packwright does not construct or patch Emotion Engine state JSON. Fresh v3
 state is initialized and identity-bound by the pinned helper. Existing v3
@@ -88,7 +88,10 @@ state active.
 `doctor` warns whenever a legacy state remains. After reviewing the canonical
 copy, pass `--retire-legacy-state` to an Emotion Engine install or refresh to
 verify that each legacy file either has identical bytes or matches the source
-hash in a completed migration journal, then rename it as a `.bak` backup.
+hash in persistent migration lineage, then rename it as a `.bak` backup. The
+lineage reference remains in canonical v3 state across normal runtime writes,
+so retirement does not depend on the canonical packet retaining its original
+post-migration digest.
 Packwright never retires legacy state by default.
 
 Review the derived character and relationship identity before applying the
@@ -109,10 +112,13 @@ packwright migrate-emotion-state --target-dir project/nova-claude \
 The first command runs the engine migration or capability upgrade in dry-run mode and does not change
 the state. `--yes` creates a timestamped v2 or v3 backup under
 `.emotion-engine/backups/`, delegates the rewrite to Emotion Engine, then
-requires a live rc.4 MCP initialize receipt plus both `activation_check` and
-`audit_state` before the manifest is marked active and verified. A persistent
-transaction journal restores state, manifest, and artifact lock after any
-exception and recovers an interrupted transaction on the next run. The
+runs both `activation_check` and `audit_state` before committing the new state.
+The manifest then remains at `client_restart_required` until a fresh rc.4 MCP
+initialize performs the same full verification and records the live client
+cohort. A persistent transaction journal restores state, manifest, artifact
+lock, and migration lineage after any exception and recovers an interrupted
+transaction on the next migration run. While that journal is `in_progress`,
+install, refresh, shell, lifecycle, and MCP writers all fail closed. The
 engine's own `.bak` remains as a second recovery copy.
 
 ## Verify and refresh
@@ -127,12 +133,15 @@ packwright refresh-emotion-engine \
 `doctor` can diagnose a moved target without the upstream source by using the target's manifest, artifact lock, completed writer-cohort projection receipt, and MCP initialize receipt. It checks the helper, MCP server, launcher, wrappers, lifecycle bridge, schema, required capabilities, bound identity, mode, activation check, state audit, and managed configuration as one versioned cohort. Pass `--emotion-engine-source` with `--fix` when managed runtime files must be refreshed. Refresh rewrites managed runtime/guidance files and the managed MCP/lifecycle entries, but preserves live state and unrelated local files. A new projection nonce deliberately leaves doctor at `emotion_engine_mcp_restart_required` until the client restarts.
 
 Refresh, migration, lifecycle events, shell gateway commands, and MCP requests share one target lock.
-The pending marker is a runtime fuse for shell, lifecycle, and MCP writers, not
-only a diagnostic. Refresh snapshots every file it can change and restores the
-previous cohort on exceptions; successful refresh removes pending only after
-the manifest and receipt agree.
+The pending marker and an `in_progress` migration journal are runtime fuses for
+shell, lifecycle, MCP, install, and refresh writers, not only diagnostics.
+Refresh snapshots every file it can change and restores the previous cohort on
+exceptions; successful refresh removes pending only after the manifest and
+receipt agree. Every managed state, backup, journal, and generation path is
+resolved without symlink traversal.
 
-Managed MCP starts with `--locked-state --managed-runtime`: tool calls cannot override the generation state path, and identity/migration tools are not exposed. The launcher enforces the same rules before forwarding. A successful live initialize handshake atomically updates its receipt, manifest activation, MCP status, and artifact lock.
+Managed MCP starts with `--locked-state --managed-runtime`: tool calls cannot override the generation state path, and identity/migration tools are not exposed. The launcher rejects non-notification requests without an id, validates params and exact child response ids, and holds the target lock until the matching child response is received. A successful live initialize runs `activation_check` plus `audit_state`, verifies the state hash did not change, and atomically updates its receipt, manifest activation, MCP status, and artifact lock.
+Shell mode changes and MCP activation both compare the current manifest digest with the pre-existing artifact-lock baseline before updating it; drift is rejected rather than absorbed into a new lock.
 When refresh changes generation, Packwright removes every older generation's projection receipt before releasing the shared target lock. A previously running managed launcher therefore fails its next cohort check even though its old files remain available for recovery.
 
 The manifest records four separate activation layers:
