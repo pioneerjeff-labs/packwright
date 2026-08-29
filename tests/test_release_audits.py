@@ -286,7 +286,7 @@ class PublicTreeAuditTest(unittest.TestCase):
         )
         self.assertEqual(
             workflow.count('git fetch --no-tags origin "pull/${{ github.event.number }}/head"'),
-            1,
+            2,
         )
 
     def test_release_gate_declares_portable_temp_and_output_dir(self):

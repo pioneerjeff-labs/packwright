@@ -58,6 +58,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fetch pull request head for public audit
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin "pull/${{ github.event.number }}/head"
       - run: echo '.release-deps/' >> .git/info/exclude
       - uses: actions/checkout@v6
         with:
