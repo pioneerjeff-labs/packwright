@@ -317,6 +317,7 @@ class PublicTreeAuditTest(unittest.TestCase):
         self.assertNotIn("workflow_dispatch", workflow)
         self.assertIn("Verify release tag matches package version", workflow)
         self.assertIn('test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION"', workflow)
+        self.assertIn("python -m pip install -e '.[test]' build twine", workflow)
         self.assertIn('scripts/release-gate.sh --build-only --emotion-engine-source', workflow)
         self.assertIn("48e6f3fff767209e3d96721935e5476734e740a4", workflow)
         self.assertIn("needs: build", workflow)
