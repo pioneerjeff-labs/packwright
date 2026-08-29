@@ -266,6 +266,67 @@ def smoke_managed_writer_fail_closed(target):
             raise RuntimeError("hard-corrupt writer changed state or its backup")
 
         restore_original()
+        raw_shape_corrupt = json.loads(state_path.read_text(encoding="utf-8"))
+        raw_shape_corrupt["session_ledger"] = {
+            "latest": "normalization must not erase this value",
+        }
+        raw_shape_corrupt["processed_event_ids"] = {
+            "latest": "normalization must not erase this value",
+        }
+        state_path.write_text(
+            json.dumps(raw_shape_corrupt, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        raw_shape_bytes = state_path.read_bytes()
+        raw_shape_backup_bytes = b'{"raw-shape-release-smoke":"keep"}\n'
+        backup_path.write_bytes(raw_shape_backup_bytes)
+
+        shell = run_shell_writer(
+            target,
+            "session_start",
+            "--session-id", "raw-shape-shell",
+            "--event-id", "raw-shape-shell-start",
+            "--character-id", "atlas",
+            "--relationship-id", "atlas:primary-user",
+        )
+        if shell.returncode == 0:
+            raise RuntimeError("managed shell accepted malformed raw state")
+        lifecycle = run_lifecycle_writer(target, "raw-shape-lifecycle")
+        if lifecycle.returncode != 0:
+            raise RuntimeError(lifecycle.stderr or lifecycle.stdout)
+        for command in ("activation_check", "audit_state"):
+            probe = run_shell_writer(target, command)
+            if probe.returncode == 0:
+                raise RuntimeError(f"managed {command} accepted malformed raw state")
+        mcp, responses = run_mcp_requests(target, [{
+            "jsonrpc": "2.0",
+            "id": "raw-shape-mcp",
+            "method": "tools/call",
+            "params": {
+                "name": "emotion_engine_session_start",
+                "arguments": session_start_arguments(
+                    "raw-shape-mcp",
+                    "raw-shape-mcp-start",
+                ),
+            },
+        }])
+        if (
+            not responses
+            or responses[0].get("error", {}).get("code") != -32043
+            or responses[0].get("error", {}).get("data", {}).get("status")
+            != "state_integrity_failed"
+        ):
+            raise RuntimeError(
+                "managed MCP accepted malformed raw state: "
+                f"returncode={mcp.returncode}, responses={responses}, stderr={mcp.stderr!r}"
+            )
+        if (
+            state_path.read_bytes() != raw_shape_bytes
+            or backup_path.read_bytes() != raw_shape_backup_bytes
+        ):
+            raise RuntimeError("malformed raw state or its backup changed")
+
+        restore_original()
         started = run_shell_writer(
             target,
             "session_start",
