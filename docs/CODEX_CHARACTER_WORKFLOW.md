@@ -93,7 +93,7 @@ Codex should then run the workflow below.
    ```text
    build/<slug>-codex-target/.agents/skills/emotion-engine/SKILL.md
    build/<slug>-codex-target/.packwright/runtime/emotion-engine/
-   build/<slug>-codex-target/.emotion-engine/generations/2.0.0-rc.4-410c7e0/state.json
+   build/<slug>-codex-target/.emotion-engine/generations/2.0.0-rc.4-edd9604/state.json
    ```
 
 ## Boundary
