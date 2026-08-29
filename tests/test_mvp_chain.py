@@ -3481,6 +3481,41 @@ character:
             _initialize_emotion_engine_mcp(target_dir)
             self.assertTrue(doctor_target(target_dir)["ok"])
 
+    def test_doctor_does_not_execute_drifted_emotion_engine_helper(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        pack = compile_to_codex_pack(resolved)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            sidecar_source = root / "emotion-engine"
+            sentinel = root / "drifted-helper-executed"
+            _write_pack(pack, pack_dir)
+            _write_fake_emotion_engine_sidecar(sidecar_source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                adapter="codex",
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
+            )
+
+            helper = target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "scripts" / "emotion_engine_utils.py"
+            helper.write_text(
+                "from pathlib import Path\n"
+                f"Path({str(sentinel)!r}).write_text('executed', encoding='utf-8')\n"
+                "print('{}')\n",
+                encoding="utf-8",
+            )
+
+            diagnosed = doctor_target(target_dir)
+
+            issue_ids = {issue["id"] for issue in diagnosed["issues"]}
+            self.assertIn("managed_artifact_drift", issue_ids)
+            self.assertIn("runtime_probe_skipped_untrusted_artifact", issue_ids)
+            self.assertFalse(sentinel.exists())
+
     def test_rc3_refresh_preserves_v2_until_explicit_verified_migration(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         with tempfile.TemporaryDirectory() as tmpdir:
