@@ -6578,7 +6578,7 @@ def _fake_approved_emotion_engine_source(source, adapter):
 
 
 class EmotionEngineSupplyChainBoundaryTest(unittest.TestCase):
-    def test_only_exact_clean_commit_snapshot_is_accepted(self):
+    def test_snapshot_uses_only_approved_commit_blobs(self):
         import importlib
 
         install_module = importlib.import_module("packwright.core.install")
@@ -6628,30 +6628,70 @@ class EmotionEngineSupplyChainBoundaryTest(unittest.TestCase):
                 )
 
                 helper.write_bytes(committed_helper + b"\n# dirty tracked\n")
-                with self.assertRaisesRegex(PackwrightValidationError, "dirty"):
-                    install_module._approved_emotion_engine_source(source, "codex")
-                helper.write_bytes(committed_helper)
-
                 untracked = source / "untracked.py"
                 untracked.write_text("print('not approved')\n", encoding="utf-8")
-                with self.assertRaisesRegex(PackwrightValidationError, "untracked"):
-                    install_module._approved_emotion_engine_source(source, "codex")
-                untracked.unlink()
+                approved = install_module._approved_emotion_engine_source(source, "codex")
+                self.assertEqual(
+                    approved["files"]["scripts/emotion_engine_utils.py"],
+                    committed_helper,
+                )
 
-                original_run = install_module._run_bounded_subprocess
+    def test_snapshot_does_not_run_checkout_fsmonitor(self):
+        import importlib
 
-                def dirty_after_initial_status(argv, **kwargs):
-                    result = original_run(argv, **kwargs)
-                    if argv[1:3] == ["status", "--porcelain=v1"] and not helper.read_bytes().endswith(b"race\n"):
-                        helper.write_bytes(committed_helper + b"\n# race\n")
-                    return result
+        install_module = importlib.import_module("packwright.core.install")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "emotion-engine"
+            _write_fake_emotion_engine_sidecar(source)
+            skill = (source / "SKILL.md").read_bytes()
+            for rel_path in (
+                "integrations/codex/emotion-engine-codex/SKILL.md",
+                "integrations/claude-skill/emotion-engine/SKILL.md",
+            ):
+                path = source / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(skill)
+            subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Packwright Tests",
+                    "-c",
+                    "user.email=tests@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "fixture",
+                ],
+                cwd=source,
+                check=True,
+            )
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            sentinel = Path(tmpdir) / "fsmonitor-executed"
+            monitor = source / "malicious-fsmonitor.sh"
+            monitor.write_text(
+                "#!/bin/sh\nprintf executed > \"$1\"\n",
+                encoding="utf-8",
+            )
+            monitor.chmod(0o755)
+            subprocess.run(
+                ["git", "config", "core.fsmonitor", f"{monitor} {sentinel}"],
+                cwd=source,
+                check=True,
+            )
 
-                with patch(
-                    "packwright.core.install._run_bounded_subprocess",
-                    side_effect=dirty_after_initial_status,
-                ):
-                    with self.assertRaisesRegex(PackwrightValidationError, "changed or became dirty"):
-                        install_module._approved_emotion_engine_source(source, "codex")
+            with patch.object(install_module, "EMOTION_ENGINE_UPSTREAM_COMMIT", commit):
+                install_module._approved_emotion_engine_source(source, "codex")
+
+            self.assertFalse(sentinel.exists())
 
     def test_marker_only_directory_cannot_self_assert_the_pinned_release(self):
         import importlib
