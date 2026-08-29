@@ -5,6 +5,7 @@ from .emotion_engine_contract import (
     EMOTION_ENGINE_GENERATION,
     EMOTION_ENGINE_LIFECYCLE_PATH,
     EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
+    EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH,
     EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
     EMOTION_ENGINE_MCP_LAUNCHER_PATH,
     EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
@@ -31,6 +32,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -55,6 +57,7 @@ PROJECTION_REL = "__PROJECTION_PATH__"
 ACTIVATION_REL = "__MCP_ACTIVATION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
 MIGRATION_JOURNAL_REL = "__MIGRATION_JOURNAL_PATH__"
+LEGACY_WRITER_FENCE_REL = "__LEGACY_WRITER_FENCE_PATH__"
 ARTIFACT_LOCK_REL = ".packwright/lock.json"
 MANIFEST_REL = "manifest.json"
 BLOCKED_COMMANDS = {"init", "bind_identity", "migrate_state", "upgrade_state", "reset"}
@@ -96,11 +99,65 @@ def sha256(path):
         return None
 
 
+def baseline_excluded(rel_path):
+    return (
+        rel_path == ARTIFACT_LOCK_REL
+        or rel_path == ".emotion-engine"
+        or rel_path.startswith(".emotion-engine/")
+        or any(
+            rel_path == root or rel_path.startswith(root + "/")
+            for root in ("memory", "workspace", "knowledge", "sources", "skills")
+        )
+    )
+
+
+def entry_has_marker(value):
+    if isinstance(value, dict):
+        return any(entry_has_marker(item) for item in value.values())
+    if isinstance(value, list):
+        return any(entry_has_marker(item) for item in value)
+    return isinstance(value, str) and "packwright_automation.py" in value
+
+
+def artifact_digest(path, record):
+    if isinstance(record, dict):
+        if record.get("mode") != "managed_json_hooks":
+            return None
+        data = read_json(path)
+        if data is None:
+            return None
+        hooks = data.get("hooks", {})
+        if not isinstance(hooks, dict):
+            return None
+        fragment = {
+            event: [entry for entry in entries if entry_has_marker(entry)]
+            for event, entries in sorted(hooks.items())
+            if isinstance(entries, list) and any(entry_has_marker(entry) for entry in entries)
+        }
+        payload = json.dumps(fragment, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+    return sha256(path)
+
+
 def write_bytes_atomic(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_bytes(content)
-    temporary.replace(path)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def write_json_atomic(path, value):
@@ -152,11 +209,45 @@ def artifact_lock_current(root):
     except (OSError, ValueError):
         return False
     lock = read_json(lock_path)
-    expected = lock.get("artifacts", {}).get(MANIFEST_REL) if isinstance(lock, dict) else None
-    return isinstance(expected, str) and expected == sha256(manifest_path)
+    manifest = read_json(manifest_path)
+    if (
+        lock is None
+        or lock.get("schema") != "packwright-lock/v1"
+        or not isinstance(lock.get("artifacts"), dict)
+        or manifest is None
+        or not isinstance(manifest.get("artifacts"), list)
+    ):
+        return False
+    locked = lock["artifacts"]
+    expected_paths = {
+        rel_path
+        for rel_path in manifest["artifacts"]
+        if isinstance(rel_path, str) and not baseline_excluded(rel_path)
+    }
+    expected_paths.add(MANIFEST_REL)
+    if any(rel_path not in locked for rel_path in expected_paths):
+        return False
+    for rel_path, record in locked.items():
+        if not isinstance(rel_path, str) or baseline_excluded(rel_path):
+            continue
+        expected = record.get("sha256") if isinstance(record, dict) else record
+        if not isinstance(expected, str):
+            return False
+        try:
+            path = safe_path(root, rel_path)
+        except (OSError, ValueError):
+            return False
+        if artifact_digest(path, record) != expected:
+            return False
+    return True
 
 
 def projection_ready(root):
+    try:
+        if safe_path(root, LEGACY_WRITER_FENCE_REL).exists():
+            return False, "legacy_writer_disabled"
+    except (OSError, ValueError):
+        return False, "legacy_writer_fence_unsafe"
     fuse_ready, fuse_reason = migration_fuse(root)
     if not fuse_ready:
         return False, fuse_reason
@@ -346,6 +437,7 @@ if __name__ == "__main__":
         .replace("__MCP_ACTIVATION_PATH__", EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH)
         .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
         .replace("__MIGRATION_JOURNAL_PATH__", EMOTION_ENGINE_MIGRATION_JOURNAL_PATH)
+        .replace("__LEGACY_WRITER_FENCE_PATH__", EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH)
     )
 
 
@@ -362,6 +454,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -385,6 +478,7 @@ PENDING_REL = "__PENDING_PATH__"
 PROJECTION_REL = "__PROJECTION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
 MIGRATION_JOURNAL_REL = "__MIGRATION_JOURNAL_PATH__"
+LEGACY_WRITER_FENCE_REL = "__LEGACY_WRITER_FENCE_PATH__"
 ARTIFACT_LOCK_REL = ".packwright/lock.json"
 MANIFEST_REL = "manifest.json"
 LIFECYCLE_RECEIPT_REL = "__LIFECYCLE_RECEIPT_PATH__"
@@ -423,13 +517,94 @@ def file_sha256(path):
         return None
 
 
+def baseline_excluded(rel_path):
+    return (
+        rel_path == ARTIFACT_LOCK_REL
+        or rel_path == ".emotion-engine"
+        or rel_path.startswith(".emotion-engine/")
+        or any(
+            rel_path == root or rel_path.startswith(root + "/")
+            for root in ("memory", "workspace", "knowledge", "sources", "skills")
+        )
+    )
+
+
+def entry_has_marker(value):
+    if isinstance(value, dict):
+        return any(entry_has_marker(item) for item in value.values())
+    if isinstance(value, list):
+        return any(entry_has_marker(item) for item in value)
+    return isinstance(value, str) and "packwright_automation.py" in value
+
+
+def artifact_digest(path, record):
+    if isinstance(record, dict):
+        if record.get("mode") != "managed_json_hooks":
+            return None
+        data = read_json(path)
+        if data is None:
+            return None
+        hooks = data.get("hooks", {})
+        if not isinstance(hooks, dict):
+            return None
+        fragment = {
+            event: [entry for entry in entries if entry_has_marker(entry)]
+            for event, entries in sorted(hooks.items())
+            if isinstance(entries, list) and any(entry_has_marker(entry) for entry in entries)
+        }
+        payload = json.dumps(fragment, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+    return file_sha256(path)
+
+
+def artifact_lock_current(root):
+    try:
+        manifest_path = safe_path(root, MANIFEST_REL)
+        lock_path = safe_path(root, ARTIFACT_LOCK_REL)
+    except (OSError, ValueError):
+        return False
+    lock = read_json(lock_path)
+    manifest = read_json(manifest_path)
+    if (
+        lock is None
+        or lock.get("schema") != "packwright-lock/v1"
+        or not isinstance(lock.get("artifacts"), dict)
+        or manifest is None
+        or not isinstance(manifest.get("artifacts"), list)
+    ):
+        return False
+    locked = lock["artifacts"]
+    expected_paths = {
+        rel_path
+        for rel_path in manifest["artifacts"]
+        if isinstance(rel_path, str) and not baseline_excluded(rel_path)
+    }
+    expected_paths.add(MANIFEST_REL)
+    if any(rel_path not in locked for rel_path in expected_paths):
+        return False
+    for rel_path, record in locked.items():
+        if not isinstance(rel_path, str) or baseline_excluded(rel_path):
+            continue
+        expected = record.get("sha256") if isinstance(record, dict) else record
+        if not isinstance(expected, str):
+            return False
+        try:
+            path = safe_path(root, rel_path)
+        except (OSError, ValueError):
+            return False
+        if artifact_digest(path, record) != expected:
+            return False
+    return True
+
+
 def writer_ready(root):
     try:
         journal_path = safe_path(root, MIGRATION_JOURNAL_REL)
+        legacy_writer_fence = safe_path(root, LEGACY_WRITER_FENCE_REL)
         pending_path = safe_path(root, PENDING_REL)
-        manifest_path = safe_path(root, MANIFEST_REL)
-        artifact_lock_path = safe_path(root, ARTIFACT_LOCK_REL)
     except (OSError, ValueError):
+        return False
+    if legacy_writer_fence.exists():
         return False
     if pending_path.exists():
         return False
@@ -437,13 +612,7 @@ def writer_ready(root):
         journal = read_json(journal_path)
         if journal is None or journal.get("status") == "in_progress":
             return False
-    artifact_lock = read_json(artifact_lock_path)
-    expected_manifest = (
-        artifact_lock.get("artifacts", {}).get(MANIFEST_REL)
-        if isinstance(artifact_lock, dict)
-        else None
-    )
-    return isinstance(expected_manifest, str) and expected_manifest == file_sha256(manifest_path)
+    return artifact_lock_current(root)
 
 
 def read_hook_input():
@@ -507,12 +676,26 @@ def run_helper(helper, command, state_file, identity, session_id, event_id):
 
 def write_receipt(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    content = (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
     )
-    temporary.replace(path)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def main():
@@ -678,6 +861,7 @@ if __name__ == "__main__":
         .replace("__PROJECTION_PATH__", EMOTION_ENGINE_PROJECTION_RECEIPT_PATH)
         .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
         .replace("__MIGRATION_JOURNAL_PATH__", EMOTION_ENGINE_MIGRATION_JOURNAL_PATH)
+        .replace("__LEGACY_WRITER_FENCE_PATH__", EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH)
         .replace("__LIFECYCLE_RECEIPT_PATH__", EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH)
     )
 
@@ -696,6 +880,7 @@ import os
 import select
 import subprocess
 import sys
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -727,6 +912,7 @@ PROJECTION_REL = "__PROJECTION_PATH__"
 ACTIVATION_REL = "__MCP_ACTIVATION_PATH__"
 LOCK_REL = "__LOCK_PATH__"
 MIGRATION_JOURNAL_REL = "__MIGRATION_JOURNAL_PATH__"
+LEGACY_WRITER_FENCE_REL = "__LEGACY_WRITER_FENCE_PATH__"
 MANIFEST_REL = "manifest.json"
 ARTIFACT_LOCK_REL = ".packwright/lock.json"
 ACTIVATION_SCHEMA = "packwright-emotion-mcp-activation/v1"
@@ -772,21 +958,72 @@ def sha256(path):
         return None
 
 
-def write_json_atomic(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+def baseline_excluded(rel_path):
+    return (
+        rel_path == ARTIFACT_LOCK_REL
+        or rel_path == ".emotion-engine"
+        or rel_path.startswith(".emotion-engine/")
+        or any(
+            rel_path == root or rel_path.startswith(root + "/")
+            for root in ("memory", "workspace", "knowledge", "sources", "skills")
+        )
     )
-    temporary.replace(path)
+
+
+def entry_has_marker(value):
+    if isinstance(value, dict):
+        return any(entry_has_marker(item) for item in value.values())
+    if isinstance(value, list):
+        return any(entry_has_marker(item) for item in value)
+    return isinstance(value, str) and "packwright_automation.py" in value
+
+
+def artifact_digest(path, record):
+    if isinstance(record, dict):
+        if record.get("mode") != "managed_json_hooks":
+            return None
+        data = read_json(path)
+        if data is None:
+            return None
+        hooks = data.get("hooks", {})
+        if not isinstance(hooks, dict):
+            return None
+        fragment = {
+            event: [entry for entry in entries if entry_has_marker(entry)]
+            for event, entries in sorted(hooks.items())
+            if isinstance(entries, list) and any(entry_has_marker(entry) for entry in entries)
+        }
+        payload = json.dumps(fragment, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+    return sha256(path)
+
+
+def write_json_atomic(path, value):
+    write_bytes_atomic(
+        path,
+        (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
 
 
 def write_bytes_atomic(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_bytes(content)
-    temporary.replace(path)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=path.name + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 @contextmanager
@@ -831,11 +1068,45 @@ def artifact_lock_current(root):
     except (OSError, ValueError):
         return False
     lock = read_json(lock_path)
-    expected = lock.get("artifacts", {}).get(MANIFEST_REL) if isinstance(lock, dict) else None
-    return isinstance(expected, str) and expected == sha256(manifest_path)
+    manifest = read_json(manifest_path)
+    if (
+        lock is None
+        or lock.get("schema") != "packwright-lock/v1"
+        or not isinstance(lock.get("artifacts"), dict)
+        or manifest is None
+        or not isinstance(manifest.get("artifacts"), list)
+    ):
+        return False
+    locked = lock["artifacts"]
+    expected_paths = {
+        rel_path
+        for rel_path in manifest["artifacts"]
+        if isinstance(rel_path, str) and not baseline_excluded(rel_path)
+    }
+    expected_paths.add(MANIFEST_REL)
+    if any(rel_path not in locked for rel_path in expected_paths):
+        return False
+    for rel_path, record in locked.items():
+        if not isinstance(rel_path, str) or baseline_excluded(rel_path):
+            continue
+        expected = record.get("sha256") if isinstance(record, dict) else record
+        if not isinstance(expected, str):
+            return False
+        try:
+            path = safe_path(root, rel_path)
+        except (OSError, ValueError):
+            return False
+        if artifact_digest(path, record) != expected:
+            return False
+    return True
 
 
 def projection_ready(root, expected_nonce, expected_digest):
+    try:
+        if safe_path(root, LEGACY_WRITER_FENCE_REL).exists():
+            return False, "legacy_writer_disabled"
+    except (OSError, ValueError):
+        return False, "legacy_writer_fence_unsafe"
     fuse_ready, fuse_reason = migration_fuse(root)
     if not fuse_ready:
         return False, fuse_reason
@@ -1061,6 +1332,7 @@ def write_activation(root, projection, child_pid, verification):
             "helper_sha256": sha256(safe_path(root, HELPER_REL)),
             "mcp_sha256": sha256(safe_path(root, MCP_REL)),
             "launcher_sha256": sha256(safe_path(root, LAUNCHER_REL)),
+            "legacy_writer_fence_supported": True,
             "pid": os.getpid(),
             "child_pid": child_pid,
             "initialized_at": datetime.now(timezone.utc).isoformat(),
@@ -1213,6 +1485,7 @@ if __name__ == "__main__":
         .replace("__MCP_ACTIVATION_PATH__", EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH)
         .replace("__LOCK_PATH__", EMOTION_ENGINE_TARGET_LOCK_PATH)
         .replace("__MIGRATION_JOURNAL_PATH__", EMOTION_ENGINE_MIGRATION_JOURNAL_PATH)
+        .replace("__LEGACY_WRITER_FENCE_PATH__", EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH)
     )
 
 

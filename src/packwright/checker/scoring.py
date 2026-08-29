@@ -1069,6 +1069,7 @@ def _emotion_engine_project_wrappers_present(adapter_pack, manifest):
         and "projection_nonce" in launcher
         and "session_idempotency/v1" in lifecycle
         and projection_receipt.get("state_schema") == EMOTION_ENGINE_STATE_SCHEMA
+        and projection_receipt.get("legacy_writer_fence_supported") is True
     )
 
 

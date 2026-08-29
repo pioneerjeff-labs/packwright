@@ -58,6 +58,9 @@ EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH = (
     ".packwright/activation/emotion-engine-mcp.json"
 )
 EMOTION_ENGINE_TARGET_LOCK_PATH = ".packwright/emotion-engine.lock"
+EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH = (
+    ".packwright/sidecars/emotion-engine/legacy-writer-disabled.json"
+)
 EMOTION_ENGINE_MIGRATION_JOURNAL_PATH = (
     ".packwright/transactions/emotion-engine-migration.json"
 )

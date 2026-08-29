@@ -39,6 +39,8 @@ def embed_pack_metadata(pack, resolved, checker_receipt):
         path: hashlib.sha256(content.encode("utf-8")).hexdigest()
         for path, content in sorted(enriched.items())
         if path != LOCK_PATH
+        and path != ".emotion-engine"
+        and not path.startswith(".emotion-engine/")
     }
     enriched[LOCK_PATH] = _json_text({
         "schema": "packwright-lock/v1",
