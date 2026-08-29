@@ -68,6 +68,7 @@ from packwright.core.install import (
     _retire_legacy_emotion_states,
 )
 from packwright.core.emotion_engine_contract import (
+    EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH,
     EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
     EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
     EMOTION_ENGINE_PROJECTION_PENDING_PATH,
@@ -2357,7 +2358,15 @@ character:
             pack_dir = root / "pack"
             target_dir = root / "target"
             source = root / "emotion-engine"
-            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            base_pack = compile_to_codex_pack(resolved)
+            _write_pack(
+                embed_pack_metadata(
+                    base_pack,
+                    resolved,
+                    score_mechanism(resolved, base_pack, adapter="codex"),
+                ),
+                pack_dir,
+            )
             _write_fake_emotion_engine_sidecar(source)
             install_pack(pack_dir, target_dir)
 
@@ -2369,6 +2378,13 @@ character:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["artifacts"].append(".emotion-engine/codex-state.json")
             manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            artifact_lock_path = target_dir / LOCK_PATH
+            artifact_lock = json.loads(artifact_lock_path.read_text(encoding="utf-8"))
+            artifact_lock["artifacts"]["manifest.json"] = _test_sha256(manifest_path)
+            artifact_lock_path.write_text(
+                json.dumps(artifact_lock, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
             result = install_pack(
                 pack_dir,
@@ -3832,6 +3848,16 @@ character:
                 json.dumps(projection, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+            artifact_lock_path = target_dir / LOCK_PATH
+            artifact_lock = json.loads(artifact_lock_path.read_text(encoding="utf-8"))
+            artifact_lock["artifacts"][mcp_rel] = _test_sha256(mcp)
+            artifact_lock["artifacts"][EMOTION_ENGINE_PROJECTION_RECEIPT_PATH] = _test_sha256(
+                projection_path
+            )
+            artifact_lock_path.write_text(
+                json.dumps(artifact_lock, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
 
             process = subprocess.Popen(
                 ["sh", str(target_dir / "scripts/emotion_engine_mcp.sh")],
@@ -4384,6 +4410,137 @@ character:
                 "migration_ready",
             )
 
+    def test_refresh_refuses_to_wash_unrelated_artifact_drift(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            unrelated_path = target_dir / ".codex/atlas/references/identity/persona.md"
+            unrelated_path.write_text(
+                unrelated_path.read_text(encoding="utf-8") + "\n",
+                encoding="utf-8",
+            )
+            lock_path = target_dir / LOCK_PATH
+            lock_before = lock_path.read_bytes()
+            state_before = (target_dir / EMOTION_ENGINE_STATE_PATH).read_bytes()
+
+            with self.assertRaisesRegex(PackwrightValidationError, r"identity/persona\.md"):
+                refresh_emotion_engine(target_dir, emotion_engine_source=source)
+
+            self.assertEqual(lock_path.read_bytes(), lock_before)
+            self.assertEqual((target_dir / EMOTION_ENGINE_STATE_PATH).read_bytes(), state_before)
+
+    def test_incomplete_migration_recovery_requires_verified_backup(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        for scenario in ("missing", "tampered"):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                pack_dir = root / "pack"
+                target_dir = root / "target"
+                source = root / "emotion-engine"
+                _write_pack(compile_to_codex_pack(resolved), pack_dir)
+                _write_fake_emotion_engine_sidecar(source)
+                install_pack(
+                    pack_dir,
+                    target_dir,
+                    include_emotion_engine=True,
+                    emotion_engine_source=source,
+                )
+                state_path = target_dir / EMOTION_ENGINE_STATE_PATH
+                state_before = state_path.read_bytes()
+                backup = target_dir / ".emotion-engine/backups/recovery-test.json"
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                if scenario == "tampered":
+                    backup.write_bytes(b'{"tampered":true}\n')
+                journal_path = target_dir / EMOTION_ENGINE_MIGRATION_JOURNAL_PATH
+                journal_path.parent.mkdir(parents=True, exist_ok=True)
+                journal = {
+                    "schema": "packwright-emotion-migration-transaction/v1",
+                    "status": "in_progress",
+                    "operation": "upgrade_v3_capabilities",
+                    "phase": "verify",
+                    "state_file": EMOTION_ENGINE_STATE_PATH,
+                    "source_sha256": _test_sha256(state_path),
+                    "backup_sha256": _test_sha256(state_path),
+                    "backup": backup.relative_to(target_dir).as_posix(),
+                    "manifest_before": (target_dir / "manifest.json").read_text(encoding="utf-8"),
+                    "lock_before": (target_dir / LOCK_PATH).read_text(encoding="utf-8"),
+                    "lineage_before": None,
+                }
+                journal_path.write_text(
+                    json.dumps(journal, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                state_path.write_text('{"_schema":"crash-window"}\n', encoding="utf-8")
+                crashed_bytes = state_path.read_bytes()
+
+                with self.assertRaisesRegex(PackwrightValidationError, "global writer fuse remains active|backup"):
+                    migrate_emotion_engine_state(target_dir)
+
+                self.assertEqual(state_path.read_bytes(), crashed_bytes)
+                self.assertNotEqual(state_path.read_bytes(), state_before)
+                self.assertEqual(
+                    json.loads(journal_path.read_text(encoding="utf-8"))["status"],
+                    "in_progress",
+                )
+
+    def test_legacy_writer_fence_is_projected_and_live_state_is_not_locked(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            lock = json.loads((target_dir / LOCK_PATH).read_text(encoding="utf-8"))
+            self.assertFalse(
+                any(path.startswith(".emotion-engine/") for path in lock["artifacts"])
+            )
+            projection = json.loads(
+                (target_dir / EMOTION_ENGINE_PROJECTION_RECEIPT_PATH).read_text(encoding="utf-8")
+            )
+            self.assertTrue(projection["legacy_writer_fence_supported"])
+            for rel_path in (
+                EMOTION_ENGINE_WRITER_GATEWAY_PATH,
+                "scripts/emotion_engine_lifecycle.py",
+                f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/packwright_mcp_launcher.py",
+            ):
+                source_text = (target_dir / rel_path).read_text(encoding="utf-8")
+                self.assertIn("tempfile.mkstemp", source_text)
+                self.assertNotIn('f".{os.getpid()}.tmp"', source_text)
+
+            state_path = target_dir / EMOTION_ENGINE_STATE_PATH
+            state_before = state_path.read_bytes()
+            fence = target_dir / EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH
+            fence.parent.mkdir(parents=True, exist_ok=True)
+            fence.write_text('{"status":"disabled"}\n', encoding="utf-8")
+            paused = subprocess.run(
+                [str(target_dir / "scripts/emotion_engine.sh"), "pause"],
+                cwd=str(target_dir),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(paused.returncode, 0)
+            self.assertEqual(state_path.read_bytes(), state_before)
+
     def test_shell_pause_waits_for_migration_and_leaves_manifest_state_consistent(self):
         import importlib
 
@@ -4824,6 +4981,21 @@ character:
             (target_dir / EMOTION_ENGINE_RUNTIME_ROOT / "projection.json").unlink()
             (target_dir / "scripts/emotion_engine_lifecycle.py").unlink()
 
+            with self.assertRaises(PackwrightValidationError) as missing_baseline:
+                doctor_target(
+                    target_dir,
+                    fix=True,
+                    emotion_engine_source=source,
+                )
+            self.assertIn("no baseline for managed artifact: manifest.json", str(missing_baseline.exception))
+            self.assertEqual(state_file.read_bytes(), state_before)
+
+            artifact_lock = json.loads(artifact_lock_path.read_text(encoding="utf-8"))
+            artifact_lock["artifacts"]["manifest.json"] = _test_sha256(manifest_path)
+            artifact_lock_path.write_text(
+                json.dumps(artifact_lock, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             repaired = doctor_target(
                 target_dir,
                 fix=True,

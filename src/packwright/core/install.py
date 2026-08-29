@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover - Unix fallback
 
 _EMOTION_TARGET_THREAD_LOCKS = {}
 _EMOTION_TARGET_THREAD_LOCKS_GUARD = threading.Lock()
+_EMOTION_TARGET_LOCK_LOCAL = threading.local()
 
 from .emotion_engine_contract import (
     EMOTION_ENGINE_COMMON_SOURCE_FILES,
@@ -36,6 +37,7 @@ from .emotion_engine_contract import (
     EMOTION_ENGINE_LEGACY_STATE_SCHEMA,
     EMOTION_ENGINE_LIFECYCLE_PATH,
     EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
+    EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH,
     EMOTION_ENGINE_MCP_ACTIVATION_RECEIPT_PATH,
     EMOTION_ENGINE_MCP_LAUNCHER_PATH,
     EMOTION_ENGINE_MCP_WRAPPER_PATH,
@@ -415,13 +417,19 @@ def apply_install(plan):
     if not isinstance(plan, InstallPlan):
         raise TypeError("apply_install expects an InstallPlan")
     journal_path = _emotion_engine_migration_journal_path(plan.target_dir)
-    if plan.sidecar_plan or journal_path.is_file():
+    existing_manifest_path = resolve_destination_path(
+        plan.target_dir,
+        "manifest.json",
+        "installed manifest",
+    )
+    existing_emotion_engine = (
+        existing_manifest_path.is_file()
+        and emotion_engine_expected(_load_manifest(plan.target_dir))
+    )
+    if plan.sidecar_plan or journal_path.is_file() or existing_emotion_engine:
         with _emotion_engine_target_lock(plan.target_dir):
             _assert_no_incomplete_emotion_engine_migration(plan.target_dir)
-            _assert_emotion_artifact_lock_current(
-                plan.target_dir,
-                allow_manifest_seed=True,
-            )
+            _assert_emotion_artifact_lock_current(plan.target_dir)
             return _apply_install_locked(plan)
     return _apply_install_locked(plan)
 
@@ -537,7 +545,7 @@ def _apply_install_locked(plan):
             _write_text_if_changed(destination, desired_text)
         else:
             if not destination.is_file() or destination.read_bytes() != source_path.read_bytes():
-                shutil.copy2(source_path, destination)
+                _write_bytes_atomic(destination, source_path.read_bytes())
         if artifact in HANDOFF_EXECUTABLE_ARTIFACTS or artifact == automation_runner:
             _make_executable(destination)
         installed.append(artifact)
@@ -669,7 +677,7 @@ def _write_install_provenance(target_dir, provenance):
     path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(provenance)
     data["installed_at"] = datetime.now(timezone.utc).isoformat()
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_atomic(path, data)
 
 
 def _read_install_provenance(target_dir):
@@ -770,11 +778,8 @@ def refresh_emotion_engine(
     target_dir = Path(target_dir)
     with _emotion_engine_target_lock(target_dir):
         _assert_no_incomplete_emotion_engine_migration(target_dir)
-        _assert_emotion_artifact_lock_current(
-            target_dir,
-            allow_manifest_seed=True,
-        )
         manifest = _load_manifest(target_dir)
+        previous_artifacts = set(_manifest_artifacts(manifest))
         manifest_adapter = manifest.get("adapter")
         if manifest_adapter not in SUPPORTED_INSTALL_ADAPTERS:
             raise PackwrightValidationError([f"target adapter is unsupported: {manifest_adapter!r}"])
@@ -795,6 +800,32 @@ def refresh_emotion_engine(
             emotion_style=emotion_style,
             emotion_engine_mode=resolved_emotion_engine_mode,
             manifest=manifest,
+        )
+        previous_sidecar = manifest.get("sidecars", {}).get(EMOTION_ENGINE_SIDECAR, {})
+        previous_runtime_root = (
+            previous_sidecar.get("runtime_root")
+            if isinstance(previous_sidecar, dict)
+            else None
+        )
+        refresh_owned_paths = {
+            *plan["projection"],
+            *plan.get("stale_projection_receipts", []),
+            plan["mcp_config"]["path"],
+            adapter_entry(manifest_adapter),
+            EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
+        }
+        if plan.get("lifecycle_config"):
+            refresh_owned_paths.add(plan["lifecycle_config"]["path"])
+        if isinstance(previous_runtime_root, str) and previous_runtime_root:
+            refresh_owned_paths.update(
+                rel_path
+                for rel_path in previous_artifacts
+                if rel_path == previous_runtime_root
+                or rel_path.startswith(previous_runtime_root.rstrip("/") + "/")
+            )
+        _assert_emotion_artifact_lock_current(
+            target_dir,
+            owned_paths=refresh_owned_paths,
         )
         retirement_plan = _emotion_legacy_retirement_plan(target_dir) if retire_legacy_state else []
         transaction_paths = {
@@ -873,7 +904,23 @@ def refresh_emotion_engine(
                 manifest_adapter,
                 resolved_emotion_engine_mode,
             )
-            _refresh_artifact_lock(target_dir)
+            current_manifest = _load_manifest(target_dir)
+            current_artifacts = set(_manifest_artifacts(current_manifest))
+            owned_artifacts = {
+                *plan["projection"],
+                plan["mcp_config"]["path"],
+                adapter_entry(manifest_adapter),
+                "manifest.json",
+                EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
+                *(current_artifacts - previous_artifacts),
+            }
+            if plan.get("lifecycle_config"):
+                owned_artifacts.add(plan["lifecycle_config"]["path"])
+            _update_artifact_lock_paths(
+                target_dir,
+                owned_artifacts,
+                removed_paths=previous_artifacts - current_artifacts,
+            )
         except Exception:
             _restore_target_files(snapshot)
             raise
@@ -1111,6 +1158,7 @@ def _migrate_emotion_engine_state_locked(
         "started_at": datetime.now(timezone.utc).isoformat(),
         "state_file": EMOTION_ENGINE_STATE_PATH,
         "source_sha256": source_sha256,
+        "backup_sha256": source_sha256,
         "backup": backup.resolve().relative_to(target_dir.resolve()).as_posix(),
         "identity": identity,
         "lineage_id": lineage_id,
@@ -1260,44 +1308,99 @@ def _recover_incomplete_emotion_engine_migration(target_dir):
         ])
     if not isinstance(journal, dict) or journal.get("status") != "in_progress":
         return None
+    recovery_issues = []
+    if journal.get("schema") != "packwright-emotion-migration-transaction/v1":
+        recovery_issues.append("migration journal schema is unsupported")
+    if journal.get("operation") not in {"migrate_v2_to_v3", "upgrade_v3_capabilities"}:
+        recovery_issues.append("migration journal operation is invalid")
+    if not isinstance(journal.get("phase"), str) or not journal.get("phase"):
+        recovery_issues.append("migration journal phase is invalid")
+    if journal.get("state_file") != EMOTION_ENGINE_STATE_PATH:
+        recovery_issues.append("migration journal state path does not match the managed state")
     backup_value = journal.get("backup")
     try:
-        backup_path = Path(backup_value) if isinstance(backup_value, str) else Path()
-        if backup_path.is_absolute():
-            backup_relative = backup_path.resolve().relative_to(target_dir.resolve()).as_posix()
-        else:
-            backup_relative = backup_path.as_posix()
-        backup = resolve_destination_path(
+        if not isinstance(backup_value, str) or not backup_value:
+            raise ValueError("backup path is missing")
+        backup_relative = validate_relative_path(
+            backup_value,
+            "Emotion Engine recovery backup",
+        ).as_posix()
+        backup = resolve_source_path(
             target_dir,
             backup_relative,
             "Emotion Engine recovery backup",
         )
-    except (ValueError, PackwrightValidationError) as exc:
+    except (OSError, ValueError, PackwrightValidationError) as exc:
         raise PackwrightValidationError([
-            "Emotion Engine migration backup escapes the installed target"
+            "Emotion Engine migration backup is missing, unsafe, or escapes the installed target"
         ]) from exc
-    state_file = _emotion_engine_state_path(target_dir)
-    if backup.is_file():
-        _write_bytes_atomic(state_file, backup.read_bytes())
+    try:
+        backup_bytes = backup.read_bytes()
+    except OSError as exc:
+        raise PackwrightValidationError([
+            "Emotion Engine migration backup could not be read; the global writer fuse remains active"
+        ]) from exc
+    expected_backup_sha256 = journal.get("backup_sha256") or journal.get("source_sha256")
+    if (
+        not isinstance(expected_backup_sha256, str)
+        or len(expected_backup_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in expected_backup_sha256.lower())
+    ):
+        recovery_issues.append("migration journal backup digest is invalid")
+    elif _sha256_bytes(backup_bytes) != expected_backup_sha256.lower():
+        recovery_issues.append("migration backup digest does not match the journal")
+
     manifest_before = journal.get("manifest_before")
+    try:
+        manifest_snapshot = json.loads(manifest_before) if isinstance(manifest_before, str) else None
+        if not isinstance(manifest_snapshot, dict):
+            raise ValueError("manifest snapshot is not an object")
+        _manifest_artifacts(manifest_snapshot)
+    except (json.JSONDecodeError, ValueError, PackwrightValidationError) as exc:
+        recovery_issues.append(f"migration manifest snapshot is invalid: {exc}")
+
+    lock_before = journal.get("lock_before")
+    try:
+        lock_snapshot = json.loads(lock_before) if isinstance(lock_before, str) else None
+        if (
+            not isinstance(lock_snapshot, dict)
+            or lock_snapshot.get("schema") != "packwright-lock/v1"
+            or not isinstance(lock_snapshot.get("artifacts"), dict)
+            or not lock_snapshot["artifacts"]
+        ):
+            raise ValueError("artifact-lock snapshot is incomplete")
+    except (json.JSONDecodeError, ValueError) as exc:
+        recovery_issues.append(f"migration artifact-lock snapshot is invalid: {exc}")
+
+    lineage_before = journal.get("lineage_before")
+    if lineage_before is not None:
+        try:
+            lineage_snapshot = json.loads(lineage_before) if isinstance(lineage_before, str) else None
+            if not isinstance(lineage_snapshot, dict):
+                raise ValueError("lineage snapshot is not an object")
+        except (json.JSONDecodeError, ValueError) as exc:
+            recovery_issues.append(f"migration lineage snapshot is invalid: {exc}")
+
+    if recovery_issues:
+        raise PackwrightValidationError([
+            "cannot safely recover the incomplete Emotion Engine migration; the global writer fuse remains active",
+            *recovery_issues,
+        ])
+
+    state_file = _emotion_engine_state_path(target_dir)
+    _write_bytes_atomic(state_file, backup_bytes)
     manifest_path = resolve_destination_path(
         target_dir,
         "manifest.json",
         "manifest recovery destination",
     )
-    if isinstance(manifest_before, str):
-        _write_text_atomic(manifest_path, manifest_before)
-    lock_before = journal.get("lock_before")
+    _write_text_atomic(manifest_path, manifest_before)
     artifact_lock_path = resolve_destination_path(
         target_dir,
         LOCK_PATH,
         "artifact lock recovery destination",
     )
-    if isinstance(lock_before, str):
-        _write_text_atomic(artifact_lock_path, lock_before)
-    elif lock_before is None and artifact_lock_path.is_file():
-        artifact_lock_path.unlink()
-    lineage_before = journal.get("lineage_before")
+    _write_text_atomic(artifact_lock_path, lock_before)
     lineage_path = _emotion_engine_migration_lineage_path(target_dir)
     if isinstance(lineage_before, str):
         _write_text_atomic(lineage_path, lineage_before)
@@ -1355,6 +1458,37 @@ def doctor_target(
 ):
     """Inspect and optionally repair installed target projection drift."""
     target_dir = Path(target_dir)
+    initial_manifest = _load_manifest(target_dir)
+    if fix and _emotion_engine_expected_in_target(initial_manifest, target_dir):
+        with _emotion_engine_target_lock(target_dir):
+            _assert_no_incomplete_emotion_engine_migration(target_dir)
+            return _doctor_target_locked(
+                target_dir,
+                fix=fix,
+                emotion_engine_codex_source=emotion_engine_codex_source,
+                emotion_style=emotion_style,
+                emotion_engine_mode=emotion_engine_mode,
+                emotion_engine_source=emotion_engine_source,
+            )
+    return _doctor_target_locked(
+        target_dir,
+        fix=fix,
+        emotion_engine_codex_source=emotion_engine_codex_source,
+        emotion_style=emotion_style,
+        emotion_engine_mode=emotion_engine_mode,
+        emotion_engine_source=emotion_engine_source,
+    )
+
+
+def _doctor_target_locked(
+    target_dir,
+    fix=False,
+    emotion_engine_codex_source=None,
+    emotion_style=None,
+    emotion_engine_mode=None,
+    emotion_engine_source=None,
+):
+    """Run doctor after acquiring the project writer lock when it may mutate."""
     manifest = _load_manifest(target_dir)
     adapter = manifest.get("adapter")
     result = {
@@ -2025,6 +2159,16 @@ def apply_reconcile(plan, accept_degraded=False):
     """Apply a reviewed ReconcilePlan and write a durable local receipt."""
     if not isinstance(plan, ReconcilePlan):
         raise TypeError("apply_reconcile expects a ReconcilePlan")
+    if emotion_engine_expected(plan.installed_manifest):
+        with _emotion_engine_target_lock(plan.target_dir):
+            _assert_no_incomplete_emotion_engine_migration(plan.target_dir)
+            _assert_emotion_artifact_lock_current(plan.target_dir)
+            return _apply_reconcile_locked(plan, accept_degraded=accept_degraded)
+    return _apply_reconcile_locked(plan, accept_degraded=accept_degraded)
+
+
+def _apply_reconcile_locked(plan, accept_degraded=False):
+    """Apply reconcile after any required project transaction lock is held."""
     if not plan.report["ready"]:
         raise PackwrightValidationError(["reconcile plan has unresolved conflicts"])
     degraded = plan.report["changes"]["degraded"]
@@ -2041,13 +2185,14 @@ def apply_reconcile(plan, accept_degraded=False):
     with tempfile.TemporaryDirectory() as temp_dir:
         pack_dir = Path(temp_dir)
         _write_pack_to_dir(plan.pack, pack_dir, force=True)
-        install_result = install_pack(
+        install_plan = plan_install(
             pack_dir,
             plan.target_dir,
             adapter=plan.report["adapter"],
             force=True,
             persist_provenance=False,
         )
+        install_result = _apply_install_locked(install_plan)
     if emotion_engine_expected(plan.installed_manifest):
         for rel_path in (EMOTION_ENGINE_WRAPPER_PATH, EMOTION_ENGINE_MCP_WRAPPER_PATH):
             executable = plan.target_dir / rel_path
@@ -2058,7 +2203,10 @@ def apply_reconcile(plan, accept_degraded=False):
             plan.report["adapter"],
             _manifest_emotion_engine_mode(plan.installed_manifest),
         )
-        _refresh_artifact_lock(plan.target_dir)
+        _update_artifact_lock_paths(
+            plan.target_dir,
+            [adapter_entry(plan.report["adapter"])],
+        )
 
     installed_pack = _read_installed_pack(plan.target_dir)
     installed_score = _score_migration_pack(
@@ -2103,7 +2251,7 @@ def apply_reconcile(plan, accept_degraded=False):
     receipt_dir.mkdir(parents=True, exist_ok=True)
     receipt_path = receipt_dir / f"reconcile-{plan.report['spec']['to_sha256'][:12]}.json"
     receipt["receipt"] = str(receipt_path)
-    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json_atomic(receipt_path, receipt)
     return receipt
 
 
@@ -2353,7 +2501,7 @@ def _normalize_reconcile_pack_lock(pack):
     manifest = json.loads(normalized["manifest.json"])
     artifacts = {}
     for rel_path in _manifest_artifacts(manifest):
-        if rel_path in {LOCK_PATH, EMOTION_ENGINE_STATE_PATH}:
+        if rel_path == LOCK_PATH or _is_sidecar_private_path(rel_path):
             continue
         content = normalized.get(rel_path)
         if content is None:
@@ -3038,8 +3186,16 @@ def _load_artifact_lock(target_dir):
     return normalized
 
 
-def _assert_emotion_artifact_lock_current(target_dir, allow_manifest_seed=False):
-    """Require a compare-before-update manifest digest for EE transactions."""
+def _is_sidecar_private_path(rel_path):
+    """Return whether a path is live sidecar-owned state, never Packwright baseline."""
+    return rel_path == ".emotion-engine" or rel_path.startswith(".emotion-engine/")
+
+
+def _assert_emotion_artifact_lock_current(
+    target_dir,
+    owned_paths=(),
+):
+    """Verify the complete Packwright-managed baseline before any writer transaction."""
     target_dir = Path(target_dir)
     manifest_path = resolve_destination_path(
         target_dir,
@@ -3054,22 +3210,48 @@ def _assert_emotion_artifact_lock_current(target_dir, allow_manifest_seed=False)
         "artifact lock",
     )
     if not lock_path.is_file():
-        if allow_manifest_seed:
-            return True
         raise PackwrightValidationError([
-            "Packwright artifact lock is missing; refresh the managed projection before changing Emotion Engine state"
+            "Packwright artifact lock is missing; refusing to create a new baseline over an existing target"
         ])
     locked = _load_artifact_lock(target_dir)
-    expected = locked.get("manifest.json")
-    if expected is None:
-        if allow_manifest_seed:
-            return True
+    manifest = _load_manifest(target_dir)
+    operation_owned = {str(rel_path) for rel_path in owned_paths}
+    issues = []
+    expected_paths = {
+        rel_path
+        for rel_path in _manifest_artifacts(manifest)
+        if rel_path != LOCK_PATH
+        and not _is_portable_path(rel_path)
+        and not _is_sidecar_private_path(rel_path)
+    }
+    expected_paths.add("manifest.json")
+    for rel_path in sorted(expected_paths):
+        if rel_path not in locked and rel_path not in operation_owned:
+            issues.append(
+                f"Packwright artifact lock has no baseline for managed artifact: {rel_path}"
+            )
+    for rel_path, expected_record in sorted(locked.items()):
+        if (
+            rel_path == LOCK_PATH
+            or _is_portable_path(rel_path)
+            or _is_sidecar_private_path(rel_path)
+            or rel_path in operation_owned
+        ):
+            continue
+        try:
+            path = resolve_source_path(target_dir, rel_path, "managed artifact baseline")
+            actual = _artifact_lock_actual_digest(expected_record, path)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, PackwrightValidationError) as exc:
+            issues.append(f"managed artifact baseline is missing, unsafe, or unreadable: {rel_path}: {exc}")
+            continue
+        if actual != _artifact_lock_digest(expected_record):
+            issues.append(
+                f"managed artifact changed outside its Packwright artifact-lock baseline: {rel_path}"
+            )
+    if issues:
         raise PackwrightValidationError([
-            "Packwright artifact lock has no manifest baseline; refresh before changing Emotion Engine state"
-        ])
-    if _artifact_lock_actual_digest(expected, manifest_path) != _artifact_lock_digest(expected):
-        raise PackwrightValidationError([
-            "manifest.json changed outside its Packwright artifact-lock baseline; refusing to wash the drift into a writer transaction"
+            "refusing to wash managed artifact drift into a writer transaction",
+            *issues,
         ])
     return True
 
@@ -3081,7 +3263,10 @@ def _refresh_artifact_lock(target_dir):
         return False
     artifacts = {}
     for rel_path in _manifest_artifacts(manifest):
-        if rel_path in {LOCK_PATH, EMOTION_ENGINE_STATE_PATH}:
+        if (
+            rel_path == LOCK_PATH
+            or _is_sidecar_private_path(rel_path)
+        ):
             continue
         path = resolve_source_path(target_dir, rel_path, "installed artifact")
         artifacts[rel_path] = _artifact_lock_record(manifest, rel_path, path)
@@ -3103,21 +3288,34 @@ def _refresh_artifact_lock(target_dir):
     )
 
 
-def _update_artifact_lock_paths(target_dir, rel_paths):
+def _update_artifact_lock_paths(target_dir, rel_paths, removed_paths=()):
+    """Commit only artifacts owned by the completed transaction."""
     lock_path = target_dir / LOCK_PATH
     if not lock_path.is_file():
         return False
     locked = _load_artifact_lock(target_dir)
+    for rel_path in tuple(locked):
+        if _is_sidecar_private_path(rel_path):
+            locked.pop(rel_path, None)
+    for rel_path in removed_paths:
+        locked.pop(rel_path, None)
+    manifest = _load_manifest(target_dir)
+    manifest_artifacts = set(_manifest_artifacts(manifest))
     for rel_path in rel_paths:
-        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_STATE_PATH:
+        if (
+            rel_path == LOCK_PATH
+            or _is_portable_path(rel_path)
+            or _is_sidecar_private_path(rel_path)
+        ):
+            continue
+        if rel_path != "manifest.json" and rel_path not in manifest_artifacts:
             continue
         path = resolve_source_path(target_dir, rel_path, "managed artifact")
-        manifest = _load_manifest(target_dir)
         locked[rel_path] = _artifact_lock_record(manifest, rel_path, path)
     destination = resolve_destination_path(target_dir, LOCK_PATH, "artifact lock destination")
-    destination.write_text(
+    _write_text_atomic(
+        destination,
         json.dumps({"schema": "packwright-lock/v1", "artifacts": locked}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
     return True
 
@@ -3132,7 +3330,7 @@ def _artifact_lock_doctor_issues(target_dir, manifest):
 
     issues = []
     for rel_path, expected_record in sorted(locked.items()):
-        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or rel_path == EMOTION_ENGINE_STATE_PATH:
+        if rel_path == LOCK_PATH or _is_portable_path(rel_path) or _is_sidecar_private_path(rel_path):
             continue
         try:
             path = resolve_source_path(target_dir, rel_path, "managed artifact")
@@ -3155,8 +3353,7 @@ def _artifact_lock_doctor_issues(target_dir, manifest):
         if (
             rel_path == LOCK_PATH
             or _is_portable_path(rel_path)
-            or rel_path == EMOTION_ENGINE_STATE_PATH
-            or rel_path in emotion_engine_artifacts(manifest.get("adapter"))
+            or _is_sidecar_private_path(rel_path)
         ):
             continue
         if rel_path not in locked:
@@ -3211,7 +3408,7 @@ def _repair_managed_artifact_drift(target_dir, manifest, issues):
                 )
             except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
                 continue
-        destination.write_text(content, encoding="utf-8")
+        _write_text_atomic(destination, content)
         if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
             _make_executable(destination)
         fixed.append(rel_path)
@@ -3260,7 +3457,7 @@ def _write_text_if_changed(path, content):
             return False
     except (OSError, UnicodeError):
         pass
-    path.write_text(content, encoding="utf-8")
+    _write_text_atomic(path, content)
     return True
 
 
@@ -3360,6 +3557,16 @@ def _emotion_engine_target_lock(target_dir):
     with _EMOTION_TARGET_THREAD_LOCKS_GUARD:
         thread_lock = _EMOTION_TARGET_THREAD_LOCKS.setdefault(key, threading.RLock())
     with thread_lock:
+        depths = getattr(_EMOTION_TARGET_LOCK_LOCAL, "depths", {})
+        depth = depths.get(key, 0)
+        if depth:
+            depths[key] = depth + 1
+            _EMOTION_TARGET_LOCK_LOCAL.depths = depths
+            try:
+                yield
+            finally:
+                depths[key] -= 1
+            return
         handle = open(path, "a+b")
         try:
             if fcntl is not None:
@@ -3367,8 +3574,11 @@ def _emotion_engine_target_lock(target_dir):
             elif msvcrt is not None:  # pragma: no cover - Windows fallback
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            depths[key] = 1
+            _EMOTION_TARGET_LOCK_LOCAL.depths = depths
             yield
         finally:
+            depths.pop(key, None)
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
             elif msvcrt is not None:  # pragma: no cover - Windows fallback
@@ -3562,7 +3772,7 @@ def _write_pack_to_dir(pack, out_dir, force=False):
     for rel_path, content in pack.items():
         path = destinations[rel_path]
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        _write_text_atomic(path, content)
         if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
             _make_executable(path)
     return stale_removed
@@ -3746,14 +3956,14 @@ def _fix_target_layout(target_dir, issues):
         if rel_path == "workspace/README.md" and issue_id in {"workspace_layout_missing_file", "manifest_artifact_missing"}:
             path = resolve_destination_path(target_dir, rel_path, "workspace repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(workspace_readme(), encoding="utf-8")
+            _write_text_atomic(path, workspace_readme())
             fixed.append(rel_path)
             continue
         if rel_path in workspace_artifacts() and rel_path.endswith("/.gitkeep"):
             path = resolve_destination_path(target_dir, rel_path, "workspace repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
-                path.write_text("", encoding="utf-8")
+                _write_text_atomic(path, "")
             fixed.append(rel_path)
             continue
         if issue_id == "knowledge_scaffold_missing_directory" and rel_path in knowledge_required_dirs():
@@ -3766,7 +3976,7 @@ def _fix_target_layout(target_dir, issues):
         }:
             path = resolve_destination_path(target_dir, rel_path, "knowledge repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(knowledge_files()[rel_path], encoding="utf-8")
+            _write_text_atomic(path, knowledge_files()[rel_path])
             fixed.append(rel_path)
             continue
         if rel_path in handoff_artifacts and issue_id in {
@@ -3776,7 +3986,7 @@ def _fix_target_layout(target_dir, issues):
         }:
             path = resolve_destination_path(target_dir, rel_path, "handoff repair destination")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(handoff_artifacts[rel_path], encoding="utf-8")
+            _write_text_atomic(path, handoff_artifacts[rel_path])
             if rel_path in HANDOFF_EXECUTABLE_ARTIFACTS:
                 _make_executable(path)
             fixed.append(rel_path)
@@ -3835,7 +4045,7 @@ def _fix_legacy_codex_skills(target_dir, issues):
     manifest_text = manifest_path.read_text(encoding="utf-8")
     for legacy, canonical in migrations:
         manifest_text = manifest_text.replace(legacy, canonical)
-    manifest_path.write_text(manifest_text, encoding="utf-8")
+    _write_text_atomic(manifest_path, manifest_text)
     for rel_path in ("AGENTS.md", "memory/index.md", "memory/pinned.md", "memory/source-map.md"):
         path = resolve_destination_path(target_dir, rel_path, "memory projection repair destination")
         if not path.is_file():
@@ -3843,7 +4053,7 @@ def _fix_legacy_codex_skills(target_dir, issues):
         text = path.read_text(encoding="utf-8")
         updated = text.replace(".codex/skills/", ".agents/skills/")
         if updated != text:
-            path.write_text(updated, encoding="utf-8")
+            _write_text_atomic(path, updated)
             fixed.append(rel_path)
     return fixed
 
@@ -3892,7 +4102,7 @@ def _rewrite_migrated_memory_files(target_dir, resolved, to_adapter, emotion_eng
             emotion_engine_active=emotion_engine_active,
         )
         if projected != original:
-            path.write_text(projected, encoding="utf-8")
+            _write_text_atomic(path, projected)
             rewritten.append(rel_path)
     return rewritten
 
@@ -3905,7 +4115,7 @@ def _copy_emotion_state_snapshot(target_dir, source):
     destination = _emotion_engine_state_path(target_dir)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source.resolve() != destination.resolve():
-        shutil.copy2(source, destination)
+        _write_bytes_atomic(destination, source.read_bytes())
     return [EMOTION_ENGINE_STATE_PATH]
 
 
@@ -4701,6 +4911,8 @@ def _emotion_engine_projection_issue(target_dir, plan):
         or receipt.get("projection_nonce") != plan.get("projection_nonce")
         or receipt.get("source_digest") != plan.get("source_digest")
         or receipt.get("required_capabilities") != list(EMOTION_ENGINE_REQUIRED_CAPABILITIES)
+        or receipt.get("legacy_writer_fence_supported") is not True
+        or receipt.get("legacy_writer_fence") != EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH
     ):
         return _doctor_issue(
             "emotion_engine_projection_cohort_mismatch",
@@ -4748,6 +4960,7 @@ def _emotion_engine_mcp_activation_issue(target_dir, plan):
         or receipt.get("source_digest") != plan.get("source_digest")
         or receipt.get("runtime_root") != EMOTION_ENGINE_RUNTIME_ROOT
         or receipt.get("state_path") != EMOTION_ENGINE_STATE_PATH
+        or receipt.get("legacy_writer_fence_supported") is not True
         or receipt.get("activation_check_status") != "ready"
         or receipt.get("audit_ok") is not True
         or not isinstance(receipt.get("state_sha256"), str)
@@ -5138,6 +5351,8 @@ def _install_emotion_engine(target_dir, plan):
         "projection_nonce": projection_nonce,
         "state_schema": EMOTION_ENGINE_STATE_SCHEMA,
         "required_capabilities": list(EMOTION_ENGINE_REQUIRED_CAPABILITIES),
+        "legacy_writer_fence_supported": True,
+        "legacy_writer_fence": EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH,
         "source_digest": plan["source_digest"],
         "files": {
             rel_path: _file_sha256(resolve_source_path(
@@ -5595,7 +5810,7 @@ def _ensure_emotion_section(target_dir, adapter, mode):
     text = entry_path.read_text(encoding="utf-8")
     updated, changed = _render_emotion_section(text, adapter, mode)
     if changed:
-        entry_path.write_text(updated, encoding="utf-8")
+        _write_text_atomic(entry_path, updated)
     return changed
 
 

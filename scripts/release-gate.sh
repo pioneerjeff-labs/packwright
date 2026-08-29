@@ -65,7 +65,12 @@ run_audits() {
 
 run_emotion_engine_smoke() {
   if [[ -z "$EMOTION_ENGINE_SOURCE" ]]; then
-    return 0
+    echo "release-critical modes require --emotion-engine-source at the pinned checkout" >&2
+    return 2
+  fi
+  if [[ ! -d "$EMOTION_ENGINE_SOURCE" ]]; then
+    echo "Emotion Engine source is not a directory: $EMOTION_ENGINE_SOURCE" >&2
+    return 2
   fi
   "$PYTHON" scripts/emotion_engine_release_smoke.py "$EMOTION_ENGINE_SOURCE"
 }
@@ -73,7 +78,6 @@ run_emotion_engine_smoke() {
 case "$MODE" in
   unit)
     run_unit_checks
-    run_emotion_engine_smoke
     exit 0
     ;;
   audit)
@@ -98,6 +102,10 @@ esac
 if [[ "$MODE" != "full" && "$MODE" != "package" && "$MODE" != "build" ]]; then
   echo "unsupported release gate mode: $MODE" >&2
   exit 2
+fi
+
+if [[ "$MODE" == "package" || "$MODE" == "build" ]]; then
+  run_emotion_engine_smoke
 fi
 
 WORK="$(mktemp -d "$TEMP_ROOT/packwright-release.XXXXXX")"
@@ -129,7 +137,10 @@ else
 fi
 
 write_receipt() {
-  "$PYTHON" - "$DIST" "$DIST/release-artifacts.json" <<'PY'
+  local packwright_commit emotion_engine_commit
+  packwright_commit="$(git rev-parse HEAD)"
+  emotion_engine_commit="$(git -C "$EMOTION_ENGINE_SOURCE" rev-parse HEAD)"
+  "$PYTHON" - "$DIST" "$DIST/release-artifacts.json" "$packwright_commit" "$emotion_engine_commit" <<'PY'
 import hashlib, json, pathlib, sys
 sys.path.insert(0, str(pathlib.Path.cwd() / "src"))
 from packwright import __version__
@@ -139,7 +150,12 @@ for path in sorted(dist.iterdir()):
     if path.name == "release-artifacts.json" or not path.is_file():
         continue
     items.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size})
-pathlib.Path(sys.argv[2]).write_text(json.dumps({"version": __version__, "artifacts": items}, indent=2) + "\n", encoding="utf-8")
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "version": __version__,
+    "packwright_commit": sys.argv[3],
+    "emotion_engine_commit": sys.argv[4],
+    "artifacts": items,
+}, indent=2) + "\n", encoding="utf-8")
 PY
 }
 

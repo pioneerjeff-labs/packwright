@@ -2,6 +2,7 @@
 """Run the release-critical Packwright/Emotion Engine cross-repository smoke."""
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -26,6 +27,7 @@ from packwright.core import (
 )
 from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_LIFECYCLE_RECEIPT_PATH,
+    EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH,
     EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
     EMOTION_ENGINE_REQUIRED_CAPABILITIES,
     EMOTION_ENGINE_RUNTIME_ROOT,
@@ -414,13 +416,18 @@ def smoke_crash_recovery(target):
     backup = target / ".emotion-engine" / "backups" / "release-smoke-crash.json"
     backup.parent.mkdir(parents=True, exist_ok=True)
     backup.write_bytes(state_before)
+    source_sha256 = hashlib.sha256(state_before).hexdigest()
     journal_path = target / EMOTION_ENGINE_MIGRATION_JOURNAL_PATH
     journal_path.parent.mkdir(parents=True, exist_ok=True)
     journal_path.write_text(
         json.dumps({
             "schema": "packwright-emotion-migration-transaction/v1",
             "status": "in_progress",
+            "operation": "upgrade_v3_capabilities",
             "phase": "apply_helper",
+            "state_file": EMOTION_ENGINE_STATE_PATH,
+            "source_sha256": source_sha256,
+            "backup_sha256": source_sha256,
             "backup": backup.relative_to(target).as_posix(),
             "manifest_before": manifest_path.read_text(encoding="utf-8"),
             "lock_before": lock_path.read_text(encoding="utf-8"),
@@ -433,6 +440,49 @@ def smoke_crash_recovery(target):
     recovered = json.loads(journal_path.read_text(encoding="utf-8"))
     if recovered.get("status") != "rolled_back" or state_path.read_bytes() != state_before:
         raise RuntimeError("incomplete migration recovery did not restore state")
+
+
+def smoke_legacy_writer_fence(target):
+    state_path = target / EMOTION_ENGINE_STATE_PATH
+    state_before = state_path.read_bytes()
+    fence = target / EMOTION_ENGINE_LEGACY_WRITER_FENCE_PATH
+    fence.parent.mkdir(parents=True, exist_ok=True)
+    fence.write_text(
+        json.dumps({
+            "schema": "packwright-legacy-writer-fence/v1",
+            "status": "disabled",
+        }, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        shell = run_shell_writer(target, "pause")
+        if shell.returncode == 0 or state_path.read_bytes() != state_before:
+            raise RuntimeError("legacy writer fence did not stop the shell gateway")
+        lifecycle = run_lifecycle_writer(target, "fenced-lifecycle")
+        if lifecycle.returncode != 0 or state_path.read_bytes() != state_before:
+            raise RuntimeError("legacy writer fence did not stop the lifecycle bridge")
+        mcp, responses = run_mcp_requests(target, [{
+            "jsonrpc": "2.0",
+            "id": "fenced-mcp",
+            "method": "tools/call",
+            "params": {
+                "name": "emotion_engine_session_start",
+                "arguments": session_start_arguments("fenced-mcp", "fenced-mcp-start"),
+            },
+        }])
+        if (
+            not responses
+            or "error" not in responses[0]
+            or state_path.read_bytes() != state_before
+        ):
+            raise RuntimeError(
+                "legacy writer fence did not stop the MCP launcher: "
+                f"returncode={mcp.returncode}, responses={responses}, stderr={mcp.stderr!r}"
+            )
+    finally:
+        fence.unlink(missing_ok=True)
+    initialize_mcp(target, request_id=91)
+    require_clean_doctor(target)
 
 
 def smoke_v2_lineage(root, source, resolved):
@@ -492,6 +542,7 @@ def main():
         smoke_managed_writer_fail_closed(codex_target)
         smoke_capability_upgrade(source, codex_target)
         smoke_crash_recovery(codex_target)
+        smoke_legacy_writer_fence(codex_target)
         smoke_v2_lineage(root, source, resolved)
     print("real Emotion Engine cross-repository smoke passed")
     return 0
