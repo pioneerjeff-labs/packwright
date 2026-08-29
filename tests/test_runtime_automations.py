@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import json
 import os
 import shlex
@@ -255,6 +256,18 @@ class RuntimeAutomationTest(unittest.TestCase):
             self.assertTrue(verified["ok"], verified)
             self.assertTrue(verified["delivery_verified"])
             self.assertTrue(Path(verified["receipt"]).is_file())
+            receipt_path = Path(verified["receipt"])
+            receipt_path.unlink()
+            receipt_victim = Path(tmpdir) / "activation-victim.txt"
+            receipt_victim.write_text("do not truncate\n", encoding="utf-8")
+            old_predictable_temp = receipt_path.with_suffix(".tmp")
+            old_predictable_temp.symlink_to(receipt_victim)
+            with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
+                verified_again = verify_runtime_activation(target, adapter="codex")
+            self.assertTrue(verified_again["ok"], verified_again)
+            self.assertEqual(receipt_victim.read_text(encoding="utf-8"), "do not truncate\n")
+            self.assertTrue(receipt_path.is_file())
+            self.assertTrue(old_predictable_temp.is_symlink())
             with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}):
                 after = doctor_target(target)
             self.assertEqual(
@@ -593,6 +606,41 @@ class RuntimeAutomationTest(unittest.TestCase):
                 if not check["passed"]
             }
             self.assertIn("empty_memory_skeleton_is_user_ready", failed)
+
+    def test_generated_codex_hook_does_not_follow_old_pid_temp_symlink(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = _source(tmpdir)
+            _, pack = _embedded_pack(source, "codex")
+            pack_dir = Path(tmpdir) / "pack"
+            target = Path(tmpdir) / "target"
+            _write_pack(pack, pack_dir)
+            install_pack(pack_dir, target)
+            runner = target / ".codex/hooks/packwright_automation.py"
+            spec = importlib.util.spec_from_file_location("installed_packwright_automation", runner)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            stamp = target / ".packwright/activation/codex-hooks.json"
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            victim = Path(tmpdir) / "hook-victim.txt"
+            victim.write_text("do not truncate\n", encoding="utf-8")
+            old_predictable_temp = stamp.with_name(stamp.name + ".4242.tmp")
+            old_predictable_temp.symlink_to(victim)
+            with mock.patch.object(module.os, "getpid", return_value=4242):
+                module.record_activation(
+                    target,
+                    "session_start",
+                    "context",
+                    {
+                        "hook_event_name": "SessionStart",
+                        "session_id": "atomic-test-session",
+                    },
+                    "delivery-marker",
+                )
+
+            self.assertEqual(victim.read_text(encoding="utf-8"), "do not truncate\n")
+            self.assertTrue(stamp.is_file())
+            self.assertTrue(old_predictable_temp.is_symlink())
 
     def test_reconcile_dry_run_matches_hash_changed_write_set(self):
         def hashes(root):

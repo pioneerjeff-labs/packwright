@@ -18,6 +18,7 @@ from packwright.adapters import (
     compile_to_cursor_pack,
 )
 from packwright.core import (
+    PackwrightValidationError,
     doctor_target,
     install_pack,
     load_mechanism,
@@ -519,13 +520,20 @@ def smoke_v2_lineage(root, source, resolved):
     )
     if pause.returncode != 0:
         raise RuntimeError(pause.stderr or pause.stdout)
-    retired = refresh_emotion_engine(
-        target,
-        emotion_engine_source=source,
-        retire_legacy_state=True,
-    )
-    if not retired.get("retired_legacy_state") or legacy.exists():
-        raise RuntimeError("persistent migration lineage did not authorize reviewed retirement")
+    legacy_before = legacy.read_bytes()
+    try:
+        refresh_emotion_engine(
+            target,
+            emotion_engine_source=source,
+            retire_legacy_state=True,
+        )
+    except PackwrightValidationError as exc:
+        if "cannot authenticate sidecar-private lineage" not in str(exc):
+            raise
+    else:
+        raise RuntimeError("target-local lineage unexpectedly authorized divergent retirement")
+    if not legacy.exists() or legacy.read_bytes() != legacy_before:
+        raise RuntimeError("failed-closed legacy retirement changed the retained source")
 
 
 def main():

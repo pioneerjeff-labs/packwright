@@ -121,6 +121,8 @@ def entry_has_marker(value):
 
 def artifact_digest(path, record):
     if isinstance(record, dict):
+        if record.get("mode") in {"managed_text_block", "managed_mcp_config"}:
+            return sha256(path)
         if record.get("mode") != "managed_json_hooks":
             return None
         data = read_json(path)
@@ -539,6 +541,8 @@ def entry_has_marker(value):
 
 def artifact_digest(path, record):
     if isinstance(record, dict):
+        if record.get("mode") in {"managed_text_block", "managed_mcp_config"}:
+            return file_sha256(path)
         if record.get("mode") != "managed_json_hooks":
             return None
         data = read_json(path)
@@ -980,6 +984,8 @@ def entry_has_marker(value):
 
 def artifact_digest(path, record):
     if isinstance(record, dict):
+        if record.get("mode") in {"managed_text_block", "managed_mcp_config"}:
+            return sha256(path)
         if record.get("mode") != "managed_json_hooks":
             return None
         data = read_json(path)

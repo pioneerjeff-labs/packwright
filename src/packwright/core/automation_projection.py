@@ -307,6 +307,7 @@ import os
 import re
 import secrets
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -441,14 +442,32 @@ def record_activation(root, event, context, hook_input, delivery_marker):
             "transcript_path": transcript_path,
         }
         stamp_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = stamp_path.with_name(
-            stamp_path.name + f".{os.getpid()}.tmp"
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{stamp_path.name}.",
+            suffix=".tmp",
+            dir=str(stamp_path.parent),
         )
-        temporary.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\\n",
-            encoding="utf-8",
-        )
-        temporary.replace(stamp_path)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, stamp_path)
+            try:
+                directory_fd = os.open(stamp_path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            except OSError:
+                directory_fd = None
+            if directory_fd is not None:
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
     except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         pass
 

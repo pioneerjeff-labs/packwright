@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .atomic_io import write_json_atomic
 from .automation_projection import automation_config_paths, managed_hook_fragment_digest
 from .errors import PackwrightValidationError
 from .path_safety import resolve_destination_path, resolve_source_path
@@ -65,13 +66,7 @@ def verify_runtime_activation(target_dir, adapter=None):
         "stamp_path": ACTIVATION_STAMP_PATH,
         "receipt": str(receipt_path),
     }
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = receipt_path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(receipt_path)
+    write_json_atomic(receipt_path, receipt)
     return receipt
 
 

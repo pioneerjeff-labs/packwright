@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -9,6 +10,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,6 +28,7 @@ from packwright.core import (
     apply_install,
     apply_migration,
     apply_reconcile,
+    bootstrap_emotion_engine_artifact_lock,
     create_handoff,
     doctor_target,
     generate_character_source,
@@ -91,6 +94,16 @@ MECHANISM_PATH = PROJECT_ROOT / "examples" / "atlas-work" / "mechanism.yaml"
 
 
 class MvpChainTest(unittest.TestCase):
+    def setUp(self):
+        # Product code accepts only the pinned clean upstream revision. Unit fixtures
+        # replace that supply-chain boundary; dedicated tests below exercise it.
+        self._approved_source_patch = patch(
+            "packwright.core.install._approved_emotion_engine_source",
+            side_effect=_fake_approved_emotion_engine_source,
+        )
+        self._approved_source_patch.start()
+        self.addCleanup(self._approved_source_patch.stop)
+
     def test_atlas_example_mechanism_validates(self):
         data = load_mechanism(MECHANISM_PATH)
         self.assertIs(validate_mechanism(data), data)
@@ -866,12 +879,12 @@ character:
 
         version = run_cli("--version")
         self.assertEqual(version.returncode, 0, version.stderr + version.stdout)
-        self.assertEqual(version.stdout.strip(), "packwright 0.3.4")
+        self.assertEqual(version.stdout.strip(), "packwright 0.3.4rc1")
 
         help_result = run_cli("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr + help_result.stdout)
         self.assertIn(
-            "{new,init,draft-character,presets,adopt,build,install,migrate,migrate-emotion-state,reconcile,verify-activation,doctor,score}",
+            "{new,init,draft-character,presets,adopt,build,install,migrate,migrate-emotion-state,bootstrap-emotion-lock,reconcile,verify-activation,doctor,score}",
             help_result.stdout,
         )
         self.assertIn("new", help_result.stdout)
@@ -2035,6 +2048,69 @@ character:
                 )
             self.assertIn("PACKWRIGHT_EMOTION_ENGINE_DIR", str(raised.exception))
 
+    def test_legacy_emotion_target_lock_bootstrap_requires_explicit_preview_and_apply(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            lock_path = target_dir / LOCK_PATH
+            lock_path.unlink()
+            manifest_path = target_dir / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.get("packwright", {}).pop("lock", None)
+            manifest["artifacts"] = [
+                path for path in manifest["artifacts"] if path != LOCK_PATH
+            ]
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            preview = bootstrap_emotion_engine_artifact_lock(target_dir)
+            self.assertEqual(preview["status"], "confirmation_required")
+            self.assertFalse(preview["applied"])
+            self.assertFalse(lock_path.exists())
+            self.assertIn("AGENTS.md", {item["path"] for item in preview["artifacts"]})
+
+            entry_path = target_dir / "AGENTS.md"
+            entry_before = entry_path.read_bytes()
+            entry_path.write_bytes(entry_before + b"\npost-preview drift\n")
+            with self.assertRaisesRegex(PackwrightValidationError, "preview changed"):
+                bootstrap_emotion_engine_artifact_lock(
+                    target_dir,
+                    apply=True,
+                    preview_digest=preview["preview_digest"],
+                )
+            self.assertFalse(lock_path.exists())
+            entry_path.write_bytes(entry_before)
+            preview = bootstrap_emotion_engine_artifact_lock(target_dir)
+
+            adopted = bootstrap_emotion_engine_artifact_lock(
+                target_dir,
+                apply=True,
+                preview_digest=preview["preview_digest"],
+            )
+            self.assertEqual(adopted["status"], "adopted")
+            self.assertTrue(lock_path.is_file())
+            self.assertIn(
+                "managed_text_block",
+                {
+                    record.get("mode")
+                    for record in json.loads(lock_path.read_text(encoding="utf-8"))["artifacts"].values()
+                    if isinstance(record, dict)
+                },
+            )
+
     def test_emotion_engine_installs_for_every_adapter_and_preserves_config_and_legacy_state(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         compilers = {
@@ -2123,7 +2199,9 @@ character:
 
                     installed_pack = _read_pack_from_dir(target_dir)
                     scored = score_mechanism(resolved, installed_pack, adapter=adapter)
-                    self.assertFalse(scored["passed"], scored)
+                    # Structural scoring deliberately does not open sidecar-private
+                    # state. Runtime readiness below remains fail-closed on v2.
+                    self.assertTrue(scored["passed"], scored)
                     diagnosed = doctor_target(target_dir)
                     self.assertFalse(diagnosed["ok"], diagnosed)
                     self.assertIn(
@@ -2445,6 +2523,51 @@ character:
                     _initialize_emotion_engine_mcp(target)
                     self.assertTrue(doctor_target(target)["ok"])
                     current_target = target
+
+    def test_migration_state_snapshot_cas_rejects_post_preflight_source_replacement(self):
+        import importlib
+
+        install_module = importlib.import_module("packwright.core.install")
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_pack = root / "source-pack"
+            source_target = root / "source-target"
+            destination = root / "destination"
+            sidecar_source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), source_pack)
+            _write_fake_emotion_engine_sidecar(sidecar_source)
+            install_pack(
+                source_pack,
+                source_target,
+                include_emotion_engine=True,
+                emotion_engine_source=sidecar_source,
+            )
+            plan = plan_migration(source_target, destination, to_adapter="cursor")
+            state_path = source_target / EMOTION_ENGINE_STATE_PATH
+            original_verify = install_module._verify_migration_source
+
+            def replace_after_verification(changes, source_dir):
+                result = original_verify(changes, source_dir)
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                state["session_count"] += 1
+                state_path.write_text(
+                    json.dumps(state, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                return result
+
+            with patch(
+                "packwright.core.install._verify_migration_source",
+                side_effect=replace_after_verification,
+            ):
+                with self.assertRaisesRegex(
+                    PackwrightValidationError,
+                    "state changed after planning; no destination files were written",
+                ):
+                    apply_migration(plan)
+
+            self.assertTrue(not destination.exists() or not any(destination.rglob("*")))
 
     def test_migrate_target_to_cursor_preserves_portable_state_and_rewrites_memory(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3529,6 +3652,9 @@ character:
             self.assertTrue(doctor_target(target_dir)["ok"])
 
     def test_failed_emotion_state_verification_rolls_back_v2_and_manifest(self):
+        import importlib
+
+        install_module = importlib.import_module("packwright.core.install")
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -3554,7 +3680,21 @@ character:
             legacy_bytes = state_file.read_bytes()
             manifest_before = (target_dir / "manifest.json").read_bytes()
 
-            with patch.dict(os.environ, {"PACKWRIGHT_TEST_FAIL_EMOTION_AUDIT": "1"}):
+            original = install_module._run_installed_emotion_helper
+
+            def fail_audit(target, command, *args, **kwargs):
+                if command == "audit_state":
+                    return {
+                        "returncode": 1,
+                        "ok": False,
+                        "hard_errors": ["forced_test_failure"],
+                    }
+                return original(target, command, *args, **kwargs)
+
+            with patch(
+                "packwright.core.install._run_installed_emotion_helper",
+                side_effect=fail_audit,
+            ):
                 result = migrate_emotion_engine_state(target_dir, apply=True)
 
             self.assertEqual(result["status"], "verification_failed", result)
@@ -4440,6 +4580,134 @@ character:
             self.assertEqual(lock_path.read_bytes(), lock_before)
             self.assertEqual((target_dir / EMOTION_ENGINE_STATE_PATH).read_bytes(), state_before)
 
+    def test_refresh_never_rebaselines_unmanaged_shared_entry_or_mcp_content(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        for drift_kind in ("entry", "mcp"):
+            with self.subTest(drift_kind=drift_kind), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                pack_dir = root / "pack"
+                target_dir = root / "target"
+                source = root / "emotion-engine"
+                _write_pack(compile_to_codex_pack(resolved), pack_dir)
+                _write_fake_emotion_engine_sidecar(source)
+                install_pack(
+                    pack_dir,
+                    target_dir,
+                    include_emotion_engine=True,
+                    emotion_engine_source=source,
+                )
+                drift_path = (
+                    target_dir / "AGENTS.md"
+                    if drift_kind == "entry"
+                    else target_dir / ".codex/config.toml"
+                )
+                if drift_kind == "entry":
+                    drift_path.write_text(
+                        "UNMANAGED INSTRUCTION MUST NOT BE ADOPTED\n" + drift_path.read_text(encoding="utf-8"),
+                        encoding="utf-8",
+                    )
+                else:
+                    drift_path.write_text(
+                        drift_path.read_text(encoding="utf-8")
+                        + '\n[mcp_servers.unmanaged]\ncommand = "user-owned"\n',
+                        encoding="utf-8",
+                    )
+                lock_before = (target_dir / LOCK_PATH).read_bytes()
+                self.assertIn(
+                    "managed_artifact_drift",
+                    {issue["id"] for issue in doctor_target(target_dir)["issues"]},
+                )
+
+                with self.assertRaisesRegex(
+                    PackwrightValidationError,
+                    "unmanaged shared artifact content changed",
+                ):
+                    refresh_emotion_engine(target_dir, emotion_engine_source=source)
+
+                self.assertEqual((target_dir / LOCK_PATH).read_bytes(), lock_before)
+                self.assertIn(
+                    "managed_artifact_drift",
+                    {issue["id"] for issue in doctor_target(target_dir)["issues"]},
+                )
+
+    def test_force_sidecar_install_rolls_back_every_host_file_on_late_failure(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            before = {
+                path.relative_to(target_dir).as_posix(): path.read_bytes()
+                for path in target_dir.rglob("*")
+                if path.is_file()
+            }
+            helper = source / "scripts/emotion_engine_utils.py"
+            helper.write_text(helper.read_text(encoding="utf-8") + "\n# new cohort\n", encoding="utf-8")
+
+            with patch(
+                "packwright.core.install._mark_emotion_engine_installed",
+                side_effect=RuntimeError("late host commit failure"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "late host commit failure"):
+                    install_pack(
+                        pack_dir,
+                        target_dir,
+                        force=True,
+                        include_emotion_engine=True,
+                        emotion_engine_source=source,
+                    )
+
+            after = {
+                path.relative_to(target_dir).as_posix(): path.read_bytes()
+                for path in target_dir.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(after, before)
+            self.assertFalse((target_dir / EMOTION_ENGINE_PROJECTION_PENDING_PATH).exists())
+
+    def test_refresh_forward_resumes_manifest_to_lock_crash_with_cas(self):
+        resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pack_dir = root / "pack"
+            target_dir = root / "target"
+            source = root / "emotion-engine"
+            _write_pack(compile_to_codex_pack(resolved), pack_dir)
+            _write_fake_emotion_engine_sidecar(source)
+            install_pack(
+                pack_dir,
+                target_dir,
+                include_emotion_engine=True,
+                emotion_engine_source=source,
+            )
+            helper = source / "scripts/emotion_engine_utils.py"
+            helper.write_text(helper.read_text(encoding="utf-8") + "\n# resumed cohort\n", encoding="utf-8")
+
+            with patch(
+                "packwright.core.install._update_artifact_lock_paths",
+                side_effect=SystemExit("simulated process death"),
+            ):
+                with self.assertRaises(SystemExit):
+                    refresh_emotion_engine(target_dir, emotion_engine_source=source)
+
+            pending_path = target_dir / EMOTION_ENGINE_PROJECTION_PENDING_PATH
+            pending = json.loads(pending_path.read_text(encoding="utf-8"))
+            self.assertEqual(pending["status"], "host_commit_pending")
+            resumed = refresh_emotion_engine(target_dir, emotion_engine_source=source)
+            self.assertTrue(resumed["client_restart_required"])
+            self.assertFalse(pending_path.exists())
+            _initialize_emotion_engine_mcp(target_dir)
+            self.assertTrue(doctor_target(target_dir)["ok"])
+
     def test_incomplete_migration_recovery_requires_verified_backup(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
         for scenario in ("missing", "tampered"):
@@ -4883,14 +5151,17 @@ character:
                 emotion_engine_source=source,
             )
             self.assertTrue(refreshed["client_restart_required"])
-            retired = refresh_emotion_engine(
-                target_dir,
-                emotion_engine_source=source,
-                retire_legacy_state=True,
-            )
-            self.assertEqual(retired["retired_legacy_state"][0]["from"], ".emotion-engine/codex-state.json")
-            self.assertFalse(legacy_path.exists())
-            self.assertEqual(legacy_path.with_name("codex-state.json.bak").read_bytes(), legacy_bytes)
+            with self.assertRaisesRegex(
+                PackwrightValidationError,
+                "cannot authenticate sidecar-private lineage",
+            ):
+                refresh_emotion_engine(
+                    target_dir,
+                    emotion_engine_source=source,
+                    retire_legacy_state=True,
+                )
+            self.assertEqual(legacy_path.read_bytes(), legacy_bytes)
+            self.assertFalse(legacy_path.with_name("codex-state.json.bak").exists())
 
     def test_claude_projection_uses_native_upstream_skill_without_codex_rewrite(self):
         resolved = resolve_mechanism(load_mechanism(MECHANISM_PATH))
@@ -5521,11 +5792,11 @@ character:
             )
             self.assertEqual(run_completed.returncode, 0, run_completed.stderr + run_completed.stdout)
 
-            installed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "packwright",
+            from packwright.cli import main as cli_main
+
+            installed_stdout = io.StringIO()
+            with redirect_stdout(installed_stdout):
+                installed_returncode = cli_main([
                     "install",
                     "--pack-dir",
                     str(pack_dir),
@@ -5534,15 +5805,9 @@ character:
                     "--include-emotion-engine",
                     "--emotion-engine-source",
                     str(sidecar_source),
-                ],
-                cwd=str(PROJECT_ROOT),
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(installed.returncode, 0, installed.stderr + installed.stdout)
-            manifest = json.loads(installed.stdout)
+                ])
+            self.assertEqual(installed_returncode, 0)
+            manifest = json.loads(installed_stdout.getvalue())
             self.assertEqual(manifest["target_dir"], str(target_dir))
             self.assertTrue((target_dir / "AGENTS.md").exists())
             self.assertTrue((target_dir / ".codex" / "atlas" / "references" / "mechanism" / "session-guards.yaml").exists())
@@ -5586,70 +5851,49 @@ character:
                 + "\n\ndef state_file_lock(path):\n    return path\n",
                 encoding="utf-8",
             )
-            refreshed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "packwright",
+            refreshed_stdout = io.StringIO()
+            refreshed_stderr = io.StringIO()
+            with redirect_stdout(refreshed_stdout), redirect_stderr(refreshed_stderr):
+                refreshed_returncode = cli_main([
                     "refresh-emotion-engine",
                     "--target-dir",
                     str(target_dir),
                     "--emotion-engine-source",
                     str(sidecar_source),
-                ],
-                cwd=str(PROJECT_ROOT),
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(refreshed.returncode, 0, refreshed.stderr + refreshed.stdout)
-            refresh_manifest = json.loads(refreshed.stdout)
+                ])
+            self.assertEqual(refreshed_returncode, 0, refreshed_stderr.getvalue() + refreshed_stdout.getvalue())
+            refresh_manifest = json.loads(refreshed_stdout.getvalue())
             self.assertEqual(refresh_manifest["target_dir"], str(target_dir))
             self.assertIn("state_file_lock", target_helper.read_text(encoding="utf-8"))
 
             target_helper.write_text("# stale installed helper again\n", encoding="utf-8")
-            diagnosed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "packwright",
+            diagnosed_stdout = io.StringIO()
+            diagnosed_stderr = io.StringIO()
+            with redirect_stdout(diagnosed_stdout), redirect_stderr(diagnosed_stderr):
+                diagnosed_returncode = cli_main([
                     "doctor",
                     "--target-dir",
                     str(target_dir),
                     "--emotion-engine-source",
                     str(sidecar_source),
-                ],
-                cwd=str(PROJECT_ROOT),
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(diagnosed.returncode, 1, diagnosed.stderr + diagnosed.stdout)
-            diagnosis = json.loads(diagnosed.stdout)
+                ])
+            self.assertEqual(diagnosed_returncode, 1, diagnosed_stderr.getvalue() + diagnosed_stdout.getvalue())
+            diagnosis = json.loads(diagnosed_stdout.getvalue())
             self.assertFalse(diagnosis["ok"])
 
-            fixed = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "packwright",
+            fixed_stdout = io.StringIO()
+            fixed_stderr = io.StringIO()
+            with redirect_stdout(fixed_stdout), redirect_stderr(fixed_stderr):
+                fixed_returncode = cli_main([
                     "doctor",
                     "--target-dir",
                     str(target_dir),
                     "--emotion-engine-source",
                     str(sidecar_source),
                     "--fix",
-                ],
-                cwd=str(PROJECT_ROOT),
-                env=env,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(fixed.returncode, 1, fixed.stderr + fixed.stdout)
-            fixed_manifest = json.loads(fixed.stdout)
+                ])
+            self.assertEqual(fixed_returncode, 1, fixed_stderr.getvalue() + fixed_stdout.getvalue())
+            fixed_manifest = json.loads(fixed_stdout.getvalue())
             self.assertFalse(fixed_manifest["ok"])
             self.assertEqual(
                 {issue["id"] for issue in fixed_manifest["issues"]},
@@ -5964,7 +6208,7 @@ character:
     def test_pyproject_exposes_packwright_console_script_only(self):
         pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('name = "packwright"', pyproject)
-        self.assertIn('version = "0.3.4"', pyproject)
+        self.assertIn('version = "0.3.4rc1"', pyproject)
         self.assertIn('packwright = "packwright.cli:main"', pyproject)
 
     def test_cli_handoff_export_writes_review_file(self):
@@ -6294,6 +6538,130 @@ if __name__ == "__main__":
     )
     (source_dir / "spec" / "emotion-state.schema.json").write_text("{}\n", encoding="utf-8")
     (source_dir / "LICENSE").write_text("test\n", encoding="utf-8")
+
+
+def _fake_approved_emotion_engine_source(source, adapter):
+    import importlib
+
+    install_module = importlib.import_module("packwright.core.install")
+    if source is None:
+        raise PackwrightValidationError([
+            "Emotion Engine source directory is required; pass --emotion-engine-source or set PACKWRIGHT_EMOTION_ENGINE_DIR"
+        ])
+    supplied = Path(source).resolve()
+    source_root = next(
+        (
+            candidate
+            for candidate in (supplied, *supplied.parents)
+            if (candidate / "scripts" / "emotion_engine_utils.py").is_file()
+        ),
+        supplied,
+    )
+    files = {
+        rel_path: (source_root / rel_path).read_bytes()
+        for rel_path in install_module.EMOTION_ENGINE_COMMON_SOURCE_FILES.values()
+    }
+    skill = (source_root / "SKILL.md").read_bytes()
+    codex_skill = source_root / "integrations/codex/emotion-engine-codex/SKILL.md"
+    claude_skill = source_root / "integrations/claude-skill/emotion-engine/SKILL.md"
+    files["integrations/codex/emotion-engine-codex/SKILL.md"] = (
+        codex_skill.read_bytes() if codex_skill.is_file() else skill
+    )
+    files["integrations/claude-skill/emotion-engine/SKILL.md"] = (
+        claude_skill.read_bytes() if claude_skill.is_file() else skill
+    )
+    return {
+        "source_root": source_root,
+        "files": files,
+        "skill_path": install_module._emotion_engine_skill_source_path(adapter),
+    }
+
+
+class EmotionEngineSupplyChainBoundaryTest(unittest.TestCase):
+    def test_only_exact_clean_commit_snapshot_is_accepted(self):
+        import importlib
+
+        install_module = importlib.import_module("packwright.core.install")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "emotion-engine"
+            _write_fake_emotion_engine_sidecar(source)
+            skill = (source / "SKILL.md").read_bytes()
+            for rel_path in (
+                "integrations/codex/emotion-engine-codex/SKILL.md",
+                "integrations/claude-skill/emotion-engine/SKILL.md",
+            ):
+                path = source / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(skill)
+            subprocess.run(["git", "init", "-q"], cwd=source, check=True)
+            subprocess.run(["git", "add", "."], cwd=source, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Packwright Tests",
+                    "-c",
+                    "user.email=tests@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "fixture",
+                ],
+                cwd=source,
+                check=True,
+            )
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            helper = source / "scripts/emotion_engine_utils.py"
+            committed_helper = helper.read_bytes()
+
+            with patch.object(install_module, "EMOTION_ENGINE_UPSTREAM_COMMIT", commit):
+                approved = install_module._approved_emotion_engine_source(source, "codex")
+                self.assertEqual(
+                    approved["files"]["scripts/emotion_engine_utils.py"],
+                    committed_helper,
+                )
+
+                helper.write_bytes(committed_helper + b"\n# dirty tracked\n")
+                with self.assertRaisesRegex(PackwrightValidationError, "dirty"):
+                    install_module._approved_emotion_engine_source(source, "codex")
+                helper.write_bytes(committed_helper)
+
+                untracked = source / "untracked.py"
+                untracked.write_text("print('not approved')\n", encoding="utf-8")
+                with self.assertRaisesRegex(PackwrightValidationError, "untracked"):
+                    install_module._approved_emotion_engine_source(source, "codex")
+                untracked.unlink()
+
+                original_run = install_module._run_bounded_subprocess
+
+                def dirty_after_initial_status(argv, **kwargs):
+                    result = original_run(argv, **kwargs)
+                    if argv[1:3] == ["status", "--porcelain=v1"] and not helper.read_bytes().endswith(b"race\n"):
+                        helper.write_bytes(committed_helper + b"\n# race\n")
+                    return result
+
+                with patch(
+                    "packwright.core.install._run_bounded_subprocess",
+                    side_effect=dirty_after_initial_status,
+                ):
+                    with self.assertRaisesRegex(PackwrightValidationError, "changed or became dirty"):
+                        install_module._approved_emotion_engine_source(source, "codex")
+
+    def test_marker_only_directory_cannot_self_assert_the_pinned_release(self):
+        import importlib
+
+        install_module = importlib.import_module("packwright.core.install")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "marker-only"
+            _write_fake_emotion_engine_sidecar(source)
+            with self.assertRaisesRegex(PackwrightValidationError, "approved Git checkout"):
+                install_module._approved_emotion_engine_source(source, "codex")
 
 
 def _initialize_emotion_engine_mcp(target_dir):

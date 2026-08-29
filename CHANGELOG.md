@@ -14,7 +14,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Route generated shell, lifecycle, activation, and audit helper calls through the explicit managed-runtime contract; keep installer-owned initialization, migration, capability upgrade, identity binding, and reset inside the Packwright transaction.
 - Extend the exact-source release smoke across missing primary state, hard-corrupt state, and semantic-warning-only state for shell, lifecycle, and MCP writers.
 
-## [0.3.4] - 2026-08-25
+## 0.3.4 candidate - Unreleased
 
 ### Added
 
@@ -264,7 +264,6 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
-[0.3.4]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.4
 [0.3.3]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.3
 [0.3.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.1
