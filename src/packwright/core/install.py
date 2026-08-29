@@ -1206,7 +1206,12 @@ def _migrate_emotion_engine_state_locked(
             raise PackwrightValidationError([report["required_confirmation"]])
         return report
     plan["identity"] = identity
-    preflight = _emotion_engine_doctor_issues(target_dir, manifest, plan)
+    preflight = _emotion_engine_doctor_issues(
+        target_dir,
+        manifest,
+        plan,
+        runtime_probes_trusted=not _artifact_lock_doctor_issues(target_dir, manifest),
+    )
     blocking = [
         issue for issue in preflight
         if issue["id"] not in {
@@ -1735,7 +1740,12 @@ def _doctor_target_locked(
         if source
         else _prepare_installed_emotion_engine_plan(target_dir, adapter, mode, manifest)
     )
-    issues = _emotion_engine_doctor_issues(target_dir, manifest, plan)
+    issues = _emotion_engine_doctor_issues(
+        target_dir,
+        manifest,
+        plan,
+        runtime_probes_trusted=not lock_issues,
+    )
     result["warnings"].extend(_emotion_engine_lifecycle_warnings(target_dir, manifest))
     result["issues"].extend(issues)
     result["ok"] = not result["issues"]
@@ -1756,7 +1766,13 @@ def _doctor_target_locked(
             emotion_engine_mode=mode,
             manifest=refreshed_manifest,
         )
-        after_issues = _emotion_engine_doctor_issues(target_dir, refreshed_manifest, refreshed_plan)
+        refreshed_lock_issues = _artifact_lock_doctor_issues(target_dir, refreshed_manifest)
+        after_issues = _emotion_engine_doctor_issues(
+            target_dir,
+            refreshed_manifest,
+            refreshed_plan,
+            runtime_probes_trusted=not refreshed_lock_issues,
+        )
         result["fixes"].append({
             "id": "emotion_engine_refreshed",
             "result": refresh_result,
@@ -1764,7 +1780,7 @@ def _doctor_target_locked(
         result["after_issues"] = after_issues
         result["issues"] = (
             _target_layout_doctor_issues(target_dir, refreshed_manifest)
-            + _artifact_lock_doctor_issues(target_dir, refreshed_manifest)
+            + refreshed_lock_issues
             + after_issues
         )
         result["warnings"] = (
@@ -5206,8 +5222,15 @@ def _emotion_engine_expected_in_target(manifest, target_dir):
     return any((target_dir / artifact).exists() for artifact in emotion_engine_artifacts(adapter))
 
 
-def _emotion_engine_doctor_issues(target_dir, manifest, plan):
+def _emotion_engine_doctor_issues(
+    target_dir,
+    manifest,
+    plan,
+    *,
+    runtime_probes_trusted=True,
+):
     issues = []
+    probe_trust_intact = bool(runtime_probes_trusted)
     adapter = plan["adapter"]
     # Sidecar-private state is owned and verified by the sidecar, not by the
     # host manifest. Only host-managed projection artifacts belong here.
@@ -5229,20 +5252,24 @@ def _emotion_engine_doctor_issues(target_dir, manifest, plan):
             "; ".join(exc.issues),
         ))
         incomplete_migration = None
+        probe_trust_intact = False
     if incomplete_migration is not None:
         issues.append(_doctor_issue(
             "emotion_engine_migration_incomplete",
             EMOTION_ENGINE_MIGRATION_JOURNAL_PATH,
             "an incomplete migration transaction is a global writer fuse until explicit recovery",
         ))
+        probe_trust_intact = False
 
     for rel_path, expected_bytes in plan["projection"].items():
         target_path = target_dir / rel_path
         if not target_path.is_file():
             issues.append(_doctor_issue("emotion_engine_missing_file", rel_path, "projected sidecar file is missing"))
+            probe_trust_intact = False
             continue
         if _read_bytes(target_path) != expected_bytes:
             issues.append(_doctor_issue("emotion_engine_file_drift", rel_path, "projected sidecar file differs from source"))
+            probe_trust_intact = False
 
     pending = target_dir / EMOTION_ENGINE_PROJECTION_PENDING_PATH
     if pending.exists():
@@ -5251,6 +5278,7 @@ def _emotion_engine_doctor_issues(target_dir, manifest, plan):
             EMOTION_ENGINE_PROJECTION_PENDING_PATH,
             "an interrupted Emotion Engine projection is not safe to activate; refresh the complete writer cohort",
         ))
+        probe_trust_intact = False
 
     state_issue = _emotion_engine_state_issue(
         plan["state_file"],
@@ -5262,15 +5290,20 @@ def _emotion_engine_doctor_issues(target_dir, manifest, plan):
     projection_issue = _emotion_engine_projection_issue(target_dir, plan)
     if projection_issue:
         issues.append(projection_issue)
+        probe_trust_intact = False
 
     mcp_activation_issue = _emotion_engine_mcp_activation_issue(target_dir, plan)
     if mcp_activation_issue:
         issues.append(mcp_activation_issue)
-    activation_manifest_issue = _emotion_engine_activation_manifest_issue(
-        target_dir,
-        manifest,
-        plan,
-        mcp_activation_issue=mcp_activation_issue,
+    activation_manifest_issue = (
+        _emotion_engine_activation_manifest_issue(
+            target_dir,
+            manifest,
+            plan,
+            mcp_activation_issue=mcp_activation_issue,
+        )
+        if probe_trust_intact
+        else None
     )
     if activation_manifest_issue:
         issues.append(activation_manifest_issue)
@@ -5290,7 +5323,7 @@ def _emotion_engine_doctor_issues(target_dir, manifest, plan):
         if lifecycle_receipt_issue:
             issues.append(lifecycle_receipt_issue)
 
-    if state_issue is None:
+    if state_issue is None and probe_trust_intact:
         mode_issue = _emotion_engine_mode_issue(plan["state_file"], plan["mode"])
         if mode_issue:
             issues.append(mode_issue)
@@ -5308,6 +5341,12 @@ def _emotion_engine_doctor_issues(target_dir, manifest, plan):
                 EMOTION_ENGINE_STATE_PATH,
                 "Emotion Engine audit_state did not pass",
             ))
+    elif state_issue is None:
+        issues.append(_doctor_issue(
+            "runtime_probe_skipped_untrusted_artifact",
+            f"{EMOTION_ENGINE_RUNTIME_ROOT}/scripts/emotion_engine_utils.py",
+            "activation and audit probes were skipped because managed runtime trust checks failed",
+        ))
 
     mode = plan["mode"]
     issues.extend(
