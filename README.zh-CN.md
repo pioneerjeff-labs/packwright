@@ -37,8 +37,7 @@
 <p align="center"><strong>原生 pack。可移植状态。每次迁移都先预览，再写入。</strong></p>
 
 > [!TIP]
-> **当前已发布版本：0.3.3。** 0.3.4 仍是未发布的兼容候选版，暂时不要用于迁移
-> 真实 target。候选版的可选 Emotion Engine 运行时固定到
+> **当前已发布版本：0.3.4。** 可选 Emotion Engine 运行时固定到
 > v2.0.0-rc.4；v2 和能力不完整的旧 v3 状态在显式备份迁移前保持只读，
 > helper/MCP/skill/wrapper 作为同一投影批次验收。未完成迁移会全局熔断写入，
 > 所有状态路径拒绝符号链接越界，MCP 初始化须完成 activation check 与完整 audit。
@@ -242,8 +241,8 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 
 ## 当前发布边界
 
-`0.3.3` 是当前稳定维护版本。`0.3.4` 要等强制跨仓 Sidecar 门禁通过后才会
-发布；`0.3.0` 是首个支持 Pi Core 的版本，`0.1.0`
+`0.3.4` 是当前稳定维护版本，并已通过强制跨仓 Sidecar 门禁；`0.3.0`
+是首个支持 Pi Core 的版本，`0.1.0`
 仍是首个稳定基线。Packwright 是本地工具，不是云同步服务；plain-file 结构
 分数与真实 runtime 兼容性是两件事。Pi project trust 与生命周期 extension
 仍是需要明确完成的 runtime 激活步骤，不会被伪装成已自动就绪。
@@ -258,7 +257,7 @@ Packwright 把这些文件当作编译投影：可编辑源拥有行为定义，
 - [可选 Emotion Engine sidecar](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [本地 runtime automation](docs/RUNTIME_AUTOMATIONS.md)
-- [0.3.4 候选版说明](docs/releases/0.3.4.md)
+- [0.3.4 发布说明](docs/releases/0.3.4.md)
 - [0.3.3 发布说明](docs/releases/0.3.3.md)
 - [0.3.2 发布说明](docs/releases/0.3.2.md)
 - [0.3.1 发布说明](docs/releases/0.3.1.md)

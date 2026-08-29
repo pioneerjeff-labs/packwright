@@ -17,8 +17,8 @@ still declare that placeholder remain valid and projectable for compatibility.
 
 Every enabled target receives:
 
-- `.packwright/runtime/emotion-engine/generations/2.0.0-rc.4-edd9604/` — the pinned helper, fixed-state shell gateway, MCP server, cohort-aware launcher, schema, template, registration helper, projection receipt, and license;
-- `.emotion-engine/generations/2.0.0-rc.4-edd9604/state.json` — the rc.4 generation's live state;
+- `.packwright/runtime/emotion-engine/generations/2.0.0-rc.4-48e6f3f/` — the pinned helper, fixed-state shell gateway, MCP server, cohort-aware launcher, schema, template, registration helper, projection receipt, and license;
+- `.emotion-engine/generations/2.0.0-rc.4-48e6f3f/state.json` — the rc.4 generation's live state;
 - `scripts/emotion_engine.sh` — shell access through the target-locked fixed-state gateway;
 - `scripts/emotion_engine_mcp.sh` — the project-relative MCP launcher.
 - `scripts/emotion_engine_lifecycle.py` — a capability-gated lifecycle bridge that never edits state directly.
@@ -71,7 +71,7 @@ Available modes are:
 
 Packwright reads the current generation path plus the legacy paths:
 
-- `.emotion-engine/generations/2.0.0-rc.4-edd9604/state.json`
+- `.emotion-engine/generations/2.0.0-rc.4-48e6f3f/state.json`
 - `.emotion-engine/state.json`
 - `.emotion-engine/codex-state.json`
 - `.emotion-engine/emotion-state.json`

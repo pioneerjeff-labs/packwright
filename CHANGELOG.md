@@ -4,17 +4,19 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 
 ## Unreleased
 
+## [0.3.4] - 2026-08-29
+
+### Security and integrity
+
 - Route managed shell writes through a fixed-state gateway that shares the target lock with refresh, migration, lifecycle, and MCP operations; identity binding, v2 migration, v3 capability upgrade, initialization, and reset cannot bypass Packwright transactions.
 - Launch MCP in locked managed-runtime mode, reject state overrides and id-less write RPCs, validate exact child response ids, and hold the target lock through the matching response.
 - Require a full non-mutating activation check and state audit before a live MCP handshake can converge the activation manifest; compare the previous artifact-lock digest before any manifest update so drift cannot be washed into a new baseline.
 - Make an incomplete migration journal a global writer fuse across install, refresh, shell, lifecycle, and MCP, with complete state/manifest/lock/lineage rollback on recovery.
 - Reject symlink traversal for managed state, generation, journal, backup, and lineage paths.
 - Detect divergent canonical and legacy state before migration, and preserve explicit migration lineage so a reviewed legacy packet can still retire after ordinary canonical writes.
-- Pin Emotion Engine commit `edd9604d942f0320260545793677a80e42e1484a`, whose managed runtime rejects malformed raw state before normalization, backup, audit probes, or mutation.
+- Pin Emotion Engine release commit `48e6f3fff767209e3d96721935e5476734e740a4`, whose managed runtime rejects malformed raw state before normalization, backup, audit probes, or mutation.
 - Route generated shell, lifecycle, activation, and audit helper calls through the explicit managed-runtime contract; keep installer-owned initialization, migration, capability upgrade, identity binding, and reset inside the Packwright transaction.
-- Extend the exact-source release smoke across missing primary state, hard-corrupt state, and semantic-warning-only state for shell, lifecycle, and MCP writers.
-
-## 0.3.4 candidate - Unreleased
+- Extend the exact-source release smoke across missing primary state, malformed raw shape, hard-corrupt state, and semantic-warning-only state for shell, lifecycle, activation/audit, and MCP writers.
 
 ### Added
 
@@ -264,6 +266,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Self-contained installed-target metadata and pre/post-install scoring.
 - Static zero-network audit, local release gate, packaging checks, and CI.
 
+[0.3.4]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.4
 [0.3.3]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.3
 [0.3.2]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pioneerjeff-labs/packwright/releases/tag/v0.3.1
