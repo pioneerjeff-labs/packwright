@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: pioneerjeff-labs/emotion-engine
-          ref: 410c7e097c0a3e84a77d4bae2dc262324875b6ad
+          ref: edd9604d942f0320260545793677a80e42e1484a
           path: .release-deps/emotion-engine
       - uses: actions/setup-python@v6
         with:
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: pioneerjeff-labs/emotion-engine
-          ref: 410c7e097c0a3e84a77d4bae2dc262324875b6ad
+          ref: edd9604d942f0320260545793677a80e42e1484a
           path: .release-deps/emotion-engine
       - uses: actions/setup-python@v6
         with:
@@ -113,7 +113,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: pioneerjeff-labs/emotion-engine
-          ref: 410c7e097c0a3e84a77d4bae2dc262324875b6ad
+          ref: edd9604d942f0320260545793677a80e42e1484a
           path: .release-deps/emotion-engine
       - uses: actions/setup-python@v6
         with:

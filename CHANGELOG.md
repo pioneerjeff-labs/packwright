@@ -10,7 +10,7 @@ All notable changes are documented here. Packwright follows Semantic Versioning.
 - Make an incomplete migration journal a global writer fuse across install, refresh, shell, lifecycle, and MCP, with complete state/manifest/lock/lineage rollback on recovery.
 - Reject symlink traversal for managed state, generation, journal, backup, and lineage paths.
 - Detect divergent canonical and legacy state before migration, and preserve explicit migration lineage so a reviewed legacy packet can still retire after ordinary canonical writes.
-- Pin Emotion Engine commit `410c7e097c0a3e84a77d4bae2dc262324875b6ad`, whose managed runtime requires an existing primary state and rejects structural hard errors before mutation while preserving diagnostic reads and semantic-warning-only writes.
+- Pin Emotion Engine commit `edd9604d942f0320260545793677a80e42e1484a`, whose managed runtime rejects malformed raw state before normalization, backup, audit probes, or mutation.
 - Route generated shell, lifecycle, activation, and audit helper calls through the explicit managed-runtime contract; keep installer-owned initialization, migration, capability upgrade, identity binding, and reset inside the Packwright transaction.
 - Extend the exact-source release smoke across missing primary state, hard-corrupt state, and semantic-warning-only state for shell, lifecycle, and MCP writers.
 
