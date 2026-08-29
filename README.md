@@ -37,13 +37,12 @@
 <p align="center"><strong>Native packs. Portable state. Preview every migration before any files are written.</strong></p>
 
 > [!TIP]
-> **Current published release: 0.3.3.** Version 0.3.4 is an unreleased
-> compatibility candidate and must not be used to migrate a live target yet. It pins
-> v2.0.0-rc.4, isolate each writer generation from legacy MCP processes, keep
-> v2 state read-only until an explicit journaled migration, upgrade older v3
-> capability packets through the same transaction, lock shell and MCP writes to
-> one symlink-safe state path, globally fuse writers during incomplete
-> migrations, and require a full activation/audit MCP handshake after refresh.
+> **Current published release: 0.3.4.** It pins Emotion Engine v2.0.0-rc.4,
+> isolates each writer generation from legacy MCP processes, keeps
+> v2 state read-only until an explicit journaled migration, upgrades older v3
+> capability packets through the same transaction, locks shell and MCP writes to
+> one symlink-safe state path, globally fuses writers during incomplete
+> migrations, and requires a full activation/audit MCP handshake after refresh.
 
 > [!NOTE]
 > Packwright itself makes no network requests and sends no telemetry. Your coding runtime may still send files it reads to its own model provider; its data policy continues to apply.
@@ -268,8 +267,8 @@ Every pack and installed target includes self-contained `.packwright/` metadata:
 
 ## Current release boundary
 
-`0.3.3` is the current stable maintenance release. `0.3.4` remains unreleased
-until its mandatory cross-repository sidecar gates pass; `0.3.0` was the first
+`0.3.4` is the current stable maintenance release and passed its mandatory
+cross-repository sidecar gates; `0.3.0` was the first
 release with Pi Core support, and `0.1.0` remains the first stable baseline.
 Packwright is local tooling, not cloud sync, and its plain-file structure score
 is separate from real runtime compatibility. Pi project trust and lifecycle
@@ -286,7 +285,7 @@ claims.
 - [Optional Emotion Engine MCP runtime](docs/EMOTION_ENGINE.md)
 - [Pi Core adapter](docs/PI.md)
 - [Local runtime automations](docs/RUNTIME_AUTOMATIONS.md)
-- [0.3.4 candidate notes](docs/releases/0.3.4.md)
+- [0.3.4 release notes](docs/releases/0.3.4.md)
 - [0.3.3 release notes](docs/releases/0.3.3.md)
 - [0.3.2 release notes](docs/releases/0.3.2.md)
 - [0.3.1 release notes](docs/releases/0.3.1.md)

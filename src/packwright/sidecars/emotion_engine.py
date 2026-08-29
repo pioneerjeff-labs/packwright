@@ -22,7 +22,7 @@ class EmotionEngineReleasePolicy:
 EMOTION_ENGINE_RELEASE_POLICY = EmotionEngineReleasePolicy(
     sidecar_id="emotion-engine",
     admin_protocol="emotion-engine-admin/v1",
-    approved_revision="edd9604d942f0320260545793677a80e42e1484a",
+    approved_revision="48e6f3fff767209e3d96721935e5476734e740a4",
 )
 
 
