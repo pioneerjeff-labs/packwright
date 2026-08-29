@@ -19,6 +19,7 @@ from packwright.core import (
     apply_install,
     apply_migration,
     apply_reconcile,
+    bootstrap_emotion_engine_artifact_lock,
     create_handoff,
     doctor_target,
     generate_character_source,
@@ -81,6 +82,8 @@ def main(argv=None):
             return _cmd_refresh_emotion_engine(args)
         if args.command == "migrate-emotion-state":
             return _cmd_migrate_emotion_state(args)
+        if args.command == "bootstrap-emotion-lock":
+            return _cmd_bootstrap_emotion_lock(args)
         if args.command == "doctor":
             return _cmd_doctor(args)
         if args.command == "draft-character":
@@ -108,7 +111,7 @@ def _build_parser():
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,migrate-emotion-state,reconcile,verify-activation,doctor,score}",
+        metavar="{new,init,draft-character,presets,adopt,build,install,migrate,migrate-emotion-state,bootstrap-emotion-lock,reconcile,verify-activation,doctor,score}",
     )
 
     new = subparsers.add_parser(
@@ -316,6 +319,22 @@ def _build_parser():
         help="explicit stable relationship identity; required together with --character-id",
     )
     migrate_emotion_state.add_argument("--out", help="output migration JSON path")
+
+    bootstrap_emotion_lock = subparsers.add_parser(
+        "bootstrap-emotion-lock",
+        description="preview or explicitly adopt an old Emotion Engine target artifact baseline",
+    )
+    bootstrap_emotion_lock.add_argument("--target-dir", required=True, help="installed target directory")
+    bootstrap_emotion_lock.add_argument(
+        "--yes",
+        action="store_true",
+        help="adopt the exact previewed current Packwright-owned artifact bytes as the initial baseline",
+    )
+    bootstrap_emotion_lock.add_argument(
+        "--preview-digest",
+        help="exact preview_digest returned by the reviewed dry-run (required with --yes)",
+    )
+    bootstrap_emotion_lock.add_argument("--out", help="output adoption JSON path")
 
     doctor = subparsers.add_parser("doctor", help="inspect and optionally repair an installed target")
     doctor.add_argument("target_dir_positional", nargs="?", metavar="TARGET", help="installed target directory")
@@ -850,6 +869,16 @@ def _cmd_migrate_emotion_state(args):
     )
     _write_json_or_print(result, args.out)
     return 0 if result.get("status") != "verification_failed" else 1
+
+
+def _cmd_bootstrap_emotion_lock(args):
+    result = bootstrap_emotion_engine_artifact_lock(
+        args.target_dir,
+        apply=args.yes,
+        preview_digest=args.preview_digest,
+    )
+    _write_json_or_print(result, args.out)
+    return 0 if result.get("status") != "confirmation_required" else 2
 
 
 def _cmd_doctor(args):

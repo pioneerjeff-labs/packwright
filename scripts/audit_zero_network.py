@@ -50,6 +50,7 @@ SAFE_IMPORTS = {
     ("scripts/audit_public_tree.py", "subprocess"),
     ("src/packwright/core/install.py", "subprocess"),
     ("src/packwright/core/emotion_engine_projection.py", "subprocess"),
+    ("src/packwright/sidecars/runner.py", "subprocess"),
 }
 SAFE_CALLS = {
     ("scripts/emotion_engine_release_smoke.py", "subprocess", "run"),
@@ -57,6 +58,7 @@ SAFE_CALLS = {
     ("src/packwright/core/install.py", "subprocess", "run"),
     ("src/packwright/core/emotion_engine_projection.py", "subprocess", "Popen"),
     ("src/packwright/core/emotion_engine_projection.py", "subprocess", "run"),
+    ("src/packwright/sidecars/runner.py", "subprocess", "run"),
 }
 
 

@@ -14,7 +14,6 @@ from packwright.core.emotion_engine_contract import (
     EMOTION_ENGINE_MCP_WRAPPER_PATH,
     EMOTION_ENGINE_MODES,
     EMOTION_ENGINE_PROJECTION_RECEIPT_PATH,
-    EMOTION_ENGINE_REQUIRED_CAPABILITIES,
     EMOTION_ENGINE_RUNTIME,
     EMOTION_ENGINE_RUNTIME_ROOT,
     EMOTION_ENGINE_STATE_PATH,
@@ -353,9 +352,9 @@ def score_mechanism(mechanism, adapter_pack, adapter="codex", threshold=None):
         _add(
             checks,
             "emotion_engine_state_present",
-            _emotion_engine_state_valid(adapter_pack.get(EMOTION_ENGINE_STATE_PATH, "")),
+            EMOTION_ENGINE_STATE_PATH not in adapter_pack,
             10,
-            "Emotion Engine state exists at the adapter-neutral project path when enabled",
+            "Emotion Engine private live state is excluded from Packwright managed artifacts",
         )
         _add(
             checks,
@@ -955,19 +954,6 @@ def _emotion_engine_enabled(adapter_pack, entry, manifest):
         emotion_engine_expected(manifest, adapter_pack)
         or "## Emotion Engine" in entry
         or "## Optional Emotion Engine" in entry
-    )
-
-
-def _emotion_engine_state_valid(text):
-    state = _parse_json(text)
-    return (
-        isinstance(state, dict)
-        and state.get("_schema") == EMOTION_ENGINE_STATE_SCHEMA
-        and state.get("identity", {}).get("status") == "bound"
-        and all(
-            capability in state.get("capabilities", [])
-            for capability in EMOTION_ENGINE_REQUIRED_CAPABILITIES
-        )
     )
 
 

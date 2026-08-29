@@ -241,7 +241,7 @@ def emotion_engine_manifest_issues(manifest, expected_mode=None, required_artifa
     boundaries = manifest.get("boundaries", {})
     artifacts = set(manifest.get("artifacts", []))
     mode = expected_mode or feature.get("mode")
-    required = set(required_artifacts or emotion_engine_artifacts(adapter))
+    required = set(required_artifacts or emotion_engine_managed_artifacts(adapter))
 
     if feature.get("installed") is not True:
         issues.append("manifest does not mark Emotion Engine as installed")
