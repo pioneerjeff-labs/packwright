@@ -4805,7 +4805,10 @@ def _approved_emotion_engine_source(source, adapter):
     missing = []
     for rel_path in sorted(required):
         result = _run_bounded_subprocess(
-            ["git", "show", f"{EMOTION_ENGINE_UPSTREAM_COMMIT}:{rel_path}"],
+            _safe_git_argv(
+                "show",
+                f"{EMOTION_ENGINE_UPSTREAM_COMMIT}:{rel_path}",
+            ),
             cwd=source_root,
             timeout=15,
             output_limit=2_000_000,
@@ -4820,16 +4823,6 @@ def _approved_emotion_engine_source(source, adapter):
         raise PackwrightValidationError([
             f"approved Emotion Engine source is missing committed file: {path}"
             for path in missing
-        ])
-    final_status = _run_bounded_subprocess(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=source_root,
-        timeout=15,
-        output_limit=1_000_000,
-    )
-    if final_status["returncode"] != 0 or final_status["stdout"].strip():
-        raise PackwrightValidationError([
-            "Emotion Engine source changed or became dirty while its immutable snapshot was prepared"
         ])
     return {
         "source_root": source_root,
@@ -4853,7 +4846,7 @@ def _resolve_emotion_engine_source(source):
     if not supplied.is_dir():
         raise PackwrightValidationError([f"Emotion Engine source directory does not exist: {supplied}"])
     top = _run_bounded_subprocess(
-        ["git", "rev-parse", "--show-toplevel"],
+        _safe_git_argv("rev-parse", "--show-toplevel"),
         cwd=supplied,
         timeout=10,
         output_limit=16_384,
@@ -4866,31 +4859,21 @@ def _resolve_emotion_engine_source(source):
         source_root = Path(top["stdout"].decode("utf-8").strip()).resolve(strict=True)
     except (OSError, UnicodeError) as exc:
         raise PackwrightValidationError([f"invalid Emotion Engine Git root: {exc}"]) from exc
-    head = _run_bounded_subprocess(
-        ["git", "rev-parse", "HEAD^{commit}"],
+    approved_commit = _run_bounded_subprocess(
+        _safe_git_argv(
+            "cat-file",
+            "-e",
+            f"{EMOTION_ENGINE_UPSTREAM_COMMIT}^{{commit}}",
+        ),
         cwd=source_root,
         timeout=10,
         output_limit=16_384,
     )
-    actual_commit = head["stdout"].decode("ascii", errors="replace").strip()
-    dirty = _run_bounded_subprocess(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
-        cwd=source_root,
-        timeout=15,
-        output_limit=1_000_000,
-    )
-    issues = []
-    if head["returncode"] != 0 or actual_commit != EMOTION_ENGINE_UPSTREAM_COMMIT:
-        issues.append(
-            "Emotion Engine source is not the approved revision "
-            f"{EMOTION_ENGINE_UPSTREAM_COMMIT} (found {actual_commit or 'unknown'})"
-        )
-    if dirty["returncode"] != 0:
-        issues.append("cannot verify Emotion Engine source worktree cleanliness")
-    elif dirty["stdout"].strip():
-        issues.append("Emotion Engine source worktree is dirty or contains untracked files")
-    if issues:
-        raise PackwrightValidationError(issues)
+    if approved_commit["returncode"] != 0:
+        raise PackwrightValidationError([
+            "Emotion Engine source does not contain the approved revision "
+            f"{EMOTION_ENGINE_UPSTREAM_COMMIT}"
+        ])
     return source_root
 
 
@@ -5559,11 +5542,30 @@ def _bounded_subprocess_environment():
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUNBUFFERED": "1",
     })
     return environment
+
+
+def _safe_git_argv(*arguments):
+    """Build a read-only Git command that ignores checkout-local execution hooks."""
+    return [
+        "git",
+        "--no-optional-locks",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        f"core.hooksPath={os.devnull}",
+        "-c",
+        "core.pager=cat",
+        "-c",
+        "color.ui=false",
+        *arguments,
+    ]
 
 
 def _run_bounded_subprocess(argv, *, cwd, input_bytes=None, timeout=30, output_limit=1_000_000):
